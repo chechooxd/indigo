@@ -7,7 +7,7 @@ import QueryEngine from './features/studio/query/QueryEnginePage';
 import ERDDesigner from './features/erd/ERDDesignerPage';
 import TableBrowser from './components/TableBrowser';
 import DocBrowser from './features/docs/DocBrowserPage';
-import Settings from './components/Settings';
+import Settings from './features/settings/SettingsPage';
 import { Button } from '@/components/ui/button';
 import { useThemeStore } from './store/useThemeStore';
 import { useNavigationStore } from './store/useNavigationStore';
