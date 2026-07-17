@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Table, RecentSchema, ClusterMetrics, SystemAlert } from '../types';
+import { Table, RecentSchema, SystemAlert } from '../types';
 
 export const INITIAL_TABLES: Table[] = [
   {
@@ -189,14 +189,6 @@ export const INITIAL_SCHEMAS: RecentSchema[] = [
   { id: '3', name: 'analytics_warehouse', tablesCount: 56, type: 'BigQuery', lastModified: 'Yesterday', isActive: false },
   { id: '4', name: 'user_preference_store', tablesCount: 8, type: 'MySQL', lastModified: '3 days ago', isActive: false }
 ];
-
-export const INITIAL_METRICS: ClusterMetrics = {
-  cpuLoad: 12.4,
-  memory: '4.2 GB',
-  connections: 432,
-  latency: '120ms',
-  cpuHistory: [40, 60, 30, 80, 45, 90, 100, 50, 30, 20, 40, 60]
-};
 
 export const INITIAL_ALERTS: SystemAlert[] = [
   {

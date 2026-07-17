@@ -4,8 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Search, Share, Terminal, Copy, ArrowRight, Table, Database, AlertCircle, Sparkles } from 'lucide-react';
-import { Table as TableType, ViewTab } from '../types';
+import { Search, Share, Terminal, Copy, ArrowRight, Table, Database, Sparkles } from 'lucide-react';
 import { useStudioStore } from '../store/useStudioStore';
 
 export default function DocBrowser() {
@@ -288,87 +287,11 @@ export default function DocBrowser() {
                   <span>Record Count:</span>
                   <span className="font-mono text-zinc-200 font-semibold">{activeTable.records ? activeTable.records.length : 0} live rows</span>
                 </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Average Row size:</span>
-                  <span className="font-mono text-zinc-200 font-semibold">124 Bytes</span>
-                </div>
               </div>
             </section>
           </div>
         </div>
       </article>
-
-      {/* Docs Right Properties Side Panel */}
-      <section className="w-[300px] h-full border-l border-zinc-800 bg-[#09090b] p-6 overflow-y-auto hidden xl:block shrink-0">
-        <h3 className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest mb-6 font-sans">
-          TABLE METRICS
-        </h3>
-
-        <div className="space-y-8 font-sans">
-          {/* Usage Heatmap */}
-          <div>
-            <div className="text-xs font-bold text-zinc-300 mb-3">Usage Heatmap</div>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: 14 }).map((_, i) => (
-                <div 
-                  key={i} 
-                  className={`aspect-square rounded-sm border border-zinc-900 transition-colors ${
-                    i % 3 === 0 
-                      ? 'bg-zinc-700' 
-                      : i % 4 === 0 
-                      ? 'bg-zinc-400' 
-                      : i % 5 === 0 
-                      ? 'bg-white' 
-                      : 'bg-zinc-800'
-                  }`}
-                  title={`Activity weight: ${i * 4}`}
-                ></div>
-              ))}
-            </div>
-            <div className="flex justify-between mt-2 text-[9px] text-zinc-500 font-mono">
-              <span>Last 14 days activity</span>
-              <span>1.2M queries</span>
-            </div>
-          </div>
-
-          {/* Data Distribution */}
-          <div className="space-y-3">
-            <div className="text-xs font-bold text-zinc-300">Data Distribution</div>
-            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden flex">
-              <div className="h-full bg-white" style={{ width: '45%' }}></div>
-              <div className="h-full bg-zinc-400" style={{ width: '30%' }}></div>
-              <div className="h-full bg-zinc-700" style={{ width: '25%' }}></div>
-            </div>
-            <div className="space-y-1.5 font-mono text-[10px]">
-              <div className="flex items-center justify-between text-zinc-500">
-                <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-white"></div> Identifiers</span>
-                <span className="font-semibold text-zinc-300">45%</span>
-              </div>
-              <div className="flex items-center justify-between text-zinc-500">
-                <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-zinc-400"></div> Timestamps</span>
-                <span className="font-semibold text-zinc-300">30%</span>
-              </div>
-              <div className="flex items-center justify-between text-zinc-500">
-                <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-zinc-700"></div> Strings</span>
-                <span className="font-semibold text-zinc-300">25%</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Storage Warning */}
-          <div className="p-4 bg-red-950/10 border border-red-900/30 rounded-2xl flex gap-3 text-red-300">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div>
-              <h4 className="text-[11px] font-bold uppercase tracking-wider text-red-400 mb-1 font-sans">
-                Storage Warning
-              </h4>
-              <p className="text-[10px] text-zinc-400 leading-relaxed font-sans">
-                Index <code className="bg-zinc-950 border border-zinc-900 px-1 rounded font-mono font-semibold text-red-400 text-[10px]">idx_users_email</code> is currently fragmented (24%). Consider scheduling a reindex process to optimize execution times.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

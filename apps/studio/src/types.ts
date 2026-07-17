@@ -33,14 +33,6 @@ export interface RecentSchema {
   isActive: boolean;
 }
 
-export interface ClusterMetrics {
-  cpuLoad: number;
-  memory: string;
-  connections: number;
-  latency: string;
-  cpuHistory: number[];
-}
-
 export interface SystemAlert {
   id: string;
   type: 'warning' | 'success' | 'info';
@@ -50,15 +42,3 @@ export interface SystemAlert {
 }
 
 export type ViewTab = 'home' | 'editor' | 'studio' | 'docs' | 'settings';
-export type StudioSubTab = 'query' | 'data' | 'create-table';
-
-export interface ERDPosition {
-  x: number;
-  y: number;
-}
-
-export interface ERDNode {
-  tableName: string;
-  x: number;
-  y: number;
-}

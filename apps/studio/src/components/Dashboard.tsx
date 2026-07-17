@@ -1,50 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Terminal, Plus, Shield, RefreshCw, Layers, HardDrive, Cpu, AlertTriangle, CheckCircle, Info, ArrowRight, Edit3, Trash2 } from 'lucide-react';
-import { ClusterMetrics } from '../types';
-import { INITIAL_METRICS } from '../data/mockData';
+import { Terminal, Plus, Shield, RefreshCw, Layers, HardDrive, AlertTriangle, CheckCircle, Info, ArrowRight, Edit3, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStudioStore } from '../store/useStudioStore';
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const { 
-    schemas, 
-    setSchemas, 
-    alerts, 
-    clearAlerts, 
-    addNewSchema, 
-    removeSchema, 
+  const {
+    schemas,
+    setSchemas,
+    alerts,
+    clearAlerts,
+    addNewSchema,
+    removeSchema,
     toggleSchemaActive,
     navigate
   } = useStudioStore();
-  
-  const [metrics, setMetrics] = useState<ClusterMetrics>(INITIAL_METRICS);
-
-  // Live telemetry updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setMetrics((prev) => {
-        const deltaCpu = (Math.random() - 0.5) * 2;
-        const newCpu = Math.max(5, Math.min(95, Number((prev.cpuLoad + deltaCpu).toFixed(1))));
-        const newConnections = Math.max(100, prev.connections + Math.floor((Math.random() - 0.5) * 10));
-        const newLatency = Math.max(50, Math.floor(120 + (Math.random() - 0.5) * 30)) + 'ms';
-        
-        // Stagger history array
-        const newHistory = [...prev.cpuHistory.slice(1), Math.floor(newCpu)];
-        
-        return {
-          ...prev,
-          cpuLoad: newCpu,
-          connections: newConnections,
-          latency: newLatency,
-          cpuHistory: newHistory
-        };
-      });
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   const handleRemoveSchema = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -271,78 +242,9 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* Metrics & System Alerts Panel Split */}
-      <section className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Telemetry Metrics */}
-        <div className="lg:col-span-2 bg-zinc-900/40 p-6 rounded-3xl border border-zinc-800 relative overflow-hidden flex flex-col justify-between shadow-lg">
-          <div>
-            <h3 className="text-base font-bold text-white mb-6 flex items-center justify-between font-sans">
-              <span>{t('dashboard.cluster.title')}</span>
-              <span className="text-[10px] font-mono font-medium text-zinc-500 flex items-center gap-1">
-                <RefreshCw className="w-3 h-3 animate-spin text-zinc-400" /> {t('dashboard.cluster.live')}
-              </span>
-            </h3>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800/80 transition-all hover:border-zinc-700">
-                <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
-                  {t('dashboard.cluster.cpu')}
-                </span>
-                <span className="text-xl font-bold font-mono text-white">
-                  {metrics.cpuLoad}%
-                </span>
-              </div>
-              <div className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800/80 transition-all hover:border-zinc-700">
-                <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
-                  {t('dashboard.cluster.memory')}
-                </span>
-                <span className="text-xl font-bold font-mono text-zinc-300">
-                  {metrics.memory}
-                </span>
-              </div>
-              <div className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800/80 transition-all hover:border-zinc-700">
-                <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
-                  {t('dashboard.cluster.connections')}
-                </span>
-                <span className="text-xl font-bold font-mono text-zinc-300">
-                  {metrics.connections}
-                </span>
-              </div>
-              <div className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800/80 transition-all hover:border-zinc-700">
-                <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
-                  {t('dashboard.cluster.latency')}
-                </span>
-                <span className="text-xl font-bold font-mono text-zinc-400">
-                  {metrics.latency}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Visual Mini Chart */}
-          <div>
-            <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500 mb-2">
-              <span>{t('dashboard.cluster.history_title')}</span>
-              <span>{t('dashboard.cluster.history_cap')}</span>
-            </div>
-            <div className="h-24 w-full bg-zinc-950 rounded-2xl border border-zinc-800/80 flex items-end p-2 gap-1.5">
-              {metrics.cpuHistory.map((val, i) => (
-                <div 
-                  key={i} 
-                  className={`flex-1 rounded-t-md transition-all duration-500`}
-                  style={{ 
-                    height: `${Math.max(10, val)}%`,
-                    backgroundColor: val > 80 ? '#f4f4f5' : val > 50 ? '#a1a1aa' : '#52525b' 
-                  }}
-                  title={`Value: ${val}%`}
-                ></div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* System Alerts */}
-        <div className="bg-zinc-900/40 p-6 rounded-3xl border border-zinc-800 flex flex-col shadow-lg justify-between">
+      {/* System Alerts */}
+      <section className="max-w-7xl mx-auto">
+        <div className="max-w-md bg-zinc-900/40 p-6 rounded-3xl border border-zinc-800 flex flex-col shadow-lg justify-between">
           <div>
             <h3 className="text-base font-bold text-white mb-4 font-sans">
               {t('dashboard.alerts.title')}

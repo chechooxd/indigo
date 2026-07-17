@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Home, Database, Play, Code, Book, Settings as SettingsIcon } from 'lucide-react';
+import { Home, Database, Code, Book, Settings as SettingsIcon } from 'lucide-react';
 import { ViewTab } from '../types';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';

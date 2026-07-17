@@ -5,7 +5,6 @@
 
 import React, { useState } from 'react';
 import { Play, Sparkles, RefreshCw, Folder, ChevronRight, FileText, AlertCircle, Database } from 'lucide-react';
-import { Table } from '../types';
 import { useStudioStore } from '../store/useStudioStore';
 import { isBackendAvailable, runQuery } from '../lib/api';
 
