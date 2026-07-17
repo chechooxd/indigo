@@ -1,0 +1,101 @@
+{
+  "header": {
+    "version": "v2.4",
+    "environments": {
+      "select": "Select active cluster"
+    },
+    "connected": "Engine Connected",
+    "themeLight": "Switch to light (Simulated)",
+    "themeDark": "Switch to dark",
+    "help": "Consult platform instructions"
+  },
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "studio": "Data Studio",
+    "architecture": "Schema Editor",
+    "documentation": "Documentation",
+    "settings": "Settings"
+  },
+  "dashboard": {
+    "welcome": "Welcome back, Architect.",
+    "projectInfo_pt1": "Project: ",
+    "projectInfo_pt2": ". You have ",
+    "projectInfo_pt3": " active environments",
+    "projectInfo_pt4": " and ",
+    "projectInfo_pt5": " schema versions",
+    "projectInfo_pt6": " tracked in this cluster.",
+    "btn_cli": "Open CLI",
+    "btn_create_schema": "Create Schema",
+    "cards": {
+      "designer_title": "Visual Designer",
+      "designer_desc": "Design a fresh database architecture from scratch using our visual ERD tool. Code-to-canvas syncing is automatic.",
+      "import_title": "Import DDL",
+      "import_desc": "Sync your existing PostgreSQL or MySQL structure via SQL scripts, DDL statements, or connection strings.",
+      "explorer_title": "Data Explorer",
+      "explorer_desc": "Run high-performance queries across your active nodes, browse content models, and edit mock documents in the Data Studio."
+    },
+    "recent_schemas": {
+      "title": "Recent Schemas",
+      "tag": "Editor Activity",
+      "view_all": "View All Schemas",
+      "col_name": "Schema Name",
+      "col_tables": "Tables",
+      "col_type": "Type",
+      "col_modified": "Last Modified",
+      "col_actions": "Actions",
+      "btn_edit": "Open in Editor",
+      "btn_delete": "Delete Schema",
+      "active": "ACTIVE",
+      "tables_count": "{{count}} Tables"
+    },
+    "cluster": {
+      "title": "Cluster Health",
+      "live": "Live",
+      "cpu": "CPU LOAD",
+      "memory": "MEMORY",
+      "connections": "CONNECTIONS",
+      "latency": "LATENCY",
+      "history_title": "CPU Core usage history (14s)",
+      "history_cap": "100% capacity"
+    },
+    "alerts": {
+      "title": "System Alerts",
+      "no_alerts": "All systems operating normally. No active alerts.",
+      "clear_all": "Clear All Alerts"
+    }
+  },
+  "settings": {
+    "title": "Workspace Settings",
+    "subtitle": "Configure local connection pooling, database credentials, query safety guards, and UI preferences.",
+    "btn_save": "Save Settings",
+    "success_title": "Settings Synchronized",
+    "success_desc": "Local database environment variables synchronized with cluster runtime buffers.",
+    "connection": {
+      "title": "Connection Parameters",
+      "host": "Cluster Host URI",
+      "pool": "Connection Pool Limit",
+      "conn": "conn"
+    },
+    "guards": {
+      "title": "Query Guards",
+      "autocommit_title": "Auto-commit Transactions",
+      "autocommit_desc": "Automatically commit all statement changes upon successful query execution without requiring an explicit COMMIT statement.",
+      "safe_title": "Safe Update guards",
+      "safe_desc": "Reject any UPDATE or DELETE commands that do not have a targeting WHERE clause. Prevents accidental mass entity deletions."
+    },
+    "ui": {
+      "title": "UI Preferences",
+      "language": "Language",
+      "theme_accent": "Theme Accent Color"
+    },
+    "reset": {
+      "title": "Restore Workspace defaults",
+      "desc": "Resets connection limits, layout splits, and cached mock schemas back to system initial values.",
+      "btn": "Reset Settings"
+    }
+  },
+  "studio": {
+    "sub_nav_query": "SQL Query Engine",
+    "sub_nav_data": "Table Browser & Studio"
+  }
+}

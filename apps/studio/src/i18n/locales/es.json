@@ -1,0 +1,101 @@
+{
+  "header": {
+    "version": "v2.4",
+    "environments": {
+      "select": "Seleccionar clúster activo"
+    },
+    "connected": "Motor Conectado",
+    "themeLight": "Cambiar a claro (Simulado)",
+    "themeDark": "Cambiar a oscuro",
+    "help": "Consultar instrucciones de plataforma"
+  },
+  "sidebar": {
+    "dashboard": "Panel de Control",
+    "studio": "Estudio de Datos",
+    "architecture": "Editor de Esquema",
+    "documentation": "Documentación",
+    "settings": "Ajustes"
+  },
+  "dashboard": {
+    "welcome": "Bienvenido de nuevo, Arquitecto.",
+    "projectInfo_pt1": "Proyecto: ",
+    "projectInfo_pt2": ". Tienes ",
+    "projectInfo_pt3": " entornos activos",
+    "projectInfo_pt4": " y ",
+    "projectInfo_pt5": " versiones de esquema",
+    "projectInfo_pt6": " rastreados en este clúster.",
+    "btn_cli": "Abrir CLI",
+    "btn_create_schema": "Crear Esquema",
+    "cards": {
+      "designer_title": "Diseñador Visual",
+      "designer_desc": "Diseña una nueva arquitectura de base de datos desde cero utilizando nuestra herramienta visual ERD. La sincronización entre código y lienzo es automática.",
+      "import_title": "Importar DDL",
+      "import_desc": "Sincroniza tu estructura actual de PostgreSQL o MySQL mediante scripts SQL, sentencias DDL o cadenas de conexión.",
+      "explorer_title": "Explorador de Datos",
+      "explorer_desc": "Ejecuta consultas de alto rendimiento en tus nodos activos, explora modelos de contenido y edita documentos simulados en el Estudio de Datos."
+    },
+    "recent_schemas": {
+      "title": "Esquemas Recientes",
+      "tag": "Actividad del Editor",
+      "view_all": "Ver Todos los Esquemas",
+      "col_name": "Nombre del Esquema",
+      "col_tables": "Tablas",
+      "col_type": "Tipo",
+      "col_modified": "Última Modificación",
+      "col_actions": "Acciones",
+      "btn_edit": "Abrir en Editor",
+      "btn_delete": "Eliminar Esquema",
+      "active": "ACTIVO",
+      "tables_count": "{{count}} Tablas"
+    },
+    "cluster": {
+      "title": "Salud del Clúster",
+      "live": "En Vivo",
+      "cpu": "CARGA CPU",
+      "memory": "MEMORIA",
+      "connections": "CONEXIONES",
+      "latency": "LATENCIA",
+      "history_title": "Historial de uso del núcleo CPU (14s)",
+      "history_cap": "100% capacidad"
+    },
+    "alerts": {
+      "title": "Alertas del Sistema",
+      "no_alerts": "Todos los sistemas operando normalmente. Sin alertas activas.",
+      "clear_all": "Limpiar Todas las Alertas"
+    }
+  },
+  "settings": {
+    "title": "Ajustes de Espacio de Trabajo",
+    "subtitle": "Configura el límite de conexiones locales, credenciales de la base de datos, barreras de seguridad para consultas y preferencias de interfaz.",
+    "btn_save": "Guardar",
+    "success_title": "Ajustes Sincronizados",
+    "success_desc": "Las variables de entorno de la base de datos local se sincronizaron con los búferes en tiempo de ejecución del clúster.",
+    "connection": {
+      "title": "Parámetros de Conexión",
+      "host": "URI del Host del Clúster",
+      "pool": "Límite de Pool de Conexiones",
+      "conn": "conexiones"
+    },
+    "guards": {
+      "title": "Barreras de Consultas",
+      "autocommit_title": "Transacciones Auto-commit",
+      "autocommit_desc": "Confirma automáticamente todos los cambios de las sentencias tras la ejecución exitosa de una consulta sin requerir explícitamente COMMIT.",
+      "safe_title": "Actualizaciones Seguras",
+      "safe_desc": "Rechaza cualquier comando UPDATE o DELETE que no tenga una cláusula WHERE objetivo. Previene el borrado masivo accidental de entidades."
+    },
+    "ui": {
+      "title": "Preferencias de Interfaz",
+      "language": "Idioma",
+      "theme_accent": "Color de Acento del Tema"
+    },
+    "reset": {
+      "title": "Restaurar valores predeterminados",
+      "desc": "Restaura los límites de conexión, divisiones de diseño y esquemas simulados en caché a sus valores iniciales del sistema.",
+      "btn": "Reiniciar Ajustes"
+    }
+  },
+  "studio": {
+    "sub_nav_query": "Motor de Consultas SQL",
+    "sub_nav_data": "Explorador de Tablas"
+  }
+}
