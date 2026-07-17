@@ -6,7 +6,7 @@ import Dashboard from './components/Dashboard';
 import QueryEngine from './features/studio/query/QueryEnginePage';
 import ERDDesigner from './features/erd/ERDDesignerPage';
 import TableBrowser from './components/TableBrowser';
-import DocBrowser from './components/DocBrowser';
+import DocBrowser from './features/docs/DocBrowserPage';
 import Settings from './components/Settings';
 import { Button } from '@/components/ui/button';
 import { useThemeStore } from './store/useThemeStore';
