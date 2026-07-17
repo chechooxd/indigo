@@ -1,0 +1,25 @@
+{
+  "name": "@indigodb/generator",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist .turbo",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@indigodb/ast": "workspace:*",
+    "@indigodb/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
