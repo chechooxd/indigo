@@ -22,6 +22,7 @@ import {
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
+import { migrateDev, migrateDeploy, migrateStatus } from "./migrate-runner.js";
 
 const program = new Command();
 
@@ -104,6 +105,40 @@ db
     } finally {
       await client.end();
     }
+  });
+
+// ─── migrate ─────────────────────────────────────────────────────────────────
+// Versioned migrations with history (like `prisma migrate`), vs. the historyless
+// `db push`. `dev` creates+applies; `deploy` applies pending files; `status` lists.
+const migrate = program.command("migrate").description("Versioned schema migrations (with history).");
+migrate
+  .command("dev")
+  .description("Create and apply a new migration from schema changes.")
+  .requiredOption("-n, --name <name>", "Migration name")
+  .option("-s, --schema <path>", "Schema file path", "schema.indigo")
+  .action(async (options: { name: string; schema: string }) => {
+    loadEnv();
+    const { resolved } = loadSchema(options.schema);
+    const connectionString = resolveConnectionString(resolved);
+    await migrateDev({ resolved, name: options.name, connectionString });
+  });
+migrate
+  .command("deploy")
+  .description("Apply all pending migrations (CI/production).")
+  .option("-s, --schema <path>", "Schema file path", "schema.indigo")
+  .action(async (options: { schema: string }) => {
+    loadEnv();
+    const { resolved } = loadSchema(options.schema);
+    await migrateDeploy(resolveConnectionString(resolved));
+  });
+migrate
+  .command("status")
+  .description("Show applied and pending migrations.")
+  .option("-s, --schema <path>", "Schema file path", "schema.indigo")
+  .action(async (options: { schema: string }) => {
+    loadEnv();
+    const { resolved } = loadSchema(options.schema);
+    await migrateStatus(resolveConnectionString(resolved));
   });
 
 // ─── studio ──────────────────────────────────────────────────────────────────

@@ -98,6 +98,29 @@ The client supports `findMany`, `findFirst`, `findUnique`, `create`, `update`,
 `delete`, `count` and `$queryRaw`, with a `where` subset (equality, `in`, `notIn`,
 `lt/lte/gt/gte`, `contains/startsWith/endsWith`), `select`, `orderBy`, `take`, `skip`.
 
+## Migrations
+
+`db push` syncs the database directly (no history) — great for prototyping. For
+production, use **versioned migrations** (like `prisma migrate`):
+
+```bash
+npx indigodb migrate dev --name init      # diff schema → migration file, apply it
+npx indigodb migrate dev --name add_posts # after editing schema.indigo
+npx indigodb migrate deploy               # apply pending migrations (CI/prod)
+npx indigodb migrate status               # what's applied vs pending
+```
+
+Migrations are written to `migrations/<timestamp>_<name>/migration.sql` (commit
+them), tracked in a `_indigo_migrations` table, and cover create/drop tables and
+columns, column type / nullability / default changes, enum additions, indexes
+and foreign keys.
+
+| Command             | Like Prisma          | Use for                    |
+| ------------------- | -------------------- | -------------------------- |
+| `db push`           | `prisma db push`     | prototyping, no history    |
+| `migrate dev`       | `prisma migrate dev` | development, with history   |
+| `migrate deploy`    | `prisma migrate deploy` | production / CI          |
+
 ## Studio
 
 ```bash
@@ -133,5 +156,5 @@ parses `.indigo`, `@indigodb/core` resolves it into a relational IR, and the
 
 ## Status
 
-MVP. Post-MVP: incremental migration history, nested `include`/writes in the
-client, MySQL/SQLite dialects, a dedicated `@indigodb/nestjs` module, and npm publishing.
+MVP. Post-MVP: nested `include`/writes in the client, MySQL/SQLite dialects,
+a dedicated `@indigodb/nestjs` module, and npm publishing.

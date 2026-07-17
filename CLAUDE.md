@@ -46,10 +46,11 @@ read the IR rather than re-deriving structure from the raw AST.
   tables/columns, PKs, `foreignKeys`, `indexes`, `relations`, plus doc/diagram metadata
   (`@note`, `@@color`, `@@group`). Also `validate(schema)` and attribute helpers (`attributes.ts`).
   Relations are resolved here from `@relation(fields:/references:)` — the parser does NOT.
-- **`@indigodb/migrator`** — `renderPushSql(resolved)` in `postgres.ts` emits **idempotent**
-  PostgreSQL DDL for `db push` (`CREATE TABLE/TYPE ... IF NOT EXISTS`, guarded `DO $$` blocks
-  for enums/FKs). The older `diff()`/`DialectAdapter` scaffolding remains for future incremental
-  migrations.
+- **`@indigodb/migrator`** — two rendering paths off the IR. `postgres.ts`'s `renderPushSql(resolved)`
+  emits **idempotent** DDL for `db push` (`CREATE ... IF NOT EXISTS`, guarded `DO $$` blocks).
+  `migrate.ts`'s `diffResolved(prev, next)` / `renderMigrationSql` emit **exact, ordered** DDL for
+  versioned migrations (create/drop table, add/drop/alter column, enum add-value, indexes, FKs).
+  The older AST-based `diff()`/`DialectAdapter` scaffolding is unused.
 - **`@indigodb/generator`** — `generateClient(resolved)` in `client.ts` emits a typed `indigo.ts`
   (enums, row/create/update interfaces, model metadata, an `IndigoClient` binding one
   `ModelDelegate` per model). The older `generate()` (interfaces-only string) still exists.
@@ -58,9 +59,11 @@ read the IR rather than re-deriving structure from the raw AST.
   CRUD (`findMany/findUnique/create/update/delete/count`, `where` subset, `select`, `orderBy`).
   Consumed by the generated client.
 - **`@indigodb/cli`** — the `indigodb` binary (commander). Commands: `init`, `generate`,
-  `db push` (executes SQL via `pg`; `--print` to dry-run), `studio`. Shared helpers in
-  `util.ts` (`.env` loader, `loadSchema`, `resolveConnectionString`). `studio-server.ts` is a
-  dependency-free `node:http` server (see below).
+  `db push` (executes SQL via `pg`; `--print` to dry-run), `migrate dev/deploy/status`, `studio`.
+  Shared helpers in `util.ts` (`.env` loader, `loadSchema`, `resolveConnectionString`).
+  `migrate-runner.ts` owns migration files (`migrations/<ts>_<name>/migration.sql`), the
+  `.snapshot.json` used to diff the next migration, and the `_indigo_migrations` history table.
+  `studio-server.ts` is a dependency-free `node:http` server (see below).
 
 **Everything visual lives in the Studio** (`indigodb studio`), by design — the ER diagram +
 editor, data/table browser, SQL console, and documentation. There is intentionally no separate

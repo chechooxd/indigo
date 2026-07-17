@@ -77,6 +77,16 @@ function escapeLiteral(v: string | number | boolean): string {
   return String(v).replace(/'/g, "''");
 }
 
+/**
+ * Renders a column's DEFAULT fragment (without the `DEFAULT` keyword), or
+ * undefined when there is no SQL default (e.g. autoincrement/cuid). Reused by
+ * the migration engine for `ALTER COLUMN ... SET DEFAULT`.
+ */
+export function renderDefaultClause(column: ResolvedColumn): string | undefined {
+  if (!column.default || column.autoincrement) return undefined;
+  return renderDefault(column.default, column);
+}
+
 /** Renders a single column definition line inside CREATE TABLE. */
 export function renderColumn(column: ResolvedColumn): string {
   const parts = [quoteIdent(column.dbName)];

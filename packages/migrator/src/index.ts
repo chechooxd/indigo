@@ -12,9 +12,13 @@ import type { Schema, Model, Field } from "@indigodb/ast";
 export {
   renderPushSql,
   renderColumn,
+  renderDefaultClause,
   mapScalarToPg,
   quoteIdent,
 } from "./postgres.js";
+
+// Versioned migration diff engine (`indigodb migrate`).
+export { diffResolved, renderMigrationSql } from "./migrate.js";
 
 // ─── Column Definition ───────────────────────────────────────────────────────
 
