@@ -1,0 +1,139 @@
+/**
+ * @indigodb/core — Relational IR
+ *
+ * The `ResolvedSchema` is the normalized, relational intermediate representation
+ * produced from a parsed `.indigo` `Schema` AST. It is the single contract that
+ * every downstream consumer (migrator, generator, docs, client, studio) reads,
+ * so nobody re-derives table/column/relation structure from the raw AST.
+ */
+
+import type { RelationType, Datasource } from "@indigodb/ast";
+
+// ─── Defaults ──────────────────────────────────────────────────────────────
+
+/**
+ * A resolved column default. Literal values (`@default("USER")`, `@default(0)`)
+ * become `value`; generator functions (`@default(now())`, `@default(uuid())`,
+ * `@default(autoincrement())`) become `function`.
+ */
+export type ResolvedDefault =
+  | { kind: "value"; value: string | number | boolean }
+  | { kind: "function"; name: string };
+
+// ─── Columns ─────────────────────────────────────────────────────────────────
+
+/** A physical column derived from a scalar or enum field. */
+export interface ResolvedColumn {
+  /** Field name as written in the schema (e.g. "authorId"). */
+  name: string;
+  /** Physical column name (`@map` override, else `name`). */
+  dbName: string;
+  /** Scalar type name or enum name. */
+  type: string;
+  /** Whether `type` refers to an enum rather than a built-in scalar. */
+  isEnum: boolean;
+  /** Whether the column allows NULL (optional field, `Type?`). */
+  nullable: boolean;
+  /** Whether the column is (part of) the primary key (`@id`). */
+  isPk: boolean;
+  /** Whether the column has a UNIQUE constraint (`@unique`). */
+  unique: boolean;
+  /** Whether the column auto-increments (`@default(autoincrement())`). */
+  autoincrement: boolean;
+  /** Resolved default value, if any. */
+  default?: ResolvedDefault;
+  /** Documentation note (`@note("...")`). */
+  note?: string;
+}
+
+// ─── Constraints ─────────────────────────────────────────────────────────────
+
+/** A foreign key produced by a `@relation(fields: [...], references: [...])`. */
+export interface ForeignKey {
+  /** Local physical columns holding the FK. */
+  columns: string[];
+  /** Referenced table physical name. */
+  refTable: string;
+  /** Referenced physical columns. */
+  refColumns: string[];
+  /** Optional constraint name. */
+  name?: string;
+  /** ON DELETE behaviour (`@relation(onDelete: ...)`), verbatim. */
+  onDelete?: string;
+}
+
+/** A secondary index (`@@index`) or composite unique (`@@unique`). */
+export interface ResolvedIndex {
+  /** Physical columns covered by the index. */
+  columns: string[];
+  /** Whether it is a UNIQUE index. */
+  unique: boolean;
+  /** Optional index name. */
+  name?: string;
+}
+
+// ─── Relations (for the client / ERD) ────────────────────────────────────────
+
+/** A relation field on a model (not a physical column). */
+export interface ResolvedRelation {
+  /** Relation field name (e.g. "author", "posts"). */
+  name: string;
+  /** Target model name. */
+  targetModel: string;
+  /** Cardinality. */
+  type: RelationType;
+  /** Whether the relation field is a list (`Post[]`). */
+  list: boolean;
+  /** Whether the relation field is optional (`User?`). */
+  optional: boolean;
+  /** Local FK columns, when this side holds the foreign key. */
+  fkColumns: string[];
+  /** Referenced columns on the target model. */
+  refColumns: string[];
+}
+
+// ─── Tables ──────────────────────────────────────────────────────────────────
+
+export interface ResolvedTable {
+  /** Model name as written (PascalCase, e.g. "User"). */
+  name: string;
+  /** Physical table name (`@@map` override, else `name`). */
+  dbName: string;
+  /** Physical columns. */
+  columns: ResolvedColumn[];
+  /** Primary key physical column names. */
+  primaryKey: string[];
+  /** Foreign keys held by this table. */
+  foreignKeys: ForeignKey[];
+  /** Secondary indexes / composite uniques. */
+  indexes: ResolvedIndex[];
+  /** Relation fields (both FK-holding and inverse sides). */
+  relations: ResolvedRelation[];
+  /** Documentation note (`@@note("...")`). */
+  note?: string;
+  /** ERD colour (`@@color("#rrggbb")`). */
+  color?: string;
+  /** ERD table group (`@@group("name")`). */
+  group?: string;
+}
+
+export interface ResolvedEnum {
+  name: string;
+  values: string[];
+}
+
+/** The fully-resolved relational model of an `.indigo` schema. */
+export interface ResolvedSchema {
+  tables: ResolvedTable[];
+  enums: ResolvedEnum[];
+  /** First datasource block, if declared. */
+  datasource?: Datasource;
+}
+
+// ─── Validation ──────────────────────────────────────────────────────────────
+
+export interface ValidationError {
+  message: string;
+  model?: string;
+  field?: string;
+}
