@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import Dashboard from './components/Dashboard';
+import Dashboard from './features/dashboard/DashboardPage';
 import QueryEngine from './features/studio/query/QueryEnginePage';
 import ERDDesigner from './features/erd/ERDDesignerPage';
 import TableBrowser from './components/TableBrowser';
