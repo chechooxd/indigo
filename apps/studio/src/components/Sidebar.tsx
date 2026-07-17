@@ -4,11 +4,11 @@ import { Home, Database, Code, Book, Settings as SettingsIcon } from 'lucide-rea
 import { ViewTab } from '../types';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useStudioStore } from '../store/useStudioStore';
+import { useNavigationStore } from '../store/useNavigationStore';
 
 export default function Sidebar() {
   const { t } = useTranslation();
-  const { activeTab, setActiveTab } = useStudioStore();
+  const { activeTab, setActiveTab } = useNavigationStore();
   
   const navItems: { id: ViewTab; icon: React.ElementType; label: string }[] = [
     { id: 'home', icon: Home, label: t('sidebar.dashboard') },

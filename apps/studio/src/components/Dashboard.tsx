@@ -2,7 +2,8 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal, Plus, Shield, RefreshCw, Layers, HardDrive, AlertTriangle, CheckCircle, Info, ArrowRight, Edit3, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useStudioStore } from '../store/useStudioStore';
+import { useDataStore } from '../store/useDataStore';
+import { useNavigationStore } from '../store/useNavigationStore';
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -14,8 +15,8 @@ export default function Dashboard() {
     addNewSchema,
     removeSchema,
     toggleSchemaActive,
-    navigate
-  } = useStudioStore();
+  } = useDataStore();
+  const { navigate } = useNavigationStore();
 
   const handleRemoveSchema = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -50,7 +51,10 @@ export default function Dashboard() {
               id="btn-quick-create"
               onClick={() => {
                 const name = prompt('Enter a name for your new database schema:', 'new_analytical_dw');
-                if (name) addNewSchema(name);
+                if (name) {
+                  addNewSchema(name);
+                  navigate('editor');
+                }
               }}
               className="px-4 py-2 bg-white hover:bg-zinc-200 text-black rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-white/5 h-auto"
             >

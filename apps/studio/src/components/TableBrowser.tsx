@@ -13,10 +13,10 @@ import { TableList } from '../features/studio/browser/components/TableList';
 import { CreateTableModal } from '../features/studio/browser/components/CreateTableModal';
 import { RecordInspector } from '../features/studio/browser/components/RecordInspector';
 import { isBackendAvailable, fetchTableRows } from '../lib/api';
-import { useStudioStore } from '../store/useStudioStore';
+import { useDataStore } from '../store/useDataStore';
 
 export default function TableBrowser() {
-  const updateTableRecords = useStudioStore((s) => s.updateTableRecords);
+  const updateTableRecords = useDataStore((s) => s.updateTableRecords);
   const {
     tables,
     filteredTables,

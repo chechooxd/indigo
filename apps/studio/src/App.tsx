@@ -9,13 +9,17 @@ import TableBrowser from './components/TableBrowser';
 import DocBrowser from './components/DocBrowser';
 import Settings from './components/Settings';
 import { Button } from '@/components/ui/button';
-import { useStudioStore } from './store/useStudioStore';
+import { useThemeStore } from './store/useThemeStore';
+import { useNavigationStore } from './store/useNavigationStore';
+import { useDataStore } from './store/useDataStore';
 import { fetchSchema } from './lib/api';
 import { resolvedToTables } from './lib/schema-adapter';
 
 export default function App() {
   const { t } = useTranslation();
-  const { activeTab, studioSubTab, currentCluster, setCurrentCluster, setStudioSubTab, themeAccent, setTables, setResolvedSchema } = useStudioStore();
+  const { activeTab, studioSubTab, currentCluster, setCurrentCluster, setStudioSubTab } = useNavigationStore();
+  const { themeAccent } = useThemeStore();
+  const { setTables, setResolvedSchema } = useDataStore();
 
   useEffect(() => {
     // Inject theme accent class to document for global overrides

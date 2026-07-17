@@ -5,10 +5,12 @@
 
 import React, { useState, useMemo } from 'react';
 import { Search, Share, Terminal, Copy, ArrowRight, Table, Database, Sparkles } from 'lucide-react';
-import { useStudioStore } from '../store/useStudioStore';
+import { useDataStore } from '../store/useDataStore';
+import { useNavigationStore } from '../store/useNavigationStore';
 
 export default function DocBrowser() {
-  const { tables, navigate, resolvedSchema } = useStudioStore();
+  const { tables, resolvedSchema } = useDataStore();
+  const { navigate } = useNavigationStore();
   const [selectedTableIdx, setSelectedTableIdx] = useState<number>(0);
   const [docFilterQuery, setDocFilterQuery] = useState<string>('');
 

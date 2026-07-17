@@ -1,25 +1,16 @@
 import { create } from 'zustand';
 import type { ResolvedSchema } from '@indigodb/core';
-import { Table, RecentSchema, SystemAlert, ViewTab } from '../types';
+import { Table, RecentSchema, SystemAlert } from '../types';
 import { INITIAL_TABLES, INITIAL_SCHEMAS, INITIAL_ALERTS } from '../data/mockData';
 
-interface StudioState {
-  // Theme & Settings
-  themeAccent: string;
-  setThemeAccent: (theme: string) => void;
+/**
+ * The mock `users` table ships 4 sample rows but its `recordCount` is meant to
+ * look like a real production table in the standalone demo — replaced with
+ * the real count once a backend/updateTableRecords writes non-mock data.
+ */
+const MOCK_USERS_DISPLAY_RECORD_COUNT = 1_200_000;
 
-  // Navigation State
-  activeTab: ViewTab;
-  studioSubTab: 'query' | 'data';
-  currentCluster: string;
-  
-  // Navigation Actions
-  setActiveTab: (tab: ViewTab) => void;
-  setStudioSubTab: (subTab: 'query' | 'data') => void;
-  setCurrentCluster: (cluster: string) => void;
-  navigate: (tab: ViewTab, subTab?: string) => void;
-
-  // Data State
+interface DataState {
   schemas: RecentSchema[];
   alerts: SystemAlert[];
   tables: Table[];
@@ -27,11 +18,12 @@ interface StudioState {
   resolvedSchema: ResolvedSchema | null;
   setResolvedSchema: (schema: ResolvedSchema | null) => void;
 
-  // Data Actions
   setSchemas: (schemas: RecentSchema[] | ((prev: RecentSchema[]) => RecentSchema[])) => void;
   setAlerts: (alerts: SystemAlert[] | ((prev: SystemAlert[]) => SystemAlert[])) => void;
   setTables: (tables: Table[] | ((prev: Table[]) => Table[])) => void;
-  
+
+  /** Adds a new schema and makes it active. Does not change navigation — callers that
+   * want to jump to the editor should also call `useNavigationStore().navigate('editor')`. */
   addNewSchema: (name: string) => void;
   removeSchema: (id: string) => void;
   toggleSchemaActive: (id: string) => void;
@@ -40,36 +32,13 @@ interface StudioState {
   updateTableRecords: (tableName: string, newRecords: Record<string, any>[]) => void;
 }
 
-export const useStudioStore = create<StudioState>((set) => ({
-  // Theme State
-  themeAccent: localStorage.getItem('themeAccent') || 'indigo',
-  setThemeAccent: (theme) => {
-    localStorage.setItem('themeAccent', theme);
-    set({ themeAccent: theme });
-  },
-
-  // Initial Navigation State
-  activeTab: 'home',
-  studioSubTab: 'query',
-  currentCluster: 'Production Cluster',
-
-  // Navigation Actions
-  setActiveTab: (tab) => set({ activeTab: tab }),
-  setStudioSubTab: (subTab) => set({ studioSubTab: subTab }),
-  setCurrentCluster: (cluster) => set({ currentCluster: cluster }),
-  navigate: (tab, subTab) => set((state) => ({ 
-    activeTab: tab, 
-    studioSubTab: subTab ? (subTab as 'query' | 'data') : state.studioSubTab 
-  })),
-
-  // Initial Data State
+export const useDataStore = create<DataState>((set) => ({
   schemas: INITIAL_SCHEMAS,
   alerts: INITIAL_ALERTS,
   tables: INITIAL_TABLES,
   resolvedSchema: null,
   setResolvedSchema: (schema) => set({ resolvedSchema: schema }),
 
-  // Data Actions
   setSchemas: (updater) => set((state) => ({
     schemas: typeof updater === 'function' ? updater(state.schemas) : updater
   })),
@@ -93,7 +62,6 @@ export const useStudioStore = create<StudioState>((set) => ({
       };
       return {
         schemas: [newSchema, ...state.schemas.map(s => ({ ...s, isActive: false }))],
-        activeTab: 'editor'
       };
     });
   },
@@ -114,7 +82,7 @@ export const useStudioStore = create<StudioState>((set) => ({
         return {
           ...t,
           records: newRecords,
-          recordCount: newRecords.length === 4 ? 1200000 : newRecords.length
+          recordCount: newRecords.length === 4 ? MOCK_USERS_DISPLAY_RECORD_COUNT : newRecords.length
         };
       }
       return t;

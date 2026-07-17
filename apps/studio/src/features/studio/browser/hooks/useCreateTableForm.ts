@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { TableColumn, Table } from '../../../../types';
-import { useStudioStore } from '../../../../store/useStudioStore';
+import { useDataStore } from '../../../../store/useDataStore';
 
 const DEFAULT_COLUMNS: TableColumn[] = [
   { name: 'id', type: 'UUID', defaultValue: 'gen_random_uuid()', isPK: true, isNN: true, isUQ: true, description: 'Unique identifier.' },
@@ -29,7 +29,7 @@ export interface UseCreateTableFormReturn {
 }
 
 export function useCreateTableForm(): UseCreateTableFormReturn {
-  const { setTables } = useStudioStore();
+  const { setTables } = useDataStore();
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [newTableName, setNewTableName] = useState<string>('');

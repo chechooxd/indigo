@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { Table } from '../../../../types';
-import { useStudioStore } from '../../../../store/useStudioStore';
+import { useDataStore } from '../../../../store/useDataStore';
 
 export interface UseRecordEditorReturn {
   selectedRowIndex: number;
@@ -27,7 +27,7 @@ export interface UseRecordEditorReturn {
 }
 
 export function useRecordEditor(activeTableIndex: number): UseRecordEditorReturn {
-  const { updateTableRecords } = useStudioStore();
+  const { updateTableRecords } = useDataStore();
 
   const [selectedRowIndex, setSelectedRowIndex] = useState<number>(0);
   const [detailsPanelOpen, setDetailsPanelOpen] = useState<boolean>(true);

@@ -5,11 +5,11 @@
 
 import React, { useState } from 'react';
 import { Play, Sparkles, RefreshCw, Folder, ChevronRight, FileText, AlertCircle, Database } from 'lucide-react';
-import { useStudioStore } from '../store/useStudioStore';
+import { useDataStore } from '../store/useDataStore';
 import { isBackendAvailable, runQuery } from '../lib/api';
 
 export default function QueryEngine() {
-  const { tables } = useStudioStore();
+  const { tables } = useDataStore();
   const [selectedTableInBrowser, setSelectedTableInBrowser] = useState<string>('users');
   const [queryCode, setQueryCode] = useState<string>('SELECT * FROM users LIMIT 10;');
   const [queryResults, setQueryResults] = useState<{ columns: string[]; rows: any[] } | null>({

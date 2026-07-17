@@ -5,7 +5,7 @@
 
 import { useState, useMemo } from 'react';
 import { Table } from '../../../../types';
-import { useStudioStore } from '../../../../store/useStudioStore';
+import { useDataStore } from '../../../../store/useDataStore';
 
 export interface UseTableDataReturn {
   /** Full list from the store */
@@ -35,7 +35,7 @@ export interface UseTableDataReturn {
 }
 
 export function useTableData(): UseTableDataReturn {
-  const { tables } = useStudioStore();
+  const { tables } = useDataStore();
 
   const [activeTableIndex, setActiveTableIndex] = useState<number>(0);
   const [tableFilterQuery, setTableFilterQuery] = useState<string>('');

@@ -6,11 +6,11 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Settings as SettingsIcon, Save, Database, Shield, Sliders, CheckCircle, Palette, Globe } from 'lucide-react';
-import { useStudioStore } from '../store/useStudioStore';
+import { useThemeStore } from '../store/useThemeStore';
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
-  const { themeAccent, setThemeAccent } = useStudioStore();
+  const { themeAccent, setThemeAccent } = useThemeStore();
   const [host, setHost] = useState('production-indigo-cluster.c6e83d8a.us-east-1.rds.amazonaws.com');
   const [poolLimit, setPoolLimit] = useState(50);
   const [autocommit, setAutocommit] = useState(true);
