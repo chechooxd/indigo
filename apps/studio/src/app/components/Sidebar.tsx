@@ -1,15 +1,15 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Home, Database, Code, Book, Settings as SettingsIcon } from 'lucide-react';
-import { ViewTab } from '../types';
+import { ViewTab } from '../../types';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useNavigationStore } from '../store/useNavigationStore';
+import { useNavigationStore } from '../../store/useNavigationStore';
 
 export default function Sidebar() {
   const { t } = useTranslation();
   const { activeTab, setActiveTab } = useNavigationStore();
-  
+
   const navItems: { id: ViewTab; icon: React.ElementType; label: string }[] = [
     { id: 'home', icon: Home, label: t('sidebar.dashboard') },
     { id: 'studio', icon: Database, label: t('sidebar.studio') },
@@ -19,7 +19,7 @@ export default function Sidebar() {
 
   return (
     <aside id="main-sidebar" className="w-[68px] bg-[#09090b] border-r border-zinc-800/80 flex flex-col items-center py-4 z-40 shrink-0">
-      <div 
+      <div
         id="logo-container"
         className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-8 cursor-pointer hover:scale-105 transition-transform"
       >
@@ -68,8 +68,8 @@ export default function Sidebar() {
                   variant="ghost"
                   onClick={() => setActiveTab('settings')}
                   className={`flex items-center justify-center w-12 h-12 rounded-xl transition-colors ${
-                    activeTab === 'settings' 
-                      ? 'text-white bg-zinc-900 border border-zinc-800 shadow-inner hover:bg-zinc-900 hover:text-white' 
+                    activeTab === 'settings'
+                      ? 'text-white bg-zinc-900 border border-zinc-800 shadow-inner hover:bg-zinc-900 hover:text-white'
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/40'
                   }`}
                 />

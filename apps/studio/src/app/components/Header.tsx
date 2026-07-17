@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ENVIRONMENTS } from '../constants';
 
 interface HeaderProps {
   currentCluster: string;
@@ -21,14 +22,8 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
   const { t } = useTranslation();
   const [simulatedDark, setSimulatedDark] = useState(true);
 
-  const environments = [
-    { name: 'Production Cluster', type: 'PROD', host: 'us-east-1' },
-    { name: 'Staging Environment', type: 'STAGE', host: 'us-east-5' },
-    { name: 'Development Sandbox', type: 'DEV', host: 'localhost' },
-  ];
-
   return (
-    <header 
+    <header
       id="top-header"
       className="bg-[#09090b] text-zinc-300 flex justify-between items-center px-6 w-full h-[48px] z-50 border-b border-zinc-800/80 shrink-0"
     >
@@ -36,7 +31,7 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
         <span className="font-sans font-extrabold text-lg tracking-tight text-white cursor-default">
           IndigoDB <span className="text-zinc-400 text-xs px-1.5 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 font-mono font-medium ml-1">{t('header.version')}</span>
         </span>
-        
+
         {titleSuffix && (
           <>
             <div className="h-4 w-px bg-zinc-800 mx-1"></div>
@@ -66,7 +61,7 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
               {t('header.environments.select')}
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-zinc-800/50" />
-            {environments.map((env) => (
+            {ENVIRONMENTS.map((env) => (
               <DropdownMenuItem
                 key={env.name}
                 onClick={() => onClusterChange(env.name)}
@@ -81,8 +76,8 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold font-mono ${
-                    env.type === 'PROD' 
-                      ? 'bg-zinc-900 text-zinc-300 border border-zinc-800' 
+                    env.type === 'PROD'
+                      ? 'bg-zinc-900 text-zinc-300 border border-zinc-800'
                       : env.type === 'STAGE'
                       ? 'bg-zinc-900 text-zinc-400 border border-zinc-800'
                       : 'bg-zinc-900 text-zinc-500 border border-zinc-805'
@@ -107,7 +102,7 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
         </div>
 
         {/* Theme state switcher */}
-        <Button 
+        <Button
           id="theme-toggle-btn"
           variant="ghost"
           onClick={() => setSimulatedDark(!simulatedDark)}
@@ -118,7 +113,7 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
         </Button>
 
         {/* Help button */}
-        <Button 
+        <Button
           id="help-btn"
           variant="ghost"
           onClick={() => alert("Welcome to IndigoDB! Toggle sidebar options to design schemas, browse tables, run SQL queries, and consult documentation.")}

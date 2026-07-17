@@ -6,16 +6,16 @@
 import React, { useEffect } from 'react';
 import { RefreshCw, Filter, ArrowUpDown, Search, Plus, Check, Circle } from 'lucide-react';
 
-import { useTableData } from '../features/studio/browser/hooks/useTableData';
-import { useCreateTableForm } from '../features/studio/browser/hooks/useCreateTableForm';
-import { useRecordEditor } from '../features/studio/browser/hooks/useRecordEditor';
-import { TableList } from '../features/studio/browser/components/TableList';
-import { CreateTableModal } from '../features/studio/browser/components/CreateTableModal';
-import { RecordInspector } from '../features/studio/browser/components/RecordInspector';
-import { isBackendAvailable, fetchTableRows } from '../lib/api';
-import { useDataStore } from '../store/useDataStore';
+import { useTableData } from './hooks/useTableData';
+import { useCreateTableForm } from './hooks/useCreateTableForm';
+import { useRecordEditor } from './hooks/useRecordEditor';
+import { TableList } from './components/TableList';
+import { CreateTableModal } from './components/CreateTableModal';
+import { RecordInspector } from './components/RecordInspector';
+import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
+import { useDataStore } from '../../../store/useDataStore';
 
-export default function TableBrowser() {
+export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
   const {
     tables,
