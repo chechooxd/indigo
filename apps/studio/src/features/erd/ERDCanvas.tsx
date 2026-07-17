@@ -1,0 +1,173 @@
+/**
+ * The ERD canvas, built on React Flow (@xyflow/react).
+ *
+ * React Flow owns pan/zoom/drag/selection/fit-view natively; we only build the
+ * table + group nodes and the field-level relation edges from the parsed schema.
+ * Edges are derived from live node positions each render, so they re-route as
+ * tables are dragged (dbdiagram-style) with no custom routing code.
+ */
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ReactFlow,
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  Panel,
+  applyNodeChanges,
+  useNodesState,
+  useReactFlow,
+  type NodeChange,
+  type NodeTypes,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Grid3x3, Network, Snowflake, LayoutGrid } from 'lucide-react';
+
+import type { CanvasNode, ERDLink, ERDTableGroup } from '../../types/erd.types';
+import { applyLayout, type LayoutType } from '../../shared/lib/layout-engine';
+import TableNode from './components/TableNode';
+import GroupNode from './components/GroupNode';
+import {
+  buildEdges,
+  buildGroupNodes,
+  toTableNode,
+  type TableRFNode,
+} from './lib/build-graph';
+
+const nodeTypes: NodeTypes = { table: TableNode, group: GroupNode };
+
+interface ERDCanvasProps {
+  parsedNodes: CanvasNode[];
+  links: ERDLink[];
+  tableGroups: ERDTableGroup[];
+  hiddenTables: Set<string>;
+}
+
+export default function ERDCanvas({ parsedNodes, links, tableGroups, hiddenTables }: ERDCanvasProps) {
+  const [tableNodes, setTableNodes] = useNodesState<TableRFNode>([]);
+  const [showGrid, setShowGrid] = useState(true);
+  const { fitView } = useReactFlow();
+
+  // Reconcile parsed schema → table nodes, preserving dragged positions.
+  useEffect(() => {
+    setTableNodes(prev => {
+      const prevById = new Map(prev.map(n => [n.id, n]));
+      return parsedNodes.map(pn => {
+        const base = toTableNode(pn, hiddenTables.has(pn.name));
+        const existing = prevById.get(pn.id);
+        return existing
+          ? { ...base, position: existing.position, selected: existing.selected }
+          : base;
+      });
+    });
+  }, [parsedNodes, hiddenTables, setTableNodes]);
+
+  const groupNodes = useMemo(
+    () => buildGroupNodes(tableNodes, tableGroups),
+    [tableNodes, tableGroups],
+  );
+
+  const nodes = useMemo(() => [...groupNodes, ...tableNodes], [groupNodes, tableNodes]);
+  const edges = useMemo(
+    () => buildEdges(tableNodes, links, hiddenTables),
+    [tableNodes, links, hiddenTables],
+  );
+
+  // Only table nodes are interactive; ignore changes to derived group nodes.
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const tableChanges = changes.filter(
+        c => !('id' in c) || !String((c as { id: string }).id).startsWith('group-'),
+      );
+      setTableNodes(nds => applyNodeChanges(tableChanges, nds) as TableRFNode[]);
+    },
+    [setTableNodes],
+  );
+
+  const runLayout = useCallback(
+    (type: LayoutType) => {
+      setTableNodes(nds => {
+        const canvasNodes: CanvasNode[] = nds.map(n => ({
+          id: n.id,
+          name: n.data.name,
+          x: n.position.x,
+          y: n.position.y,
+          color: n.data.color ?? '',
+          fields: n.data.fields,
+        }));
+        const laid = applyLayout(type, canvasNodes, links);
+        const posById = new Map(laid.map(c => [c.id, { x: c.x, y: c.y }]));
+        return nds.map(n => ({ ...n, position: posById.get(n.id) ?? n.position }));
+      });
+      window.setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 60);
+    },
+    [links, setTableNodes, fitView],
+  );
+
+  return (
+    <ReactFlow
+      colorMode="dark"
+      nodes={nodes}
+      edges={edges}
+      onNodesChange={onNodesChange}
+      nodeTypes={nodeTypes}
+      fitView
+      minZoom={0.2}
+      maxZoom={2}
+      proOptions={{ hideAttribution: true }}
+      defaultEdgeOptions={{
+        type: 'smoothstep',
+        style: { stroke: '#6b7280', strokeWidth: 2 },
+      }}
+    >
+      {showGrid && <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#27272a" />}
+      <Controls showInteractive={false} />
+      <MiniMap
+        pannable
+        zoomable
+        nodeColor={n => (n.type === 'group' ? 'transparent' : ((n.data as { color?: string }).color ?? '#3f3f46'))}
+        maskColor="rgba(9,9,11,0.6)"
+      />
+      <Panel position="top-right" className="flex gap-1 bg-zinc-900/90 border border-zinc-800 p-1 rounded-lg shadow-xl backdrop-blur">
+        <ToolbarButton title="Organización: Izquierda-derecha" onClick={() => runLayout('lr')}>
+          <Network size={15} />
+        </ToolbarButton>
+        <ToolbarButton title="Organización: Snowflake" onClick={() => runLayout('snowflake')}>
+          <Snowflake size={15} />
+        </ToolbarButton>
+        <ToolbarButton title="Organización: Compacto" onClick={() => runLayout('compact')}>
+          <LayoutGrid size={15} />
+        </ToolbarButton>
+        <div className="w-px bg-zinc-800 mx-0.5" />
+        <ToolbarButton title="Activar/Desactivar Cuadrícula" active={showGrid} onClick={() => setShowGrid(g => !g)}>
+          <Grid3x3 size={15} />
+        </ToolbarButton>
+      </Panel>
+    </ReactFlow>
+  );
+}
+
+function ToolbarButton({
+  title,
+  active,
+  onClick,
+  children,
+}: {
+  title: string;
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`p-1.5 rounded cursor-pointer transition-colors ${
+        active ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}

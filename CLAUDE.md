@@ -79,8 +79,9 @@ The old regex parser in `src/lib/parser.ts` now only provides the ERD view-model
 
 Studio internals: single Zustand store (`src/store/useStudioStore.ts`, which also holds the
 `resolvedSchema` used by `DocBrowser.tsx` for real relations); `@/` alias → `apps/studio/src`;
-shadcn-style UI in `src/components/ui/`; feature modules in `src/features/` (`erd/` built on
-`@xyflow/react` with orthogonal routing in `src/lib/routing.ts`; `studio/browser/` = data browser);
+shadcn-style UI in `src/components/ui/`; feature modules in `src/features/` (`erd/` is a custom
+canvas/SVG renderer — not a graph library — with orthogonal edge routing in `src/lib/routing.ts`
+and node sizing in `src/shared/lib/node-geometry.ts`; `studio/browser/` = data browser);
 i18n via `react-i18next` (`src/i18n/locales/` en/es).
 
 ### CLI Studio server (`packages/cli/src/studio-server.ts`)

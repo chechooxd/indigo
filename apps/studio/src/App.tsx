@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import QueryEngine from './components/QueryEngine';
-import ERDDesigner from './components/ERDDesigner';
+import ERDDesigner from './features/erd/ERDDesignerPage';
 import TableBrowser from './components/TableBrowser';
 import DocBrowser from './components/DocBrowser';
 import Settings from './components/Settings';
