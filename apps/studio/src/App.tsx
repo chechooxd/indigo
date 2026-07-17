@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
-import QueryEngine from './components/QueryEngine';
+import QueryEngine from './features/studio/query/QueryEnginePage';
 import ERDDesigner from './features/erd/ERDDesignerPage';
 import TableBrowser from './components/TableBrowser';
 import DocBrowser from './components/DocBrowser';
