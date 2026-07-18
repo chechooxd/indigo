@@ -56,7 +56,7 @@ export class IndigoParser extends CstParser {
 
   // ─── Model ──────────────────────────────────────────────────────────
 
-  /** modelDeclaration: 'model' Identifier '{' (fieldDecl | blockAttribute)* '}' */
+  /** modelDeclaration: 'Table' Identifier '{' (fieldDecl | blockAttribute)* '}' */
   public modelDeclaration = this.RULE("modelDeclaration", () => {
     this.CONSUME(ModelKeyword);
     this.CONSUME(Identifier);

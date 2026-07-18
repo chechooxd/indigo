@@ -9,7 +9,7 @@ export function registerIndigoLanguage(monacoInstance: Monaco) {
     defaultToken: 'invalid',
 
     keywords: [
-      'model', 'enum', 'datasource', 'generator'
+      'Table', 'enum', 'datasource', 'generator'
     ],
 
     typeKeywords: [
@@ -31,7 +31,11 @@ export function registerIndigoLanguage(monacoInstance: Monaco) {
         [/[a-z_$][\w$]*/, { cases: { '@typeKeywords': 'type',
                                      '@keywords': 'keyword',
                                      '@default': 'identifier' } }],
-        [/[A-Z][\w\$]*/, 'type.identifier' ],  // to show class names nicely
+        // 'Table' is the only keyword starting with an uppercase letter, so
+        // this rule must also check @keywords before falling back to a type
+        // name — otherwise it would always win over the keyword rule below
+        // and 'Table' would render identically to a model/type identifier.
+        [/[A-Z][\w\$]*/, { cases: { '@keywords': 'keyword', '@default': 'type.identifier' } }],
 
         // whitespace
         { include: '@whitespace' },

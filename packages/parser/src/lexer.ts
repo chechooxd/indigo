@@ -32,7 +32,7 @@ export const BlockComment = createToken({
 
 export const ModelKeyword = createToken({
   name: "ModelKeyword",
-  pattern: /model/,
+  pattern: /Table/,
   longer_alt: undefined,
 });
 

@@ -22,7 +22,7 @@ enum UserRole {
   GUEST
 }
 
-model User {
+Table User {
   id        Int      @id @default(autoincrement())
   email     String   @unique @note("Corporate email")
   name      String?
@@ -34,7 +34,7 @@ model User {
   @@group("core")
 }
 
-model Post {
+Table Post {
   id       Int     @id @default(autoincrement())
   title    String
   content  String?

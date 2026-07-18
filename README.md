@@ -18,10 +18,11 @@ query console, and the schema documentation.
 
 ## The `.indigo` language
 
-A single Prisma-style schema. Doc/diagram metadata (`@note`, `@@color`, `@@group`)
-lives in the same file as the ORM semantics (`@id`, `@relation`, …):
+A single schema: `Table` blocks (dbdiagram-style) carry Prisma-style attributes.
+Doc/diagram metadata (`@note`, `@@color`, `@@group`) lives in the same file as
+the ORM semantics (`@id`, `@relation`, …):
 
-```prisma
+```
 datasource db {
   provider = "postgresql"
   url = env("DATABASE_URL")
@@ -34,7 +35,7 @@ generator client {
 
 enum UserRole { ADMIN USER GUEST }
 
-model User {
+Table User {
   id        Int      @id @default(autoincrement())
   email     String   @unique @note("Corporate email")
   role      UserRole @default(USER)
@@ -45,7 +46,7 @@ model User {
   @@group("core")
 }
 
-model Post {
+Table Post {
   id       Int    @id @default(autoincrement())
   title    String
   authorId Int    @map("author_id")
