@@ -24,7 +24,6 @@ interface ERDSidebarProps {
   sidebarSearch: string;
   groupBy: 'schema' | 'group';
   onClose: () => void;
-  onOpen: () => void;
   onSearchChange: (value: string) => void;
   onGroupByChange: (value: 'schema' | 'group') => void;
   onToggleFolder: (folderId: string) => void;
@@ -39,23 +38,12 @@ export default function ERDSidebar({
   sidebarSearch,
   groupBy,
   onClose,
-  onOpen,
   onSearchChange,
   onGroupByChange,
   onToggleFolder,
   onToggleVisibility,
 }: ERDSidebarProps) {
-  if (!isOpen) {
-    return (
-      <button
-        onClick={onOpen}
-        className="absolute right-4 top-4 z-20 p-2.5 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 rounded-lg shadow-xl hover:bg-zinc-800 transition-colors cursor-pointer"
-        title="Abrir Vistas del diagrama"
-      >
-        <Layers size={20} />
-      </button>
-    );
-  }
+  if (!isOpen) return null;
 
   return (
     <div className="absolute right-4 top-4 bottom-4 w-72 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-20 flex flex-col overflow-hidden">

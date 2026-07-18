@@ -22,7 +22,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Grid3x3, Network, Snowflake, LayoutGrid } from 'lucide-react';
+import { Grid3x3, Network, Snowflake, LayoutGrid, Search } from 'lucide-react';
 
 import type { CanvasNode, ERDLink, ERDTableGroup } from '../../types/erd.types';
 import { applyLayout, type LayoutType } from '../../shared/lib/layout-engine';
@@ -42,9 +42,18 @@ interface ERDCanvasProps {
   links: ERDLink[];
   tableGroups: ERDTableGroup[];
   hiddenTables: Set<string>;
+  isSidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }
 
-export default function ERDCanvas({ parsedNodes, links, tableGroups, hiddenTables }: ERDCanvasProps) {
+export default function ERDCanvas({
+  parsedNodes,
+  links,
+  tableGroups,
+  hiddenTables,
+  isSidebarOpen,
+  onToggleSidebar,
+}: ERDCanvasProps) {
   const [tableNodes, setTableNodes] = useNodesState<TableRFNode>([]);
   const [showGrid, setShowGrid] = useState(true);
   const { fitView } = useReactFlow();
@@ -142,6 +151,10 @@ export default function ERDCanvas({ parsedNodes, links, tableGroups, hiddenTable
         <div className="w-px bg-zinc-800 mx-0.5" />
         <ToolbarButton title="Activar/Desactivar Cuadrícula" active={showGrid} onClick={() => setShowGrid(g => !g)}>
           <Grid3x3 size={15} />
+        </ToolbarButton>
+        <div className="w-px bg-zinc-800 mx-0.5" />
+        <ToolbarButton title="Vistas del diagrama" active={isSidebarOpen} onClick={onToggleSidebar}>
+          <Search size={15} />
         </ToolbarButton>
       </Panel>
     </ReactFlow>

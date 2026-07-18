@@ -186,7 +186,6 @@ export default function ERDDesignerPage() {
             sidebarSearch={sidebarSearch}
             groupBy={groupBy}
             onClose={() => setIsSidebarOpen(false)}
-            onOpen={() => setIsSidebarOpen(true)}
             onSearchChange={setSidebarSearch}
             onGroupByChange={setGroupBy}
             onToggleFolder={toggleFolder}
@@ -199,6 +198,8 @@ export default function ERDDesignerPage() {
               links={links}
               tableGroups={tableGroups}
               hiddenTables={hiddenTables}
+              isSidebarOpen={isSidebarOpen}
+              onToggleSidebar={() => setIsSidebarOpen(o => !o)}
             />
           </ReactFlowProvider>
         </section>
