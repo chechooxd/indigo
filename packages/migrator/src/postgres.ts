@@ -152,6 +152,66 @@ function renderEnum(name: string, values: string[]): string {
   ].join("\n");
 }
 
+// ─── Realtime (@@realtime → pg_notify triggers) ──────────────────────────────
+
+/** NOTIFY channel every realtime trigger publishes to. */
+export const REALTIME_CHANNEL = "indigo_events";
+
+/** Stable trigger name for a realtime table (kept in sync with migrate.ts). */
+export function triggerName(table: ResolvedTable): string {
+  return `indigo_rt_${table.dbName}`;
+}
+
+/**
+ * Generic row-change notify function shared by every `@@realtime` trigger.
+ * PK columns arrive via TG_ARGV; payloads over NOTIFY's 8000-byte limit degrade
+ * to a keyed notification (`partial: true`) so the client can refetch by PK.
+ */
+export function renderNotifyFunction(): string {
+  return `CREATE OR REPLACE FUNCTION indigo_notify_trigger() RETURNS trigger AS $indigo$
+DECLARE
+  payload jsonb;
+  pk jsonb := '{}'::jsonb;
+  rec jsonb;
+  col text;
+BEGIN
+  rec := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  FOREACH col IN ARRAY TG_ARGV LOOP
+    pk := pk || jsonb_build_object(col, rec -> col);
+  END LOOP;
+  payload := jsonb_build_object(
+    'table', TG_TABLE_NAME,
+    'op',    TG_OP,
+    'pk',    pk,
+    'txid',  txid_current()::text,
+    'ts',    to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'new',   CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN to_jsonb(NEW) END,
+    'old',   CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN to_jsonb(OLD) END
+  );
+  IF octet_length(payload::text) > 7800 THEN
+    payload := (payload - 'new' - 'old') || jsonb_build_object('partial', true);
+  END IF;
+  PERFORM pg_notify('${REALTIME_CHANNEL}', payload::text);
+  RETURN NULL;
+END;
+$indigo$ LANGUAGE plpgsql;`;
+}
+
+/** DROP+CREATE trigger pair (idempotent without requiring PG14's OR REPLACE). */
+export function renderCreateTrigger(table: ResolvedTable): string {
+  const args = table.primaryKey.map((c) => `'${escapeLiteral(c)}'`).join(", ");
+  return [
+    renderDropTrigger(table),
+    `CREATE TRIGGER ${quoteIdent(triggerName(table))}`,
+    `  AFTER INSERT OR UPDATE OR DELETE ON ${quoteIdent(table.dbName)}`,
+    `  FOR EACH ROW EXECUTE FUNCTION indigo_notify_trigger(${args});`,
+  ].join("\n");
+}
+
+export function renderDropTrigger(table: ResolvedTable): string {
+  return `DROP TRIGGER IF EXISTS ${quoteIdent(triggerName(table))} ON ${quoteIdent(table.dbName)};`;
+}
+
 /**
  * Renders the full idempotent DDL script that syncs a Postgres database to the
  * given resolved schema. Safe to run repeatedly.
@@ -193,6 +253,14 @@ export function renderPushSql(schema: ResolvedSchema): string {
   // 4. Foreign keys (after all tables exist).
   for (const table of schema.tables) {
     for (const fk of table.foreignKeys) blocks.push(renderForeignKey(table, fk));
+  }
+
+  // 5. Realtime notify triggers. Unlike data DDL, push DOES drop triggers on
+  // tables that are no longer @@realtime — a trigger is regenerable metadata
+  // and leaving it firing would keep notifying dropped subscriptions.
+  if (schema.tables.some((t) => t.realtime)) blocks.push(renderNotifyFunction());
+  for (const table of schema.tables) {
+    blocks.push(table.realtime ? renderCreateTrigger(table) : renderDropTrigger(table));
   }
 
   return blocks.join("\n\n") + "\n";

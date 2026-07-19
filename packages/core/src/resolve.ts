@@ -17,6 +17,7 @@ import { SCALAR_TYPES, RelationType } from "@indigodb/ast";
 import type {
   ResolvedSchema,
   ResolvedTable,
+  ResolvedTableGroup,
   ResolvedColumn,
   ResolvedDefault,
   ForeignKey,
@@ -188,6 +189,14 @@ export function resolve(schema: Schema): ResolvedSchema {
     fieldDbNamesByModel.set(model.name, fieldMap);
   }
 
+  // Table group membership: each table inherits its containing group's color.
+  const groupByTable = new Map<string, { name: string; color?: string }>();
+  for (const g of schema.tableGroups) {
+    for (const tableName of g.tables) {
+      groupByTable.set(tableName, { name: g.name, color: g.color });
+    }
+  }
+
   // Pass 2: build tables.
   const tables: ResolvedTable[] = schema.models.map((model) => {
     const fieldToDb = fieldDbNamesByModel.get(model.name)!;
@@ -210,6 +219,8 @@ export function resolve(schema: Schema): ResolvedSchema {
       fieldDbNamesByModel,
     );
 
+    const group = groupByTable.get(model.name);
+
     return {
       name: model.name,
       dbName: modelDbNames.get(model.name)!,
@@ -219,13 +230,21 @@ export function resolve(schema: Schema): ResolvedSchema {
       indexes: resolveIndexes(model, fieldToDb),
       relations,
       note: firstString(getAttr(model.attributes, "note")),
-      color: firstString(getAttr(model.attributes, "color")),
-      group: firstString(getAttr(model.attributes, "group")),
+      realtime: hasAttr(model.attributes, "realtime") || undefined,
+      color: group?.color,
+      group: group?.name,
     };
   });
 
+  const tableGroups: ResolvedTableGroup[] = schema.tableGroups.map((g) => ({
+    name: g.name,
+    color: g.color,
+    tables: g.tables,
+  }));
+
   return {
     tables,
+    tableGroups,
     enums: schema.enums.map((e) => ({
       name: e.name,
       values: e.values.map((v) => v.name),

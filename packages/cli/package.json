@@ -23,6 +23,7 @@
     "@indigodb/parser": "workspace:*",
     "@indigodb/generator": "workspace:*",
     "@indigodb/migrator": "workspace:*",
+    "@indigodb/realtime": "workspace:*",
     "@indigodb/studio": "workspace:*",
     "commander": "^13.0.0",
     "pg": "^8.13.0"

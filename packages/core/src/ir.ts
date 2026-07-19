@@ -111,9 +111,11 @@ export interface ResolvedTable {
   relations: ResolvedRelation[];
   /** Documentation note (`@@note("...")`). */
   note?: string;
-  /** ERD colour (`@@color("#rrggbb")`). */
+  /** Whether the table emits realtime change events (`@@realtime`). */
+  realtime?: boolean;
+  /** ERD colour, inherited from the containing `TableGroup`'s `color`, if any. */
   color?: string;
-  /** ERD table group (`@@group("name")`). */
+  /** Name of the `TableGroup` this table belongs to, if any. */
   group?: string;
 }
 
@@ -122,10 +124,22 @@ export interface ResolvedEnum {
   values: string[];
 }
 
+/** A resolved `TableGroup Name { ... }` block: a named, colored cluster of tables. */
+export interface ResolvedTableGroup {
+  /** Group display name. */
+  name: string;
+  /** Accent color inherited by every table in `tables`. */
+  color?: string;
+  /** Names of the tables (models) belonging to this group. */
+  tables: string[];
+}
+
 /** The fully-resolved relational model of an `.indigo` schema. */
 export interface ResolvedSchema {
   tables: ResolvedTable[];
   enums: ResolvedEnum[];
+  /** Table group declarations, in source order. */
+  tableGroups: ResolvedTableGroup[];
   /** First datasource block, if declared. */
   datasource?: Datasource;
 }

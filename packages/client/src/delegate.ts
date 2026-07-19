@@ -57,8 +57,8 @@ function isFilterObject(value: unknown): value is WhereFilter<unknown> {
 
 export class ModelDelegate<Row, CreateInput, UpdateInput> {
   constructor(
-    private readonly meta: ModelMeta,
-    private readonly exec: Executor,
+    protected readonly meta: ModelMeta,
+    protected readonly exec: Executor,
   ) {}
 
   private col(field: string): string {

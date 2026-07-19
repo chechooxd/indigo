@@ -57,6 +57,14 @@ export function validate(schema: Schema): ValidationError[] {
         model: model.name,
       });
     }
+
+    // @@realtime needs a PK: the notify trigger and client refetch key on it.
+    if (getAttr(model.attributes, "realtime") && pkCount === 0) {
+      errors.push({
+        message: `Model "${model.name}" is @@realtime but has no @id primary key.`,
+        model: model.name,
+      });
+    }
     // Reference fieldNames so the set is not flagged unused if checks evolve.
     void fieldNames;
   }

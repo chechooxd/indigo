@@ -120,6 +120,9 @@ importers:
       '@indigodb/parser':
         specifier: workspace:*
         version: link:../parser
+      '@indigodb/realtime':
+        specifier: workspace:*
+        version: link:../realtime
       '@indigodb/studio':
         specifier: workspace:*
         version: link:../../apps/studio
@@ -139,6 +142,9 @@ importers:
 
   packages/client:
     dependencies:
+      '@indigodb/realtime':
+        specifier: workspace:*
+        version: link:../realtime
       pg:
         specifier: ^8.13.0
         version: 8.22.0
@@ -198,6 +204,25 @@ importers:
         specifier: ^11.0.0
         version: 11.2.0
     devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/realtime:
+    dependencies:
+      '@indigodb/core':
+        specifier: workspace:*
+        version: link:../core
+      pg:
+        specifier: ^8.13.0
+        version: 8.22.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

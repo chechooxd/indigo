@@ -9,8 +9,17 @@
 import pg from "pg";
 import type { Pool as PgPool, PoolConfig } from "pg";
 import type { Executor } from "./types.js";
+import { RealtimeConnectionManager, SseTransport } from "./realtime.js";
 
 const { Pool } = pg;
+
+export interface RealtimeOptions {
+  /**
+   * Base URL of the realtime server (`indigodb realtime` or an embedded
+   * engine). Defaults to `process.env.INDIGO_REALTIME_URL`.
+   */
+  url?: string;
+}
 
 export interface IndigoClientOptions {
   /**
@@ -21,11 +30,15 @@ export interface IndigoClientOptions {
   pool?: PoolConfig;
   /** Log every executed SQL statement (for debugging). */
   log?: boolean;
+  /** Realtime subscription settings (models marked `@@realtime`). */
+  realtime?: RealtimeOptions;
 }
 
 export class IndigoClientBase {
   private readonly pool: PgPool;
   private readonly log: boolean;
+  private readonly realtimeUrl: string | undefined;
+  private realtimeManager: RealtimeConnectionManager | null = null;
 
   constructor(options: IndigoClientOptions = {}) {
     const connectionString =
@@ -37,7 +50,27 @@ export class IndigoClientBase {
     }
     this.pool = new Pool({ connectionString, ...options.pool });
     this.log = options.log ?? false;
+    this.realtimeUrl =
+      options.realtime?.url ?? process.env.INDIGO_REALTIME_URL;
   }
+
+  /**
+   * Lazy shared realtime connection manager, handed to realtime delegates as
+   * a thunk so a missing URL only errors when `subscribe()` is actually called.
+   */
+  protected readonly $realtime = (): RealtimeConnectionManager => {
+    if (!this.realtimeManager) {
+      if (!this.realtimeUrl) {
+        throw new Error(
+          "IndigoClient: realtime is not configured. Pass `realtime: { url }` or set INDIGO_REALTIME_URL.",
+        );
+      }
+      this.realtimeManager = new RealtimeConnectionManager(
+        new SseTransport(this.realtimeUrl),
+      );
+    }
+    return this.realtimeManager;
+  };
 
   /** Parameterized query executor passed to each model delegate. */
   protected readonly exec: Executor = async (sql, params) => {
@@ -54,8 +87,10 @@ export class IndigoClientBase {
     return (await this.exec(sql, params)) as T[];
   }
 
-  /** Closes the underlying connection pool. */
+  /** Closes the connection pool and any open realtime subscriptions. */
   async $disconnect(): Promise<void> {
+    this.realtimeManager?.close();
+    this.realtimeManager = null;
     await this.pool.end();
   }
 }

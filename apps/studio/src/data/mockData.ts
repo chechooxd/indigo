@@ -230,9 +230,6 @@ Table User {
   createdAt DateTime @default(now()) @map("created_at")
   posts     Post[]
   profile   Profile?
-
-  @@color("#c3c0ff")
-  @@group("auth")
 }
 
 Table Post {
@@ -243,7 +240,6 @@ Table Post {
   author   User    @relation(fields: [authorId], references: [id])
 
   @@index([authorId])
-  @@group("auth")
 }
 
 Table Profile {
@@ -251,7 +247,13 @@ Table Profile {
   bio    String?
   userId Int     @unique @map("user_id")
   user   User    @relation(fields: [userId], references: [id])
+}
 
-  @@group("auth")
+TableGroup "Auth" {
+  color = "#c3c0ff"
+
+  User
+  Post
+  Profile
 }
 `;

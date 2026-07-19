@@ -23,6 +23,8 @@ import {
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
 import { migrateDev, migrateDeploy, migrateStatus } from "./migrate-runner.js";
+import { createServer } from "node:http";
+import { RealtimeEngine, REALTIME_PATH } from "@indigodb/realtime";
 
 const program = new Command();
 
@@ -139,6 +141,54 @@ migrate
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     await migrateStatus(resolveConnectionString(resolved));
+  });
+
+// ─── realtime ────────────────────────────────────────────────────────────────
+// Standalone realtime daemon: LISTEN on the notify channel and fan events out
+// to SSE subscribers. The same engine is embedded in `indigodb studio`.
+program
+  .command("realtime")
+  .description("Serve realtime change events (SSE) for @@realtime tables.")
+  .option("-s, --schema <path>", "Schema file path", "schema.indigo")
+  .option("-p, --port <port>", "Port", "4477")
+  .action(async (options: { schema: string; port: string }) => {
+    loadEnv();
+    const { resolved } = loadSchema(options.schema);
+    if (!resolved.tables.some((t) => t.realtime)) {
+      console.error("❌ No @@realtime tables in the schema. Mark a Table with @@realtime first.");
+      process.exit(1);
+    }
+    const connectionString = resolveConnectionString(resolved);
+    const engine = new RealtimeEngine({ connectionString, schema: resolved });
+    const port = Number(options.port);
+
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+      if (url.pathname === REALTIME_PATH) {
+        engine.handleRequest(req, res);
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+    });
+
+    await engine.start();
+    await new Promise<void>((resolve) => server.listen(port, resolve));
+
+    console.log();
+    console.log("  ⚡ IndigoDB Realtime");
+    console.log("  ─────────────────────────────");
+    console.log(`  Tables: ${engine.models.join(", ")}`);
+    console.log(`  SSE:    http://localhost:${port}${REALTIME_PATH}?tables=${engine.models[0]}`);
+    console.log();
+    console.log("  Press Ctrl+C to stop.");
+
+    process.on("SIGINT", () => {
+      void engine.stop().then(() => {
+        server.close();
+        process.exit(0);
+      });
+    });
   });
 
 // ─── studio ──────────────────────────────────────────────────────────────────

@@ -29,9 +29,6 @@ Table User {
   role      UserRole @default(USER)
   createdAt DateTime @default(now()) @map("created_at")
   posts     Post[]
-
-  @@color("#818cf8")
-  @@group("core")
 }
 
 Table Post {
@@ -42,7 +39,15 @@ Table Post {
   author   User    @relation(fields: [authorId], references: [id])
 
   @@index([authorId])
-  @@group("core")
+  // Uncomment to stream INSERT/UPDATE/DELETE events (indigodb realtime):
+  // @@realtime
+}
+
+TableGroup "Core" {
+  color = "#818cf8"
+
+  User
+  Post
 }
 `;
 

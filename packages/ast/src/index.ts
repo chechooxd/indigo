@@ -106,6 +106,21 @@ export interface Model {
   attributes: Attribute[];
 }
 
+// ─── Table Group ─────────────────────────────────────────────────────────────
+
+/**
+ * A `TableGroup` block: a named, colored cluster of tables for the ERD.
+ * `color` is set once on the group and inherited by every table it contains.
+ */
+export interface TableGroup {
+  /** Group display name (e.g. "Order Management"). */
+  name: string;
+  /** Accent color inherited by every table in `tables` (e.g. "#818cf8"). */
+  color?: string;
+  /** Names of the models (tables) that belong to this group. */
+  tables: string[];
+}
+
 // ─── Enum ────────────────────────────────────────────────────────────────────
 
 /** A single value within an enum declaration. */
@@ -185,6 +200,8 @@ export interface Schema {
   models: Model[];
   /** Enum definitions. */
   enums: Enum[];
+  /** Table group declarations (`TableGroup Name { ... }`). */
+  tableGroups: TableGroup[];
 }
 
 /**

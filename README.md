@@ -19,8 +19,9 @@ query console, and the schema documentation.
 ## The `.indigo` language
 
 A single schema: `Table` blocks (dbdiagram-style) carry Prisma-style attributes.
-Doc/diagram metadata (`@note`, `@@color`, `@@group`) lives in the same file as
-the ORM semantics (`@id`, `@relation`, …):
+Doc metadata (`@note`) lives in the same file as the ORM semantics (`@id`,
+`@relation`, …). ERD table groups and their color are declared separately with
+a `TableGroup` block, which every table it lists inherits the color from:
 
 ```
 datasource db {
@@ -41,9 +42,6 @@ Table User {
   role      UserRole @default(USER)
   createdAt DateTime @default(now()) @map("created_at")
   posts     Post[]
-
-  @@color("#818cf8")
-  @@group("core")
 }
 
 Table Post {
@@ -53,7 +51,13 @@ Table Post {
   author   User   @relation(fields: [authorId], references: [id])
 
   @@index([authorId])
-  @@group("core")
+}
+
+TableGroup "Core" {
+  color = "#818cf8"
+
+  User
+  Post
 }
 ```
 

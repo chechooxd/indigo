@@ -40,6 +40,7 @@ export interface Ref {
 
 export interface TableGroup {
   name: string;
+  color?: string;
   tables: string[];
 }
 

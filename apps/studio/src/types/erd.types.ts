@@ -19,5 +19,6 @@ export interface ERDLink {
 
 export interface ERDTableGroup {
   name: string;
+  color?: string;
   tables: string[];
 }

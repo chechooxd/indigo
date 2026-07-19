@@ -30,6 +30,12 @@ export const BlockComment = createToken({
 
 // ─── Keywords ────────────────────────────────────────────────────────────────
 
+export const TableGroupKeyword = createToken({
+  name: "TableGroupKeyword",
+  pattern: /TableGroup/,
+  longer_alt: undefined,
+});
+
 export const ModelKeyword = createToken({
   name: "ModelKeyword",
   pattern: /Table/,
@@ -74,6 +80,7 @@ export const Identifier = createToken({
 });
 
 // Set longer_alt so keywords don't swallow identifiers that start with them
+TableGroupKeyword.LONGER_ALT = Identifier;
 ModelKeyword.LONGER_ALT = Identifier;
 EnumKeyword.LONGER_ALT = Identifier;
 DatasourceKeyword.LONGER_ALT = Identifier;
@@ -125,7 +132,9 @@ export const allTokens = [
   DoubleAt,
   At,
 
-  // Keywords (before Identifier)
+  // Keywords (before Identifier). TableGroupKeyword must precede ModelKeyword
+  // since "TableGroup" would otherwise match the "Table" prefix pattern first.
+  TableGroupKeyword,
   ModelKeyword,
   EnumKeyword,
   DatasourceKeyword,

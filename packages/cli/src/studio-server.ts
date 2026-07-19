@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import pg from "pg";
 import type { ResolvedSchema } from "@indigodb/core";
+import { RealtimeEngine, REALTIME_PATH } from "@indigodb/realtime";
 
 export interface StudioOptions {
   resolved: ResolvedSchema;
@@ -83,6 +84,13 @@ export async function startStudio(options: StudioOptions): Promise<void> {
   const pool = new pg.Pool({ connectionString });
   const distDir = resolveStudioDist();
 
+  // Embedded realtime engine: with @@realtime tables the Studio gets live
+  // change events on the same port, no separate `indigodb realtime` needed.
+  const engine = resolved.tables.some((t) => t.realtime)
+    ? new RealtimeEngine({ connectionString, schema: resolved })
+    : null;
+  if (engine) await engine.start();
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const path = url.pathname;
@@ -97,6 +105,11 @@ export async function startStudio(options: StudioOptions): Promise<void> {
       if (path === "/api/schema/source") {
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
         res.end(source);
+        return;
+      }
+
+      if (path === REALTIME_PATH && engine) {
+        engine.handleRequest(req, res);
         return;
       }
 

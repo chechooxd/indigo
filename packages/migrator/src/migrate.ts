@@ -21,6 +21,9 @@ import {
   quoteIdent,
   renderColumn,
   renderDefaultClause,
+  renderNotifyFunction,
+  renderCreateTrigger,
+  renderDropTrigger,
 } from "./postgres.js";
 
 function esc(v: string): string {
@@ -55,6 +58,7 @@ function createTable(table: ResolvedTable): string[] {
   }
   const stmts = [`CREATE TABLE ${quoteIdent(table.dbName)} (\n${lines.join(",\n")}\n);`];
   stmts.push(...tableConstraints(table));
+  if (table.realtime) stmts.push(renderCreateTrigger(table));
   return stmts;
 }
 
@@ -193,6 +197,11 @@ function diffTable(prev: ResolvedTable, next: ResolvedTable): string[] {
     }
   }
 
+  // Realtime trigger toggled (@@realtime added or removed).
+  if ((prev.realtime ?? false) !== (next.realtime ?? false)) {
+    stmts.push(next.realtime ? renderCreateTrigger(next) : renderDropTrigger(next));
+  }
+
   return stmts;
 }
 
@@ -222,6 +231,13 @@ export function diffResolved(prev: ResolvedSchema | null, next: ResolvedSchema):
         }
       }
     }
+  }
+
+  // Realtime notify function, before any trigger that references it. Emitted
+  // when realtime first appears; CREATE OR REPLACE makes re-emission harmless.
+  const prevHasRealtime = (prev?.tables ?? []).some((t) => t.realtime);
+  if (!prevHasRealtime && next.tables.some((t) => t.realtime)) {
+    stmts.push(renderNotifyFunction());
   }
 
   // New + altered tables.

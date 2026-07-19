@@ -57,15 +57,11 @@ export function resolvedToIndigoSchema(resolved: ResolvedSchema): IndigoSchema {
 
   const enums = resolved.enums.map((e) => ({ name: e.name, values: e.values }));
 
-  // Group tables by @@group.
-  const groupMap = new Map<string, string[]>();
-  for (const table of resolved.tables) {
-    if (!table.group) continue;
-    const bucket = groupMap.get(table.group) ?? [];
-    bucket.push(table.name);
-    groupMap.set(table.group, bucket);
-  }
-  const tableGroups = [...groupMap.entries()].map(([name, tables]) => ({ name, tables }));
+  const tableGroups = resolved.tableGroups.map((g) => ({
+    name: g.name,
+    color: g.color,
+    tables: g.tables,
+  }));
 
   return { models, enums, refs: [], tableGroups };
 }

@@ -111,7 +111,7 @@ export function buildEdges(
 /** Derives background group boxes from the live positions of member tables. */
 export function buildGroupNodes(
   nodes: TableRFNode[],
-  tableGroups: { name: string; tables: string[] }[],
+  tableGroups: { name: string; color?: string; tables: string[] }[],
 ): GroupRFNode[] {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const PAD = 28;
@@ -156,7 +156,7 @@ export function buildGroupNodes(
           label: group.name,
           width,
           height,
-          color: members[0]?.data.color,
+          color: group.color ?? members[0]?.data.color,
         },
       };
     })

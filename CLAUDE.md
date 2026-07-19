@@ -43,9 +43,11 @@ read the IR rather than re-deriving structure from the raw AST.
   `index.ts`'s `cstToAst()` (hand-written `any`-typed CST→AST; TODO: migrate to `CstVisitor`).
   Throws `IndigoParseError`.
 - **`@indigodb/core`** — `resolve(schema)` → `ResolvedSchema` (`ir.ts`): physical
-  tables/columns, PKs, `foreignKeys`, `indexes`, `relations`, plus doc/diagram metadata
-  (`@note`, `@@color`, `@@group`). Also `validate(schema)` and attribute helpers (`attributes.ts`).
-  Relations are resolved here from `@relation(fields:/references:)` — the parser does NOT.
+  tables/columns, PKs, `foreignKeys`, `indexes`, `relations`, doc metadata (`@note`), plus
+  `tableGroups` resolved from `TableGroup Name { color = "#hex" ... tables }` blocks — each
+  table listed inherits the group's `color`. Also `validate(schema)` and attribute helpers
+  (`attributes.ts`). Relations are resolved here from `@relation(fields:/references:)` — the
+  parser does NOT.
 - **`@indigodb/migrator`** — two rendering paths off the IR. `postgres.ts`'s `renderPushSql(resolved)`
   emits **idempotent** DDL for `db push` (`CREATE ... IF NOT EXISTS`, guarded `DO $$` blocks).
   `migrate.ts`'s `diffResolved(prev, next)` / `renderMigrationSql` emit **exact, ordered** DDL for

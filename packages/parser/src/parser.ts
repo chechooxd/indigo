@@ -8,6 +8,7 @@
 import { CstParser } from "chevrotain";
 import {
   allTokens,
+  TableGroupKeyword,
   ModelKeyword,
   EnumKeyword,
   DatasourceKeyword,
@@ -42,7 +43,7 @@ export class IndigoParser extends CstParser {
 
   // ─── Root Rule ───────────────────────────────────────────────────────
 
-  /** schema: (modelDecl | enumDecl | datasourceDecl | generatorDecl)* */
+  /** schema: (modelDecl | enumDecl | datasourceDecl | generatorDecl | tableGroupDecl)* */
   public schema = this.RULE("schema", () => {
     this.MANY(() => {
       this.OR([
@@ -50,6 +51,7 @@ export class IndigoParser extends CstParser {
         { ALT: () => this.SUBRULE(this.enumDeclaration) },
         { ALT: () => this.SUBRULE(this.datasourceDeclaration) },
         { ALT: () => this.SUBRULE(this.generatorDeclaration) },
+        { ALT: () => this.SUBRULE(this.tableGroupDeclaration) },
       ]);
     });
   });
@@ -68,6 +70,31 @@ export class IndigoParser extends CstParser {
       ]);
     });
     this.CONSUME(RCurly);
+  });
+
+  // ─── Table Group ────────────────────────────────────────────────────
+
+  /** tableGroupDeclaration: 'TableGroup' StringLiteral '{' tableGroupMember* '}' */
+  public tableGroupDeclaration = this.RULE("tableGroupDeclaration", () => {
+    this.CONSUME(TableGroupKeyword);
+    this.CONSUME(StringLiteral);
+    this.CONSUME(LCurly);
+    this.MANY(() => {
+      this.SUBRULE(this.tableGroupMember);
+    });
+    this.CONSUME(RCurly);
+  });
+
+  /**
+   * tableGroupMember: Identifier ('=' attributeValue)?
+   * Either a `color = "#hex"` property or a bare table name reference.
+   */
+  public tableGroupMember = this.RULE("tableGroupMember", () => {
+    this.CONSUME(Identifier);
+    this.OPTION(() => {
+      this.CONSUME(Equals);
+      this.SUBRULE(this.attributeValue);
+    });
   });
 
   // ─── Enum ───────────────────────────────────────────────────────────

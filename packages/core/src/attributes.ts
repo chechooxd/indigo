@@ -3,8 +3,9 @@
  *
  * Small utilities for reading values out of the AST's generic `Attribute`/
  * `AttributeValue` nodes. The `.indigo` parser stores every `@`/`@@` decorator
- * generically, so doc/diagram metadata (`@note`, `@@color`, `@@group`) and ORM
- * semantics (`@id`, `@relation`, `@default`) are all read from here.
+ * generically, so doc metadata (`@note`) and ORM semantics (`@id`, `@relation`,
+ * `@default`) are all read from here. Table grouping/color now come from
+ * `TableGroup` blocks, resolved separately in `resolve.ts`.
  */
 
 import type { Attribute, AttributeValue, AttributeArg } from "@indigodb/ast";

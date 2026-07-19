@@ -18,6 +18,7 @@ import type {
   EnumValue,
   Datasource,
   Generator,
+  TableGroup,
 } from "@indigodb/ast";
 import { SCALAR_TYPES } from "@indigodb/ast";
 import { IndigoLexer } from "./lexer.js";
@@ -114,6 +115,7 @@ function cstToAst(cst: any): Schema {
     generators: [],
     models: [],
     enums: [],
+    tableGroups: [],
   };
 
   if (!cst.children) return schema;
@@ -146,7 +148,37 @@ function cstToAst(cst: any): Schema {
     }
   }
 
+  // Process table group declarations
+  if (cst.children.tableGroupDeclaration) {
+    for (const groupCst of cst.children.tableGroupDeclaration) {
+      schema.tableGroups.push(visitTableGroup(groupCst));
+    }
+  }
+
   return schema;
+}
+
+function visitTableGroup(cst: any): TableGroup {
+  const raw = cst.children.StringLiteral[0].image;
+  const name = raw.slice(1, -1);
+  let color: string | undefined;
+  const tables: string[] = [];
+
+  if (cst.children.tableGroupMember) {
+    for (const memberCst of cst.children.tableGroupMember) {
+      const key = memberCst.children.Identifier[0].image;
+      if (memberCst.children.Equals) {
+        const value = visitAttributeValue(memberCst.children.attributeValue[0]);
+        if (key === "color" && value.kind === "string") {
+          color = value.value;
+        }
+      } else {
+        tables.push(key);
+      }
+    }
+  }
+
+  return { name, color, tables };
 }
 
 function visitModel(cst: any): Model {
