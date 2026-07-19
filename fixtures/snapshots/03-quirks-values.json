@@ -1,0 +1,752 @@
+{
+  "schema": {
+    "datasources": [
+      {
+        "name": "db",
+        "provider": "postgresql",
+        "url": {
+          "kind": "function",
+          "name": "env",
+          "args": [
+            {
+              "kind": "string",
+              "value": "DATABASE_URL"
+            }
+          ]
+        }
+      }
+    ],
+    "generators": [
+      {
+        "name": "client",
+        "provider": "indigodb-client-ts",
+        "output": "src/generated/indigo.ts"
+      }
+    ],
+    "models": [
+      {
+        "name": "Widget",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "label",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "plain"
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "note",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "say \\\"hi\\\" \\\\ done"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "offset",
+            "type": {
+              "name": "Float",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": -3.5
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "count",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "enabled",
+            "type": {
+              "name": "Boolean",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "status",
+            "type": {
+              "name": "Status",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "reference",
+                      "value": "ACTIVE"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "tags",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": true,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "ratio",
+            "type": {
+              "name": "Decimal",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          },
+          {
+            "name": "payload",
+            "type": {
+              "name": "Json",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "map",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "string",
+                  "value": "widgets"
+                }
+              }
+            ]
+          },
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "label"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "count"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "status"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "note",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "string",
+                  "value": "A widget"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Gadget",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "widget_id"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "Cascade"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": []
+          }
+        ]
+      },
+      {
+        "name": "NoPk",
+        "fields": [
+          {
+            "name": "name",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "BadType",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "broken",
+            "type": {
+              "name": "Missing",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [
+      {
+        "name": "Status",
+        "values": [
+          {
+            "name": "ACTIVE",
+            "attributes": [
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "active"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "INACTIVE",
+            "attributes": []
+          }
+        ]
+      }
+    ],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Widget",
+        "dbName": "widgets",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "label",
+            "dbName": "label",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": "plain"
+            },
+            "note": "say \\\"hi\\\" \\\\ done"
+          },
+          {
+            "name": "offset",
+            "dbName": "offset",
+            "type": "Float",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": -3.5
+            }
+          },
+          {
+            "name": "count",
+            "dbName": "count",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": 0
+            }
+          },
+          {
+            "name": "enabled",
+            "dbName": "enabled",
+            "type": "Boolean",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": true
+            }
+          },
+          {
+            "name": "status",
+            "dbName": "status",
+            "type": "Status",
+            "isEnum": true,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": "ACTIVE"
+            }
+          },
+          {
+            "name": "tags",
+            "dbName": "tags",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ratio",
+            "dbName": "ratio",
+            "type": "Decimal",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "payload",
+            "dbName": "payload",
+            "type": "Json",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "label",
+              "count"
+            ],
+            "unique": true
+          },
+          {
+            "columns": [
+              "status"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": [],
+        "note": "A widget"
+      },
+      {
+        "name": "Gadget",
+        "dbName": "Gadget",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widget_id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widget_id"
+            ],
+            "refTable": "widgets",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widget_id"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "realtime": true
+      },
+      {
+        "name": "NoPk",
+        "dbName": "NoPk",
+        "columns": [
+          {
+            "name": "name",
+            "dbName": "name",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "BadType",
+        "dbName": "BadType",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": [
+      {
+        "name": "Status",
+        "values": [
+          "ACTIVE",
+          "INACTIVE"
+        ]
+      }
+    ],
+    "datasource": {
+      "name": "db",
+      "provider": "postgresql",
+      "url": {
+        "kind": "function",
+        "name": "env",
+        "args": [
+          {
+            "kind": "string",
+            "value": "DATABASE_URL"
+          }
+        ]
+      }
+    }
+  },
+  "validation": [
+    {
+      "message": "Model \"NoPk\" has no @id primary key.",
+      "model": "NoPk"
+    },
+    {
+      "message": "Unknown type \"Missing\" on field \"broken\".",
+      "model": "BadType",
+      "field": "broken"
+    }
+  ]
+}

@@ -5,7 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 IndigoDB is a schema-first database toolkit built around a custom `.indigo` schema language.
-It is a **pnpm + Turborepo monorepo** (`packageManager: pnpm@10.28.1`) with ESM-only TypeScript packages.
+It is a **pnpm + Turborepo monorepo** (`packageManager: pnpm@10.28.1`) with ESM-only TypeScript
+packages, plus one Rust crate: the `.indigo` compiler (`crates/indigo-compiler`), compiled to
+WASM and consumed through `packages/compiler`.
 
 ## Commands
 
@@ -15,8 +17,19 @@ All commands run from the repo root and fan out through Turborepo:
 - `pnpm dev` — run all `dev` tasks (Studio dev server on :5555); `dev` depends on `^build`
 - `pnpm build` — build every package (`tsc`) and the Studio app (`tsc -b && vite build`)
 - `pnpm lint` — typecheck-as-lint: every package's `lint` is `tsc --noEmit`
-- `pnpm test` — wired via Turbo but **no tests exist yet**; there is no test runner configured
+- `pnpm test` — wired via Turbo; the only suite is `@indigodb/compiler`'s regression harness
+  (`packages/compiler/test/parity.mjs`, plain Node, golden snapshots in `fixtures/snapshots/`)
 - `pnpm clean` — remove `dist/` and `.turbo/` across packages
+
+Rust compiler (only needed when touching `crates/`; requires `cargo`, the
+`wasm32-unknown-unknown` target and `wasm-pack`):
+
+- `cd crates && cargo test` — native tests over the shared `fixtures/*.indigo` corpus
+- `pnpm --filter @indigodb/compiler build:wasm` — rebuild the WASM artifact. **The artifact
+  (`packages/compiler/wasm/`) is committed** so TS-only devs and CI never need the Rust
+  toolchain — if you change `crates/`, you MUST run `build:wasm` and commit the result,
+  then run the regression harness. Regenerate golden snapshots only on intentional contract
+  changes (`node packages/compiler/test/regen-snapshots.mjs`; the diff is the review artifact).
 
 Scope to one package with Turbo filters, e.g. `pnpm build --filter=@indigodb/parser`
 or `pnpm --filter @indigodb/studio dev`.
@@ -38,24 +51,33 @@ read the IR rather than re-deriving structure from the raw AST.
 
 - **`@indigodb/ast`** — pure AST type definitions (`Schema`, `Model`, `Field`, `Attribute`,
   `Relation`, `ScalarType`, `SCALAR_TYPES`). No logic. The syntactic contract.
-- **`@indigodb/parser`** — `parse(source)` → `Schema` AST via Chevrotain. Stages:
-  `lexer.ts` (tokens; order matters, keywords use `LONGER_ALT`) → `parser.ts` (`CstParser`) →
-  `index.ts`'s `cstToAst()` (hand-written `any`-typed CST→AST; TODO: migrate to `CstVisitor`).
-  Throws `IndigoParseError`.
+- **`crates/indigo-compiler` + `@indigodb/compiler`** — the compiler itself, in Rust:
+  `lexer.rs` (logos; keywords matched post-lex, replicating Chevrotain's `LONGER_ALT`),
+  `parser.rs` (hand-written recursive descent with declaration-level recovery → multiple
+  errors per pass with 1-based line/column), `resolve.rs`/`validate.rs` (ports of the old TS
+  resolver/validator), `ast.rs`/`ir.rs` (serde mirrors of `@indigodb/ast` + core's `ir.ts` —
+  **the serde attributes ARE the JSON contract**; absent keys ≡ TS `undefined`). The WASM
+  boundary speaks JSON-string envelopes (`{ok}`/`{errors}`/`{error}`). `packages/compiler`
+  wraps it with conditional exports: `index.node.ts` calls `initSync` at load (fully sync on
+  Node), `index.browser.ts` exposes async `initCompiler()` (the Studio awaits it in
+  `main.tsx` before rendering; Vite needs no wasm plugin — `new URL(..., import.meta.url)`
+  plus `optimizeDeps.exclude` for the workspace packages).
+- **`@indigodb/parser`** — thin wrapper: `parse(source)` delegates to `@indigodb/compiler`
+  and rethrows failures as `IndigoParseError` (class lives here so `instanceof` keeps working).
 - **`@indigodb/core`** — `resolve(schema)` → `ResolvedSchema` (`ir.ts`): physical
-  tables/columns, PKs, `foreignKeys`, `indexes`, `relations`, doc metadata (`@note`), plus
-  `tableGroups` resolved from `TableGroup Name { color = "#hex" ... tables }` blocks — each
-  table listed inherits the group's `color`. Also `validate(schema)` and attribute helpers
-  (`attributes.ts`). Relations are resolved here from `@relation(fields:/references:)` — the
-  parser does NOT.
+  tables/columns, PKs, `foreignKeys`, `indexes`, `relations`, doc metadata (`@note`),
+  `@@realtime`, plus `tableGroups` resolved from `TableGroup "Name" { color = "#hex" ... }`
+  blocks — each table listed inherits the group's `color`. `resolve`/`validate` delegate to
+  the WASM compiler and apply the IR typing; the types in `ir.ts` and the helpers in
+  `attributes.ts` remain TS-native. Re-exports `parse`, `IndigoParseError` and `initCompiler`.
 - **`@indigodb/migrator`** — two rendering paths off the IR. `postgres.ts`'s `renderPushSql(resolved)`
   emits **idempotent** DDL for `db push` (`CREATE ... IF NOT EXISTS`, guarded `DO $$` blocks).
   `migrate.ts`'s `diffResolved(prev, next)` / `renderMigrationSql` emit **exact, ordered** DDL for
-  versioned migrations (create/drop table, add/drop/alter column, enum add-value, indexes, FKs).
-  The older AST-based `diff()`/`DialectAdapter` scaffolding is unused.
+  versioned migrations (create/drop table, add/drop/alter column, enum add-value, indexes, FKs,
+  `@@realtime` notify triggers).
 - **`@indigodb/generator`** — `generateClient(resolved)` in `client.ts` emits a typed `indigo.ts`
   (enums, row/create/update interfaces, model metadata, an `IndigoClient` binding one
-  `ModelDelegate` per model). The older `generate()` (interfaces-only string) still exists.
+  `ModelDelegate` per model; `RealtimeModelDelegate` for `@@realtime` models).
 - **`@indigodb/client`** — framework-agnostic runtime. `IndigoClientBase` (`client.ts`) owns the
   `pg` Pool + parameterized executor; `ModelDelegate` (`delegate.ts`) implements Prisma-style
   CRUD (`findMany/findUnique/create/update/delete/count`, `where` subset, `select`, `orderBy`).

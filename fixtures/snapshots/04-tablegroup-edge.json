@@ -1,0 +1,182 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "A",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "B",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "color",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": [
+      {
+        "name": "First",
+        "color": "#ff0000",
+        "tables": [
+          "A",
+          "color"
+        ]
+      },
+      {
+        "name": "NoColor",
+        "tables": [
+          "B",
+          "A"
+        ]
+      }
+    ]
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "A",
+        "dbName": "A",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "group": "NoColor"
+      },
+      {
+        "name": "B",
+        "dbName": "B",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "group": "NoColor"
+      },
+      {
+        "name": "color",
+        "dbName": "color",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "color": "#ff0000",
+        "group": "First"
+      }
+    ],
+    "tableGroups": [
+      {
+        "name": "First",
+        "color": "#ff0000",
+        "tables": [
+          "A",
+          "color"
+        ]
+      },
+      {
+        "name": "NoColor",
+        "tables": [
+          "B",
+          "A"
+        ]
+      }
+    ],
+    "enums": []
+  },
+  "validation": []
+}

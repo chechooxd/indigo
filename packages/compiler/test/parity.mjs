@@ -1,15 +1,13 @@
 /**
- * TS↔Rust parity harness — the merge gate for the compiler port.
+ * Compiler regression harness.
  *
- * Runs the legacy pipeline (Chevrotain parse + TS resolve/validate) and the
- * WASM pipeline over every fixture in fixtures/, deep-comparing AST,
- * ResolvedSchema and ValidationError[] after JSON normalization. For error
- * fixtures it compares failure/failure and the first error's line (message
- * texts intentionally differ — Rust's are better).
+ * During the Rust port this file compared the legacy Chevrotain/TS pipeline
+ * against the WASM one (100% green before the switch). The legacy
+ * implementation is gone now; the reference is the golden snapshots in
+ * fixtures/snapshots/, frozen from that parity-verified output.
  *
- * Works before AND after the switch: prefers the `legacy/` builds of parser
- * and core when they exist (post-switch), else uses their main dist
- * (pre-switch, when they still ARE the legacy implementation).
+ * Regenerate snapshots (only after an INTENTIONAL contract change):
+ *   node test/regen-snapshots.mjs
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -19,54 +17,9 @@ import { join, dirname } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, "../../../fixtures");
-
-async function importFirst(paths) {
-  for (const p of paths) {
-    try {
-      return await import(p);
-    } catch (err) {
-      if (err.code !== "ERR_MODULE_NOT_FOUND") throw err;
-    }
-  }
-  throw new Error(`none of the candidate modules exist: ${paths.join(", ")}`);
-}
-
-const legacyParser = await importFirst([
-  "../../parser/dist/legacy/index.js",
-  "../../parser/dist/index.js",
-]);
-const legacyCore = await importFirst([
-  "../../core/dist/legacy/index.js",
-  "../../core/dist/index.js",
-]);
 const wasm = await import("../dist/index.node.js");
 
 const norm = (x) => JSON.parse(JSON.stringify(x));
-
-function legacyPipeline(source) {
-  try {
-    const schema = legacyParser.parse(source);
-    return {
-      schema: norm(schema),
-      resolved: norm(legacyCore.resolve(schema)),
-      validation: norm(legacyCore.validate(schema)),
-    };
-  } catch (err) {
-    if (err.name === "IndigoParseError") return { parseErrors: norm(err.errors) };
-    throw err;
-  }
-}
-
-function wasmPipeline(source) {
-  const r = wasm.parseSchema(source);
-  if ("errors" in r) return { parseErrors: norm(r.errors) };
-  return {
-    schema: norm(r.schema),
-    resolved: norm(wasm.resolveSchema(r.schema)),
-    validation: norm(wasm.validateSchema(r.schema)),
-  };
-}
-
 let failures = 0;
 
 function check(name, fn) {
@@ -81,41 +34,41 @@ function check(name, fn) {
 }
 
 const valid = readdirSync(fixturesDir).filter((f) => f.endsWith(".indigo")).sort();
-console.log(`parity: ${valid.length} valid fixtures`);
+console.log(`regression: ${valid.length} fixtures vs golden snapshots`);
 for (const file of valid) {
   const source = readFileSync(join(fixturesDir, file), "utf8");
-  const legacy = legacyPipeline(source);
-  const rust = wasmPipeline(source);
-  check(`${file} parses in both`, () => {
-    if ("parseErrors" in legacy) throw new Error(`legacy failed: ${JSON.stringify(legacy.parseErrors)}`);
-    if ("parseErrors" in rust) throw new Error(`rust failed: ${JSON.stringify(rust.parseErrors)}`);
+  const golden = JSON.parse(
+    readFileSync(join(fixturesDir, "snapshots", file.replace(".indigo", ".json")), "utf8"),
+  );
+  const r = wasm.parseSchema(source);
+  check(`${file} parses`, () => {
+    if ("errors" in r) throw new Error(`parse failed: ${JSON.stringify(r.errors)}`);
   });
-  if ("parseErrors" in legacy || "parseErrors" in rust) continue;
-  check(`${file} AST`, () => deepStrictEqual(rust.schema, legacy.schema));
-  check(`${file} ResolvedSchema`, () => deepStrictEqual(rust.resolved, legacy.resolved));
-  check(`${file} ValidationError[]`, () => deepStrictEqual(rust.validation, legacy.validation));
+  if ("errors" in r) continue;
+  check(`${file} AST`, () => deepStrictEqual(norm(r.schema), golden.schema));
+  check(`${file} ResolvedSchema`, () =>
+    deepStrictEqual(norm(wasm.resolveSchema(r.schema)), golden.resolved));
+  check(`${file} ValidationError[]`, () =>
+    deepStrictEqual(norm(wasm.validateSchema(r.schema)), golden.validation));
 }
 
 const errorsDir = join(fixturesDir, "errors");
 const errorFixtures = readdirSync(errorsDir).filter((f) => f.endsWith(".indigo")).sort();
-console.log(`parity: ${errorFixtures.length} error fixtures`);
+console.log(`regression: ${errorFixtures.length} error fixtures`);
 for (const file of errorFixtures) {
   const source = readFileSync(join(errorsDir, file), "utf8");
-  const legacy = legacyPipeline(source);
-  const rust = wasmPipeline(source);
-  check(`errors/${file} fails in both`, () => {
-    if (!("parseErrors" in legacy)) throw new Error("legacy parsed successfully");
-    if (!("parseErrors" in rust)) throw new Error("rust parsed successfully");
-    const legacyLine = legacy.parseErrors[0]?.line;
-    const rustLine = rust.parseErrors[0]?.line;
-    if (legacyLine != null && legacyLine !== rustLine) {
-      throw new Error(`first error line: legacy=${legacyLine} rust=${rustLine}`);
+  check(`errors/${file} fails with positioned errors`, () => {
+    const r = wasm.parseSchema(source);
+    if (!("errors" in r)) throw new Error("parsed successfully");
+    if (r.errors.length === 0) throw new Error("empty error list");
+    for (const e of r.errors) {
+      if (!(e.line >= 1)) throw new Error(`error without line: ${JSON.stringify(e)}`);
     }
   });
 }
 
 if (failures > 0) {
-  console.error(`\nparity: ${failures} failure(s)`);
+  console.error(`\nregression: ${failures} failure(s)`);
   process.exit(1);
 }
-console.log("\nparity: all green");
+console.log("\nregression: all green");

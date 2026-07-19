@@ -1,0 +1,529 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "posts",
+            "type": {
+              "name": "Post",
+              "scalar": false,
+              "list": true,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "profile",
+            "type": {
+              "name": "Profile",
+              "scalar": false,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "Post",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "authorId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "author",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "authorId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ghost",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "missingLocal"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "missingTarget"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "Profile",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "userId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "unique",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "user",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "userId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "posts",
+            "targetModel": "Post",
+            "type": "OneToMany",
+            "list": true,
+            "optional": false,
+            "fkColumns": [],
+            "refColumns": []
+          },
+          {
+            "name": "profile",
+            "targetModel": "Profile",
+            "type": "OneToOne",
+            "list": false,
+            "optional": true,
+            "fkColumns": [],
+            "refColumns": []
+          }
+        ]
+      },
+      {
+        "name": "Post",
+        "dbName": "Post",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "authorId",
+            "dbName": "authorId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "authorId"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          },
+          {
+            "columns": [
+              "missingLocal"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "missingTarget"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "author",
+            "targetModel": "User",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "authorId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          },
+          {
+            "name": "ghost",
+            "targetModel": "User",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "missingLocal"
+            ],
+            "refColumns": [
+              "missingTarget"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Profile",
+        "dbName": "Profile",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "userId",
+            "dbName": "userId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": true,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "userId"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "user",
+            "targetModel": "User",
+            "type": "OneToOne",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "userId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Duplicate model \"User\".",
+      "model": "User"
+    },
+    {
+      "message": "@relation(fields:) references unknown local field \"missingLocal\".",
+      "model": "Post",
+      "field": "ghost"
+    },
+    {
+      "message": "@relation(references:) points at unknown field \"missingTarget\" on \"User\".",
+      "model": "Post",
+      "field": "ghost"
+    }
+  ]
+}

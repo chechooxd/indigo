@@ -1,0 +1,717 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "unique",
+                "args": []
+              },
+              {
+                "name": "note",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "Corporate email"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "name",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          },
+          {
+            "name": "role",
+            "type": {
+              "name": "UserRole",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "reference",
+                      "value": "USER"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "createdAt",
+            "type": {
+              "name": "DateTime",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "now",
+                      "args": []
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "created_at"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "posts",
+            "type": {
+              "name": "Post",
+              "scalar": false,
+              "list": true,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "profile",
+            "type": {
+              "name": "Profile",
+              "scalar": false,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "Post",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "title",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "content",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          },
+          {
+            "name": "authorId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "author_id"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "author",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "authorId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "authorId"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Profile",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "bio",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          },
+          {
+            "name": "userId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "unique",
+                "args": []
+              },
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "user_id"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "user",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "userId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [
+      {
+        "name": "UserRole",
+        "values": [
+          {
+            "name": "ADMIN",
+            "attributes": []
+          },
+          {
+            "name": "USER",
+            "attributes": []
+          },
+          {
+            "name": "GUEST",
+            "attributes": []
+          }
+        ]
+      }
+    ],
+    "tableGroups": [
+      {
+        "name": "Auth",
+        "color": "#c3c0ff",
+        "tables": [
+          "User",
+          "Post",
+          "Profile"
+        ]
+      }
+    ]
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": true,
+            "autoincrement": false,
+            "note": "Corporate email"
+          },
+          {
+            "name": "name",
+            "dbName": "name",
+            "type": "String",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "role",
+            "dbName": "role",
+            "type": "UserRole",
+            "isEnum": true,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "value",
+              "value": "USER"
+            }
+          },
+          {
+            "name": "createdAt",
+            "dbName": "created_at",
+            "type": "DateTime",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "default": {
+              "kind": "function",
+              "name": "now"
+            }
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "posts",
+            "targetModel": "Post",
+            "type": "OneToMany",
+            "list": true,
+            "optional": false,
+            "fkColumns": [],
+            "refColumns": []
+          },
+          {
+            "name": "profile",
+            "targetModel": "Profile",
+            "type": "OneToOne",
+            "list": false,
+            "optional": true,
+            "fkColumns": [],
+            "refColumns": []
+          }
+        ],
+        "color": "#c3c0ff",
+        "group": "Auth"
+      },
+      {
+        "name": "Post",
+        "dbName": "Post",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "title",
+            "dbName": "title",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "content",
+            "dbName": "content",
+            "type": "String",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "authorId",
+            "dbName": "author_id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "author_id"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "author_id"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": [
+          {
+            "name": "author",
+            "targetModel": "User",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "author_id"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "color": "#c3c0ff",
+        "group": "Auth"
+      },
+      {
+        "name": "Profile",
+        "dbName": "Profile",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "bio",
+            "dbName": "bio",
+            "type": "String",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "userId",
+            "dbName": "user_id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": true,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "user_id"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "user",
+            "targetModel": "User",
+            "type": "OneToOne",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "user_id"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "color": "#c3c0ff",
+        "group": "Auth"
+      }
+    ],
+    "tableGroups": [
+      {
+        "name": "Auth",
+        "color": "#c3c0ff",
+        "tables": [
+          "User",
+          "Post",
+          "Profile"
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "UserRole",
+        "values": [
+          "ADMIN",
+          "USER",
+          "GUEST"
+        ]
+      }
+    ]
+  },
+  "validation": []
+}

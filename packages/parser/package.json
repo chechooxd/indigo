@@ -17,8 +17,7 @@
   },
   "dependencies": {
     "@indigodb/ast": "workspace:*",
-    "@indigodb/compiler": "workspace:*",
-    "chevrotain": "^11.0.0"
+    "@indigodb/compiler": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
