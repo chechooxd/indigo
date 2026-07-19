@@ -1,0 +1,26 @@
+// TableGroup quirks: bare member named "color", ignored assignments,
+// group without color, table listed in two groups (last group wins).
+
+Table A {
+  id Int @id
+}
+
+Table B {
+  id Int @id
+}
+
+Table color {
+  id Int @id
+}
+
+TableGroup "First" {
+  color = "#ff0000"
+  icon = "star"
+  A
+  color
+}
+
+TableGroup "NoColor" {
+  B
+  A
+}

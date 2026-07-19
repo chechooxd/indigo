@@ -15,3 +15,8 @@ export * from "./attributes.js";
 // text to a resolved schema via `@indigodb/core`.
 export { parse, IndigoParseError } from "@indigodb/parser";
 export type { Schema } from "@indigodb/ast";
+
+// WASM compiler init: a no-op on Node (instantiated synchronously at load);
+// in the browser it must be awaited before the first parse/resolve call —
+// the Studio does this in main.tsx before rendering.
+export { initCompiler } from "@indigodb/compiler";

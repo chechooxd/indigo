@@ -156,11 +156,27 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/compiler:
+    dependencies:
+      '@indigodb/ast':
+        specifier: workspace:*
+        version: link:../ast
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/core:
     dependencies:
       '@indigodb/ast':
         specifier: workspace:*
         version: link:../ast
+      '@indigodb/compiler':
+        specifier: workspace:*
+        version: link:../compiler
       '@indigodb/parser':
         specifier: workspace:*
         version: link:../parser
@@ -200,6 +216,9 @@ importers:
       '@indigodb/ast':
         specifier: workspace:*
         version: link:../ast
+      '@indigodb/compiler':
+        specifier: workspace:*
+        version: link:../compiler
       chevrotain:
         specifier: ^11.0.0
         version: 11.2.0

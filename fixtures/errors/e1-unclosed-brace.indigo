@@ -1,0 +1,7 @@
+Table User {
+  id Int @id
+  email String @unique
+
+Table Post {
+  id Int @id
+}

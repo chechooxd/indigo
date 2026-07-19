@@ -1,0 +1,42 @@
+// IndigoDB schema — the single .indigo language
+
+enum UserRole {
+  ADMIN
+  USER
+  GUEST
+}
+
+Table User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @note("Corporate email")
+  name      String?
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now()) @map("created_at")
+  posts     Post[]
+  profile   Profile?
+}
+
+Table Post {
+  id       Int     @id @default(autoincrement())
+  title    String
+  content  String?
+  authorId Int     @map("author_id")
+  author   User    @relation(fields: [authorId], references: [id])
+
+  @@index([authorId])
+}
+
+Table Profile {
+  id     Int     @id @default(autoincrement())
+  bio    String?
+  userId Int     @unique @map("user_id")
+  user   User    @relation(fields: [userId], references: [id])
+}
+
+TableGroup "Auth" {
+  color = "#c3c0ff"
+
+  User
+  Post
+  Profile
+}

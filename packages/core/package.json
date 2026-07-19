@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@indigodb/ast": "workspace:*",
+    "@indigodb/compiler": "workspace:*",
     "@indigodb/parser": "workspace:*"
   },
   "devDependencies": {

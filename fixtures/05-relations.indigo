@@ -1,0 +1,24 @@
+// Relation cardinalities, duplicate model, unknown @relation refs.
+
+Table User {
+  id      Int      @id @default(autoincrement())
+  posts   Post[]
+  profile Profile?
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id])
+  ghost    User @relation(fields: [missingLocal], references: [missingTarget])
+}
+
+Table Profile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+}
+
+Table User {
+  id Int @id
+}

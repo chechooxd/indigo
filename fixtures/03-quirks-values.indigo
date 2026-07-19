@@ -1,0 +1,52 @@
+// Exercises odd-but-valid values and shapes that both compilers must agree on.
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+  extra = 42
+}
+
+generator client {
+  provider = "indigodb-client-ts"
+  output = "src/generated/indigo.ts"
+  flag = true
+}
+
+enum Status {
+  ACTIVE @map("active")
+  INACTIVE
+}
+
+Table Widget {
+  id       Int     @id @default(autoincrement())
+  label    String  @default("plain") @note("say \"hi\" \\ done")
+  offset   Float   @default(-3.5)
+  count    Int     @default(0)
+  enabled  Boolean @default(true)
+  status   Status  @default(ACTIVE)
+  tags     String[]
+  ratio    Decimal?
+  payload  Json?
+
+  @@map("widgets")
+  @@unique([label, count])
+  @@index([status])
+  @@note("A widget")
+}
+
+Table Gadget {
+  id       Int    @id @default(autoincrement())
+  widgetId Int    @map("widget_id")
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+
+  @@realtime
+}
+
+Table NoPk {
+  name String
+}
+
+Table BadType {
+  id     Int     @id
+  broken Missing
+}
