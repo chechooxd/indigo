@@ -53,6 +53,7 @@ for (const name of cases) {
   const expected = JSON.parse(readFileSync(expectedPath, "utf8"));
   const actual = norm(computeActual(dir));
   check(`${name}: statements`, () => deepStrictEqual(actual.statements, expected.statements));
+  check(`${name}: diagnostics`, () => deepStrictEqual(actual.diagnostics, expected.diagnostics));
   check(`${name}: migrationSql`, () => deepStrictEqual(actual.migrationSql, expected.migrationSql));
   check(`${name}: pushSql`, () => deepStrictEqual(actual.pushSql, expected.pushSql));
 }

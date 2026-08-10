@@ -1,0 +1,11 @@
+// Both the field name AND its `@map` change in the same edit: `createdAt`
+// (`@map("created_at")`) becomes `creationDate` (`@map("creation_date")`).
+// `matchColumns` cannot match this column by logical name (name changed) or
+// by physical name (dbName changed too), so it falls into the residual
+// (Rule R) set on both sides; both residuals carry an explicit `@map`, so
+// generation refuses with `ambiguous-column-remap` instead of guessing.
+
+Table User {
+  id           Int      @id @default(autoincrement())
+  creationDate DateTime @default(now()) @map("creation_date")
+}

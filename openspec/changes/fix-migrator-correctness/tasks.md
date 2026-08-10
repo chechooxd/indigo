@@ -32,15 +32,15 @@ Branch topology (hard constraint, confirmed): PR1 branches from `fix/compiler-sc
 
 ## Phase 1: Golden Harness + Plan Contract (PR1, no behavior change)
 
-- [ ] 1.1 Branch from `fix/compiler-schema-validation` (HEAD `f6e3faf`), not `main`.
-- [ ] 1.2 RED: `packages/migrator/test/migrator.mjs` (mirrors `compiler/test/parity.mjs`: plain Node, `check()`+`deepStrictEqual`) + 5 baseline fixtures (`no-changes`, `fk-order-declaration`, `enum-add-value`, `not-null-with-default`, `optional-column-added`) pinning TODAY's output, including today's buggy FK order.
-- [ ] 1.3 GREEN: add `"test": "node test/migrator.mjs"` to `packages/migrator/package.json`; suite passes against current `diffResolved`/`renderMigrationSql`.
-- [ ] 1.4 Create `packages/migrator/src/plan.ts`: `MigrationPhase`, `MigrationStatement`, `MigrationDiagnosticCode`, `MigrationDiagnostic`, `MigrationPlan`, `splitMigrationSql(sql)`.
-- [ ] 1.5 Replace `diffResolved`/`renderMigrationSql` in `migrate.ts` with `planMigration(prev, next): MigrationPlan` (every statement `phase: "transaction"`, `diagnostics: []`, identical order to today) and `renderMigrationSql(plan)`.
-- [ ] 1.6 `index.ts`: export `planMigration`, `renderMigrationSql`, `splitMigrationSql` + the 5 `plan.ts` types; REMOVE `diffResolved`.
-- [ ] 1.7 `migrate-runner.ts`: one `planMigration` call (replaces two `diffResolved` calls at `:87`/`:96`); refuse to write when `plan.diagnostics.length > 0`; `migrateDev` runs `splitMigrationSql(sql).preTransaction` one `client.query()` per statement, then `BEGIN`+body+history insert+`COMMIT`; `migrateDeploy` splits on-disk files the same way.
-- [ ] 1.8 Update the 5 fixtures' `expected.json` to `{plan, migrationSql, pushSql}`; add `test/regen-goldens.mjs` (explicit regen, mirrors `regen-snapshots.mjs`).
-- [ ] 1.9 Gates: `pnpm test`, `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
+- [x] 1.1 Branch from `fix/compiler-schema-validation` (HEAD `f6e3faf`), not `main`.
+- [x] 1.2 RED: `packages/migrator/test/migrator.mjs` (mirrors `compiler/test/parity.mjs`: plain Node, `check()`+`deepStrictEqual`) + 5 baseline fixtures (`no-changes`, `fk-order-declaration`, `enum-add-value`, `not-null-with-default`, `optional-column-added`) pinning TODAY's output, including today's buggy FK order.
+- [x] 1.3 GREEN: add `"test": "node test/migrator.mjs"` to `packages/migrator/package.json`; suite passes against current `diffResolved`/`renderMigrationSql`.
+- [x] 1.4 Create `packages/migrator/src/plan.ts`: `MigrationPhase`, `MigrationStatement`, `MigrationDiagnosticCode`, `MigrationDiagnostic`, `MigrationPlan`, `splitMigrationSql(sql)`.
+- [x] 1.5 Replace `diffResolved`/`renderMigrationSql` in `migrate.ts` with `planMigration(prev, next): MigrationPlan` (every statement `phase: "transaction"`, `diagnostics: []`, identical order to today) and `renderMigrationSql(plan)`.
+- [x] 1.6 `index.ts`: export `planMigration`, `renderMigrationSql`, `splitMigrationSql` + the 5 `plan.ts` types; REMOVE `diffResolved`.
+- [x] 1.7 `migrate-runner.ts`: one `planMigration` call (replaces two `diffResolved` calls at `:87`/`:96`); refuse to write when `plan.diagnostics.length > 0`; `migrateDev` runs `splitMigrationSql(sql).preTransaction` one `client.query()` per statement, then `BEGIN`+body+history insert+`COMMIT`; `migrateDeploy` splits on-disk files the same way.
+- [x] 1.8 Update the 5 fixtures' `expected.json` to `{plan, migrationSql, pushSql}`; add `test/regen-goldens.mjs` (explicit regen, mirrors `regen-snapshots.mjs`).
+- [x] 1.9 Gates: `pnpm test`, `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
 
 ## Phase 2: Ordering, Phase Split, Referential Actions, Enum `dbName` (PR2)
 
@@ -57,14 +57,14 @@ Branch topology (hard constraint, confirmed): PR1 branches from `fix/compiler-sc
 
 ## Phase 3: Diff Completeness + Safety Guards (PR3)
 
-- [ ] 3.1 RED: add fixtures `enum-value-removed`, `map-rename-only`, `map-rename-ambiguous`, `pk-change`, `not-null-no-default`.
-- [ ] 3.2 GREEN: `diffTable` (`:141-206`) matches columns by logical `name` first, physical `dbName` second; residuals matched by neither key feed Rule R.
-- [ ] 3.3 GREEN: Rule R — both residual sets non-empty AND at least one member each carries an explicit `@map` → `ambiguous-column-remap` diagnostic (table + every field/@map pair both sides), zero DDL for those columns; otherwise today's DROP+ADD stands.
-- [ ] 3.4 GREEN: unambiguous `@map`-only rename emits `RENAME COLUMN` (no DROP/ADD); rewrite prev's physical PK/index/FK column references old→new `dbName` before diffing.
-- [ ] 3.5 GREEN: after rename, realign only auto-derived names (`ALTER INDEX ... RENAME TO`, `ALTER TABLE ... RENAME CONSTRAINT`) where `index.name`/`fk.name` is absent. Document limitation: PK drop-recreate assumes PostgreSQL's default `<table>_pkey` name.
-- [ ] 3.6 GREEN: PK change emits `DROP CONSTRAINT <table>_pkey` then `ADD PRIMARY KEY (...)`.
-- [ ] 3.7 GREEN: enum value removal emits `enum-value-removed` diagnostic (enum + value(s) + manual-migration note), zero DDL for the removal.
-- [ ] 3.8 GREEN: NOT NULL guard refuses (`required-column-without-default`, zero DDL) ONLY for a NOT NULL column with no default and not autoincrement added to a table already in `prev`; `createTable` (new tables) unguarded; `@default(...)`/optional columns stay unguarded (regression).
-- [ ] 3.9 Diagnostic messages follow compiler parity phrasing (`<what is wrong>. <remedy>.`, double-quoted identifiers).
-- [ ] 3.10 Update release note: newly-noisy migrations after upgrade; `migrate dev` refuses to write on any diagnostic; pre-existing `migrations/` files carry no marker, stay fully transactional (`migrate deploy` compatible).
-- [ ] 3.11 Gates: `pnpm test`, `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
+- [x] 3.1 RED: add fixtures `enum-value-removed`, `map-rename-only`, `map-rename-ambiguous`, `pk-change`, `not-null-no-default`.
+- [x] 3.2 GREEN: `diffTable` (`:141-206`) matches columns by logical `name` first, physical `dbName` second; residuals matched by neither key feed Rule R.
+- [x] 3.3 GREEN: Rule R — both residual sets non-empty AND at least one member each carries an explicit `@map` → `ambiguous-column-remap` diagnostic (table + every field/@map pair both sides), zero DDL for those columns; otherwise today's DROP+ADD stands.
+- [x] 3.4 GREEN: unambiguous `@map`-only rename emits `RENAME COLUMN` (no DROP/ADD); rewrite prev's physical PK/index/FK column references old→new `dbName` before diffing.
+- [x] 3.5 GREEN: after rename, realign only auto-derived names (`ALTER INDEX ... RENAME TO`, `ALTER TABLE ... RENAME CONSTRAINT`) where `index.name`/`fk.name` is absent. Document limitation: PK drop-recreate assumes PostgreSQL's default `<table>_pkey` name.
+- [x] 3.6 GREEN: PK change emits `DROP CONSTRAINT <table>_pkey` then `ADD PRIMARY KEY (...)`.
+- [x] 3.7 GREEN: enum value removal emits `enum-value-removed` diagnostic (enum + value(s) + manual-migration note), zero DDL for the removal.
+- [x] 3.8 GREEN: NOT NULL guard refuses (`required-column-without-default`, zero DDL) ONLY for a NOT NULL column with no default and not autoincrement added to a table already in `prev`; `createTable` (new tables) unguarded; `@default(...)`/optional columns stay unguarded (regression).
+- [x] 3.9 Diagnostic messages follow compiler parity phrasing (`<what is wrong>. <remedy>.`, double-quoted identifiers).
+- [x] 3.10 Update release note: newly-noisy migrations after upgrade; `migrate dev` refuses to write on any diagnostic; pre-existing `migrations/` files carry no marker, stay fully transactional (`migrate deploy` compatible).
+- [x] 3.11 Gates: `pnpm test`, `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
