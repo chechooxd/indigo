@@ -1,0 +1,63 @@
+schema: spec-driven
+
+context: |
+  IndigoDB: schema-first DB toolkit, custom .indigo language.
+  pnpm+Turborepo monorepo, ESM-only strict TS, 1 Rust crate (WASM).
+  Pipeline: parser -> core (ResolvedSchema IR) -> migrator/generator/client/studio/cli.
+  packages/{ast,compiler,parser,core,migrator,generator,client,realtime,cli} + apps/studio.
+  crates/indigo-compiler compiles to WASM; artifact committed in packages/compiler/wasm/.
+  No CI (.github/ absent). Only compiler package + Rust crate have tests.
+
+strict_tdd: true
+
+testing:
+  test_command: "pnpm test"
+  build_command: "pnpm build"
+  lint_command: "pnpm lint"
+  coverage_threshold: 0
+  notes: |
+    pnpm test (Turborepo) runs the ONLY TS suite: @indigodb/compiler regression
+    harness at packages/compiler/test/parity.mjs (plain Node, golden snapshots
+    in fixtures/snapshots/). Currently GREEN.
+    cd crates && cargo test runs 4 tests in crates/indigo-compiler/tests/fixtures.rs.
+    Currently GREEN.
+    node packages/compiler/test/regen-snapshots.mjs regenerates golden snapshots
+    (diff is the review artifact) — only run on intentional contract changes.
+    pnpm --filter @indigodb/compiler build:wasm rebuilds the committed WASM
+    artifact; REQUIRED after any change under crates/, followed by re-running
+    the regression harness.
+    pnpm lint is typecheck-as-lint (tsc --noEmit per package).
+    9 of 10 TS packages (all except @indigodb/compiler) have ZERO tests: no
+    vitest/jest installed, no coverage measurement, no integration tests
+    against real PostgreSQL, no CI. For Strict TDD on those packages, a test
+    harness must be established as part of the work before RED-GREEN-REFACTOR
+    is possible — a known precondition, not a blocker.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Flag any change touching crates/ as requiring build:wasm + regression harness rerun
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Resolve new IR fields once in @indigodb/core (ResolvedSchema); consumers read the IR
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - If a package other than @indigodb/compiler needs tests, add a task to establish
+      a minimal harness (framework choice + first test) before feature tasks in that package
+  apply:
+    guidelines:
+      - Follow existing code patterns (ESM, strict TS, workspace:* deps)
+      - Rebuild dependency packages before dependents when cross-package types change
+      - Any crates/ change MUST be followed by build:wasm and committing packages/compiler/wasm/
+    tdd: true
+    test_command: "pnpm test"
+  verify:
+    test_command: "pnpm test"
+    build_command: "pnpm build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
