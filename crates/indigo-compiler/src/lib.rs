@@ -20,17 +20,19 @@ use wasm_bindgen::prelude::*;
 use error::CompilerError;
 
 /// Parses source into a `Schema`, or every lexer+parser error found.
-/// Mirrors the TS pipeline: lexer errors short-circuit before parsing.
+/// The parser always runs over the token stream, even when the lexer
+/// reported errors, so both diagnostic classes surface from the same pass.
+/// Errors are concatenated lexer-first, then parser: this is a deliberate
+/// ordering (not a merge-sort by position) that keeps the illegal-character
+/// diagnostic first when both classes fire on the same source.
 pub fn parse_source(source: &str) -> Result<ast::Schema, Vec<CompilerError>> {
-    let (tokens, lex_errors) = lexer::tokenize(source);
-    if !lex_errors.is_empty() {
-        return Err(lex_errors);
-    }
+    let (tokens, mut lex_errors) = lexer::tokenize(source);
     let (schema, parse_errors) = parser::Parser::new(&tokens).parse_schema();
-    if !parse_errors.is_empty() {
-        return Err(parse_errors);
+    if lex_errors.is_empty() && parse_errors.is_empty() {
+        return Ok(schema);
     }
-    Ok(schema)
+    lex_errors.extend(parse_errors);
+    Err(lex_errors)
 }
 
 #[derive(Serialize)]

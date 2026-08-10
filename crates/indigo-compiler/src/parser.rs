@@ -4,10 +4,12 @@
 //! Improvements over the Chevrotain pipeline, by design:
 //! - collects multiple errors per pass with declaration-level recovery
 //!   (sync to the next top-level keyword / closing brace);
-//! - the silent `visitAttributeValue` fallback to `""` is a real error here.
+//! - the silent `visitAttributeValue` fallback to `""` is a real error here;
+//! - string literal contents ARE unescaped (`\\ \" \n \r \t`), decoded by
+//!   the lexer — `Token.text` for `StringLiteral` already carries the
+//!   decoded, unquoted value; an unknown escape is a lexer-level error.
 //!
 //! Parity quirks preserved (see the parity harness):
-//! - string literal contents are NOT unescaped (TS does `slice(1, -1)`);
 //! - named args inside function calls drop their names (`arg.value` only);
 //! - datasource: `provider` only set from string values, `url` takes any
 //!   value, defaults `""`; generator: `provider`/`output` string-only;
@@ -224,10 +226,7 @@ impl<'a> Parser<'a> {
     fn parse_table_group(&mut self) -> Option<TableGroup> {
         self.advance(); // TableGroup
         let name = match self.peek_kind() {
-            TokenKind::StringLiteral => {
-                let raw = self.advance().text.clone();
-                raw[1..raw.len() - 1].to_string()
-            }
+            TokenKind::StringLiteral => self.advance().text.clone(),
             _ => {
                 self.error_at_current("expected a quoted group name after 'TableGroup'");
                 return None;
@@ -296,9 +295,7 @@ impl<'a> Parser<'a> {
     fn parse_attribute_value(&mut self) -> Option<AttributeValue> {
         match self.peek_kind() {
             TokenKind::StringLiteral => {
-                let raw = self.advance().text.clone();
-                // slice(1, -1) verbatim — no unescaping (parity).
-                Some(AttributeValue::String { value: raw[1..raw.len() - 1].to_string() })
+                Some(AttributeValue::String { value: self.advance().text.clone() })
             }
             TokenKind::NumberLiteral => {
                 let text = self.advance().text.clone();

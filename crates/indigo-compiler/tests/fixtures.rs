@@ -64,9 +64,48 @@ fn illegal_char_error_points_at_line() {
 }
 
 #[test]
-fn quirk_strings_are_not_unescaped() {
+fn strings_are_unescaped() {
     let schema = parse_source(r#"Table T { f String @note("say \"hi\"") }"#).unwrap();
     let json = serde_json::to_string(&schema).unwrap();
-    // The raw backslashes survive (TS does slice(1, -1) verbatim).
-    assert!(json.contains(r#"say \\\"hi\\\""#), "got: {json}");
+    // Decoded content: literal quotes, no backslashes left in the value.
+    assert!(json.contains("\"value\":\"say \\\"hi\\\"\""), "got: {json}");
+}
+
+#[test]
+fn all_recognized_escapes_decode() {
+    // \\ \" \n \r \t — the full recognized escape set (design decision 3).
+    let source = r#"Table T { f String @note("a\\b\nc\rd\te\"f") }"#;
+    let schema = parse_source(source).unwrap();
+    let note = &schema.models[0].fields[0].attributes[0].args[0].value;
+    match note {
+        indigo_compiler::ast::AttributeValue::String { value } => {
+            assert_eq!(value, "a\\b\nc\rd\te\"f", "decoded escape set mismatch: {value:?}");
+        }
+        other => panic!("expected a String attribute value, got: {other:?}"),
+    }
+}
+
+#[test]
+fn unknown_escape_sequence_is_an_error() {
+    let source = "Table T { f String @note(\"bad \\q escape\") }";
+    let errors = parse_source(source).unwrap_err();
+    let escape_error = errors
+        .iter()
+        .find(|e| e.message.contains("\\q"))
+        .unwrap_or_else(|| panic!("expected an unknown-escape diagnostic, got: {errors:?}"));
+    assert_eq!(escape_error.line, 1, "expected error on line 1: {escape_error:?}");
+    // Column of the backslash: 1-based, points at '\' in '\q'.
+    assert_eq!(escape_error.column, 31, "expected column of the backslash: {escape_error:?}");
+}
+
+#[test]
+fn lexer_errors_do_not_suppress_parser_errors() {
+    let source = "Table User {\n  id ~Int @id\n\nTable Post {\n  id Int @id\n";
+    let errors = parse_source(source).unwrap_err();
+    let has_illegal_char = errors.iter().any(|e| e.message.contains("unexpected character"));
+    let has_parser_error = errors
+        .iter()
+        .any(|e| e.message.to_lowercase().contains("expected") && e.line >= 4);
+    assert!(has_illegal_char, "expected an illegal-character diagnostic, got: {errors:?}");
+    assert!(has_parser_error, "expected a parser diagnostic too, got: {errors:?}");
 }

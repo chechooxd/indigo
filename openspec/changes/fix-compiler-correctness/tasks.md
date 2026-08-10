@@ -30,16 +30,16 @@ Sequential: PR 2 needs PR 1's clean tree; PR 3 needs PR 2's `rules.rs`. Within e
 
 ## Phase 1: Diagnostics Recovery & String Literals (PR 1)
 
-- [ ] 1.1 RED: invert `quirk_strings_are_not_unescaped` → `strings_are_unescaped` in `crates/indigo-compiler/tests/fixtures.rs`; `@note("say \"hi\"")` decodes to `say "hi"` (string-literals)
-- [ ] 1.2 RED: unknown escape `\q` → `CompilerError` with 1-based line/column (string-literals)
-- [ ] 1.3 RED: illegal char + missing `}` in one file → both diagnostics present in one pass (compiler-diagnostics)
-- [ ] 1.4 GREEN: `lexer.rs` — `unescape()` for `\\ \" \n \r \t`; unknown escape errors at exact column; `StringLiteral` tokens carry decoded text
-- [ ] 1.5 GREEN: `parser.rs` — drop both `raw[1..len-1]` slices; read decoded `Token.text`
-- [ ] 1.6 GREEN: `lib.rs::parse_source` — stop early-returning on lexer errors; concatenate lexer errors then parser errors
-- [ ] 1.7 Verify `cd crates && cargo test` GREEN
-- [ ] 1.8 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
-- [ ] 1.9 `pnpm test` (expect RED only on golden `03-quirks-values.json`); `node packages/compiler/test/regen-snapshots.mjs`; review diff limited to 03's decoded note
-- [ ] 1.10 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
+- [x] 1.1 RED: invert `quirk_strings_are_not_unescaped` → `strings_are_unescaped` in `crates/indigo-compiler/tests/fixtures.rs`; `@note("say \"hi\"")` decodes to `say "hi"` (string-literals)
+- [x] 1.2 RED: unknown escape `\q` → `CompilerError` with 1-based line/column (string-literals)
+- [x] 1.3 RED: illegal char + missing `}` in one file → both diagnostics present in one pass (compiler-diagnostics)
+- [x] 1.4 GREEN: `lexer.rs` — `unescape()` for `\\ \" \n \r \t`; unknown escape errors at exact column; `StringLiteral` tokens carry decoded text
+- [x] 1.5 GREEN: `parser.rs` — drop both `raw[1..len-1]` slices; read decoded `Token.text`
+- [x] 1.6 GREEN: `lib.rs::parse_source` — stop early-returning on lexer errors; concatenate lexer errors then parser errors
+- [x] 1.7 Verify `cd crates && cargo test` GREEN
+- [x] 1.8 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
+- [x] 1.9 `pnpm test` (expect RED only on golden `03-quirks-values.json`); `node packages/compiler/test/regen-snapshots.mjs`; review diff limited to 03's decoded note
+- [x] 1.10 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
 
 ## Phase 2: Referential Actions (Resolve) & Enum Value Mapping (PR 2)
 

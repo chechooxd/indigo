@@ -140,6 +140,43 @@ impl LineIndex {
     }
 }
 
+/// Decodes the recognized escape sequences (`\\`, `\"`, `\n`, `\r`, `\t`)
+/// inside a string literal's content (quotes already stripped).
+///
+/// `inner_start` is the absolute byte offset, within the full source, of
+/// `inner`'s first byte — needed to report an exact 1-based line/column for
+/// an unknown escape sequence.
+fn unescape(inner: &str, inner_start: usize, index: &LineIndex) -> Result<String, CompilerError> {
+    let mut result = String::with_capacity(inner.len());
+    let mut chars = inner.char_indices();
+    while let Some((offset, ch)) = chars.next() {
+        if ch != '\\' {
+            result.push(ch);
+            continue;
+        }
+        // The lexer's regex (`\\.`) guarantees a character follows.
+        let (_, escaped) = chars.next().expect("regex guarantees a char follows '\\'");
+        match escaped {
+            '\\' => result.push('\\'),
+            '"' => result.push('"'),
+            'n' => result.push('\n'),
+            'r' => result.push('\r'),
+            't' => result.push('\t'),
+            other => {
+                let (line, column) = index.position(inner_start + offset);
+                return Err(CompilerError {
+                    message: format!("unknown escape sequence \"\\{other}\""),
+                    line,
+                    column,
+                    end_line: Some(line),
+                    end_column: Some(column + 2),
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
 fn keyword_for(text: &str) -> Option<TokenKind> {
     match text {
         "Table" => Some(TokenKind::KwTable),
@@ -164,6 +201,34 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
         let (line, column) = index.position(span.start);
         let (end_line, end_column) = index.position(span.end.saturating_sub(1).max(span.start));
         match result {
+            Ok(RawToken::StringLiteral) => {
+                let raw = &source[span.clone()];
+                // Strip the surrounding quotes; content starts one byte in.
+                let inner = &raw[1..raw.len() - 1];
+                match unescape(inner, span.start + 1, &index) {
+                    Ok(decoded) => tokens.push(Token {
+                        kind: TokenKind::StringLiteral,
+                        text: decoded,
+                        line,
+                        column,
+                        end_line,
+                        end_column,
+                    }),
+                    Err(escape_error) => {
+                        errors.push(escape_error);
+                        // Recover with the raw (un-decoded) content so the
+                        // parser still sees a StringLiteral token here.
+                        tokens.push(Token {
+                            kind: TokenKind::StringLiteral,
+                            text: inner.to_string(),
+                            line,
+                            column,
+                            end_line,
+                            end_column,
+                        });
+                    }
+                }
+            }
             Ok(raw) => {
                 let text = &source[span.clone()];
                 let kind = match raw {
@@ -179,7 +244,7 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                     RawToken::Colon => TokenKind::Colon,
                     RawToken::QuestionMark => TokenKind::QuestionMark,
                     RawToken::Equals => TokenKind::Equals,
-                    RawToken::StringLiteral => TokenKind::StringLiteral,
+                    RawToken::StringLiteral => unreachable!("handled above"),
                     RawToken::NumberLiteral => TokenKind::NumberLiteral,
                     RawToken::Identifier => keyword_for(text).unwrap_or(TokenKind::Identifier),
                 };

@@ -83,7 +83,7 @@
                     "name": "",
                     "value": {
                       "kind": "string",
-                      "value": "say \\\"hi\\\" \\\\ done"
+                      "value": "say \"hi\" \\ done"
                     }
                   }
                 ]
@@ -498,7 +498,7 @@
               "kind": "value",
               "value": "plain"
             },
-            "note": "say \\\"hi\\\" \\\\ done"
+            "note": "say \"hi\" \\ done"
           },
           {
             "name": "offset",
