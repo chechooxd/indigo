@@ -1,0 +1,14 @@
+// Renaming a column that carries an auto-derived unique index and is the
+// target of another table's foreign key. PostgreSQL does not rename dependent
+// objects when a column is renamed, so the plan must realign them explicitly
+// or a later DROP will reference a name that no longer exists.
+Table U {
+  id    Int    @id
+  email String @unique @map("email_addr")
+}
+
+Table P {
+  id     Int    @id
+  uEmail String
+  u      U      @relation(fields: [uEmail], references: [email])
+}

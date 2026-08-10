@@ -1,0 +1,13 @@
+// Only the @map target moved. The logical field name is unchanged, so this is
+// an unambiguous rename: the column keeps its data, and the dependent unique
+// index and the foreign key pointing at it must both follow.
+Table U {
+  id    Int    @id
+  email String @unique @map("email_address")
+}
+
+Table P {
+  id     Int    @id
+  uEmail String
+  u      U      @relation(fields: [uEmail], references: [email])
+}
