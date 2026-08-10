@@ -126,7 +126,7 @@ jobs:
 
           echo "::error::packages/compiler/wasm/ does not match a rebuild from crates/indigo-compiler/src."
           echo ""
-          echo "Two different problems produce this diff, and the diff itself cannot tell them apart:"
+          echo "Three different problems produce this diff, and the diff itself cannot tell them apart:"
           echo ""
           echo "1. STALE ARTIFACT — the Rust source changed without the artifact being rebuilt."
           echo "   Fix: run 'pnpm --filter @indigodb/compiler build:wasm' and commit"
@@ -136,4 +136,13 @@ jobs:
           echo "   Expected: rustc 1.93.1 (rust-toolchain.toml), wasm-pack 0.15.0"
           echo "   Actual:   $(rustc --version), $(wasm-pack --version)"
           echo "   Fix: align the pins, regenerate the artifact, and commit both together."
+          echo ""
+          echo "3. UNREMAPPED HOST PATH — the artifact was committed from a machine whose"
+          echo "   build:wasm invocation did not strip \$HOME/.cargo/registry/src via"
+          echo "   RUSTFLAGS=--remap-path-prefix (packages/compiler/package.json's build:wasm"
+          echo "   script does this by default; a manual wasm-pack invocation would not)."
+          echo "   Every host embeds its own registry path in the wasm binary otherwise, so"
+          echo "   two machines with the identical toolchain still produce different bytes."
+          echo "   Fix: rebuild with 'pnpm --filter @indigodb/compiler build:wasm' (not a bare"
+          echo "   wasm-pack call) and commit the result."
           exit 1

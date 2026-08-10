@@ -6,6 +6,16 @@
 # This combination was verified to rebuild the artifact byte-identically:
 #   rustc 1.93.1 + wasm-pack 0.15.0 + wasm-bindgen 0.2.126
 #
+# Pinning alone is not sufficient: the binary also embeds $HOME/.cargo/registry/src
+# paths from third-party dependencies (workspace-local sources already compile with
+# relative paths, so this only affects crates.io deps), so two machines with the
+# identical toolchain still produce different bytes unless that path is stripped.
+# `packages/compiler/package.json`'s `build:wasm` script sets
+# RUSTFLAGS=--remap-path-prefix for exactly this reason — always build through that
+# script, never call wasm-pack directly. Confirmed on GitHub Actions' first-ever run
+# of the wasm-drift job: matching rustc/wasm-pack versions, non-matching bytes,
+# traced to the reporting machine's un-remapped registry path.
+#
 # wasm-bindgen is a caret range in crates/indigo-compiler/Cargo.toml; what
 # actually holds it at 0.2.126 is the committed crates/Cargo.lock, which is why
 # every cargo invocation in CI passes --locked. Never run `cargo update` in CI.

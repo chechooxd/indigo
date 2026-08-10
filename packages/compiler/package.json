@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "build:wasm": "wasm-pack build ../../crates/indigo-compiler --release --target web --out-name indigo_compiler --out-dir \"$(pwd)/wasm\" && rm -f wasm/.gitignore wasm/package.json",
+    "build:wasm": "RUSTFLAGS=\"--remap-path-prefix=$HOME/.cargo/registry/src=/cargo/registry\" wasm-pack build ../../crates/indigo-compiler --release --target web --out-name indigo_compiler --out-dir \"$(pwd)/wasm\" && rm -f wasm/.gitignore wasm/package.json",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
     "test": "node test/parity.mjs"
