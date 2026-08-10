@@ -11,6 +11,9 @@
     "test": "turbo test"
   },
   "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "turbo": "^2.5.0",
     "typescript": "^5.8.0",

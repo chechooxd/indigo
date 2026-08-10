@@ -1,0 +1,139 @@
+# CI floor for IndigoDB.
+#
+# Three jobs, deliberately independent (no `needs:`) so one red job never hides
+# another:
+#
+#   ts          build + lint + test. Installs NO Rust toolchain, on purpose.
+#   rust        cargo test against the pinned toolchain.
+#   wasm-drift  rebuilds the committed WASM artifact and fails if it moved.
+#
+# Why the TS job must stay Rust-free: `packages/compiler/wasm/` is a committed
+# build artifact precisely so a TypeScript-only contributor never needs cargo or
+# wasm-pack. If this job ever grows a Rust step, that property is silently gone
+# and committing the artifact stops buying anything.
+#
+# Known limitation: `build:wasm` uses `$(pwd)` and `rm -f`, which is correct on
+# this Linux runner and on Unix dev machines but would need adjusting before a
+# Windows runner could be added to any matrix.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ts:
+    name: TypeScript (build · lint · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pnpm version from the root package.json `packageManager` field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm lint
+
+      # Includes the PGlite appliability suite, which boots an in-process
+      # PostgreSQL per fixture and adds roughly 70s. No service container and no
+      # Docker: PGlite is an ordinary npm dependency.
+      - run: pnpm test
+
+  rust:
+    name: Rust (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup is preinstalled on the runner and reads rust-toolchain.toml, so
+      # the pinned channel and the wasm32 target install themselves on first use.
+      - name: Report the resolved toolchain
+        run: rustc --version && cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # --locked is what actually pins wasm-bindgen: the manifest carries a caret
+      # range and only the committed Cargo.lock holds it at 0.2.126. This also
+      # fails loudly if someone edits Cargo.toml without updating the lockfile.
+      - run: cargo test --locked
+        working-directory: crates
+
+  wasm-drift:
+    name: WASM artifact integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            crates/target
+          key: wasm-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: wasm-${{ runner.os }}-
+
+      - name: Install the pinned wasm-pack
+        run: |
+          if [ "$(wasm-pack --version 2>/dev/null)" != "wasm-pack 0.15.0" ]; then
+            cargo install wasm-pack --version 0.15.0 --locked
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Rebuild the committed artifact
+        run: pnpm --filter @indigodb/compiler build:wasm
+
+      - name: Fail if the artifact drifted
+        run: |
+          if git diff --exit-code -- packages/compiler/wasm/; then
+            echo "Committed artifact matches a rebuild from crates/indigo-compiler/src."
+            exit 0
+          fi
+
+          echo "::error::packages/compiler/wasm/ does not match a rebuild from crates/indigo-compiler/src."
+          echo ""
+          echo "Two different problems produce this diff, and the diff itself cannot tell them apart:"
+          echo ""
+          echo "1. STALE ARTIFACT — the Rust source changed without the artifact being rebuilt."
+          echo "   Fix: run 'pnpm --filter @indigodb/compiler build:wasm' and commit"
+          echo "   packages/compiler/wasm/ in the same commit as the Rust change."
+          echo ""
+          echo "2. TOOLCHAIN MISMATCH — this runner did not build with the pinned toolchain."
+          echo "   Expected: rustc 1.93.1 (rust-toolchain.toml), wasm-pack 0.15.0"
+          echo "   Actual:   $(rustc --version), $(wasm-pack --version)"
+          echo "   Fix: align the pins, regenerate the artifact, and commit both together."
+          exit 1

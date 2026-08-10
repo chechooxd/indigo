@@ -30,9 +30,28 @@ Rust compiler (only needed when touching `crates/`; requires `cargo`, the
   toolchain — if you change `crates/`, you MUST run `build:wasm` and commit the result,
   then run the regression harness. Regenerate golden snapshots only on intentional contract
   changes (`node packages/compiler/test/regen-snapshots.mjs`; the diff is the review artifact).
+  **This rule is now enforced**: CI's `wasm-drift` job rebuilds the artifact and fails on any
+  diff. The toolchain is pinned (`rust-toolchain.toml` → rustc 1.93.1, wasm-pack 0.15.0,
+  wasm-bindgen 0.2.126 via the committed `crates/Cargo.lock`) because a rebuild-and-diff check
+  is only meaningful against the toolchain that produced the committed bytes. Bumping any pin
+  means regenerating and committing the artifact in the same commit. `build:wasm` uses `$(pwd)`
+  and `rm -f`, so it is Unix-only — it would need adjusting before a Windows runner could be added.
 
 Scope to one package with Turbo filters, e.g. `pnpm build --filter=@indigodb/parser`
 or `pnpm --filter @indigodb/studio dev`.
+
+## CI
+
+`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request, as three
+independent jobs (no `needs:`, so one red job never hides another):
+
+- **`ts`** — `pnpm install/build/lint/test`. Installs **no** Rust toolchain, deliberately: the
+  committed WASM artifact exists so TypeScript-only contributors never need cargo. If this job
+  ever grows a Rust step, committing the artifact stops buying anything.
+- **`rust`** — `cargo test --locked`. `--locked` is what actually pins `wasm-bindgen`, since the
+  manifest carries a caret range and only the committed lockfile holds it at 0.2.126.
+- **`wasm-drift`** — rebuilds the artifact and fails on any diff, naming both possible causes
+  (stale artifact vs toolchain mismatch), since the diff alone cannot distinguish them.
 
 Build order matters: `@indigodb/ast` is the base type contract; `@indigodb/core`
 (the relational IR + resolver) sits on top of `ast` + `parser` and is the hub every other
