@@ -649,7 +649,8 @@
             "refTable": "widgets",
             "refColumns": [
               "id"
-            ]
+            ],
+            "onDelete": "CASCADE"
           }
         ],
         "indexes": [],
@@ -720,6 +721,16 @@
         "values": [
           "ACTIVE",
           "INACTIVE"
+        ],
+        "members": [
+          {
+            "name": "ACTIVE",
+            "dbName": "active"
+          },
+          {
+            "name": "INACTIVE",
+            "dbName": "INACTIVE"
+          }
         ]
       }
     ],

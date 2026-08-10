@@ -52,8 +52,14 @@ pub struct ForeignKey {
     pub ref_columns: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub name: Option<String>,
+    /// SQL-ready text (`"CASCADE"`, `"SET NULL"`, ...) — see `rules::action_sql`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub on_delete: Option<String>,
+    /// Resolved into the IR but not yet rendered as DDL by
+    /// `packages/migrator` — tracked incompleteness, follow-up:
+    /// `fix-migrator-correctness`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub on_update: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -106,10 +112,24 @@ pub struct ResolvedTable {
     pub group: Option<String>,
 }
 
+/// A single enum member, name plus its physical (`@map`) label.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedEnumMember {
+    pub name: String,
+    pub db_name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResolvedEnum {
     pub name: String,
     pub values: Vec<String>,
+    /// Additive alongside `values` — `values` keeps its four existing
+    /// consumers (`postgres.ts`, `migrate.ts`, `client.ts`,
+    /// `schema-adapter.ts`) untouched. `members` reaches the IR but the
+    /// migrator still renders `values` only — tracked incompleteness,
+    /// follow-up: `fix-migrator-correctness`.
+    pub members: Vec<ResolvedEnumMember>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

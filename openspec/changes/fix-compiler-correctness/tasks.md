@@ -41,21 +41,23 @@ Sequential: PR 2 needs PR 1's clean tree; PR 3 needs PR 2's `rules.rs`. Within e
 - [x] 1.9 `pnpm test` (expect RED only on golden `03-quirks-values.json`); `node packages/compiler/test/regen-snapshots.mjs`; review diff limited to 03's decoded note
 - [x] 1.10 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
 
-## Phase 2: Referential Actions (Resolve) & Enum Value Mapping (PR 2)
+## Phase 2: Referential Actions (Resolve) & Enum Value Mapping (PR 2) — COMPLETE
 
-- [ ] 2.1 Create `crates/indigo-compiler/src/rules.rs`: `REFERENTIAL_ACTIONS` domain (`Cascade|Restrict|SetNull|SetDefault|NoAction`) + `action_sql()` (`SetNull`→`"SET NULL"`, `NoAction`→`"NO ACTION"`, rest uppercase verbatim)
-- [ ] 2.2 RED: bare `onDelete: Cascade` (Reference) → FK `onDelete == "CASCADE"`; quoted form resolves identically (referential-actions)
-- [ ] 2.3 RED: absent onDelete/onUpdate stays absent, not null/empty (referential-actions)
-- [ ] 2.4 RED: bare `onUpdate: Restrict` → FK `onUpdate == "RESTRICT"` (referential-actions)
-- [ ] 2.5 RED: `ACTIVE @map("active")` → `members[0].dbName=="active"`; unmapped `INACTIVE` → own name (enum-value-mapping)
-- [ ] 2.6 GREEN: `resolve.rs` — onDelete/onUpdate accept `String` and `Reference` via `rules::action_sql()`; emit `ForeignKey.on_update` (IR-only, no `ON UPDATE` DDL yet — tracked, see 3.18)
-- [ ] 2.7 GREEN: `resolve.rs` — emit `ResolvedEnum.members`; keep `values` unchanged (migrator still reads `values` only — tracked, see 3.18)
-- [ ] 2.8 GREEN: `ir.rs` — `ForeignKey.on_update` (`skip_serializing_if = "Option::is_none"`), `ResolvedEnumMember{name,db_name}`, `ResolvedEnum.members`
-- [ ] 2.9 GREEN: `packages/core/src/ir.ts` — optional `onUpdate?: string`, `ResolvedEnumMember{name,dbName}`, optional `members?: ResolvedEnumMember[]`; amend `onDelete` doc comment (canonical SQL text)
-- [ ] 2.10 Verify `cd crates && cargo test` GREEN
-- [ ] 2.11 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
-- [ ] 2.12 `pnpm test` (expect RED on goldens 01/02/03); `node packages/compiler/test/regen-snapshots.mjs`; review diff (01/02 gain `members` only; 03 also gains `onDelete: "CASCADE"`)
-- [ ] 2.13 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
+Branch `fix/compiler-referential-actions-and-enums` (stacked on `fix/compiler-diagnostics-and-string-literals` @ `5d8d61c`). Commit: `877205d`. See `sdd/fix-compiler-correctness/apply-progress` for full TDD evidence.
+
+- [x] 2.1 Create `crates/indigo-compiler/src/rules.rs`: `REFERENTIAL_ACTIONS` domain (`Cascade|Restrict|SetNull|SetDefault|NoAction`) + `action_sql()` (`SetNull`→`"SET NULL"`, `NoAction`→`"NO ACTION"`, rest uppercase verbatim)
+- [x] 2.2 RED: bare `onDelete: Cascade` (Reference) → FK `onDelete == "CASCADE"`; quoted form resolves identically (referential-actions)
+- [x] 2.3 RED: absent onDelete/onUpdate stays absent, not null/empty (referential-actions)
+- [x] 2.4 RED: bare `onUpdate: Restrict` → FK `onUpdate == "RESTRICT"` (referential-actions)
+- [x] 2.5 RED: `ACTIVE @map("active")` → `members[0].dbName=="active"`; unmapped `INACTIVE` → own name (enum-value-mapping)
+- [x] 2.6 GREEN: `resolve.rs` — onDelete/onUpdate accept `String` and `Reference` via `rules::action_sql()`; emit `ForeignKey.on_update` (IR-only, no `ON UPDATE` DDL yet — tracked, see 3.18)
+- [x] 2.7 GREEN: `resolve.rs` — emit `ResolvedEnum.members`; keep `values` unchanged (migrator still reads `values` only — tracked, see 3.18)
+- [x] 2.8 GREEN: `ir.rs` — `ForeignKey.on_update` (`skip_serializing_if = "Option::is_none"`), `ResolvedEnumMember{name,db_name}`, `ResolvedEnum.members`
+- [x] 2.9 GREEN: `packages/core/src/ir.ts` — optional `onUpdate?: string`, `ResolvedEnumMember{name,dbName}`, optional `members?: ResolvedEnumMember[]`; amend `onDelete` doc comment (canonical SQL text)
+- [x] 2.10 Verify `cd crates && cargo test` GREEN
+- [x] 2.11 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
+- [x] 2.12 `pnpm test` (expect RED on goldens 01/02/03); `node packages/compiler/test/regen-snapshots.mjs`; review diff (01/02 gain `members` only; 03 also gains `onDelete: "CASCADE"`)
+- [x] 2.13 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
 
 ## Phase 3: Attribute, Relation & Datasource Validation (PR 3)
 

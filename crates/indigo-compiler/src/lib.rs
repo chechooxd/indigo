@@ -12,6 +12,7 @@ pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod resolve;
+pub mod rules;
 pub mod validate;
 
 use serde::Serialize;

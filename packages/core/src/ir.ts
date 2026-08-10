@@ -58,8 +58,23 @@ export interface ForeignKey {
   refColumns: string[];
   /** Optional constraint name. */
   name?: string;
-  /** ON DELETE behaviour (`@relation(onDelete: ...)`), verbatim. */
+  /**
+   * ON DELETE behaviour (`@relation(onDelete: ...)`). Interpolated verbatim
+   * into executed DDL by `@indigodb/migrator` — the compiler guarantees this
+   * is already SQL-ready text (e.g. `"CASCADE"`, `"SET NULL"`) from a closed,
+   * validated domain, never the raw schema spelling.
+   */
   onDelete?: string;
+  /**
+   * ON UPDATE behaviour (`@relation(onUpdate: ...)`), same SQL-ready text
+   * contract as `onDelete`. Optional because older `.snapshot.json` files
+   * written before this key existed have no `onUpdate` at all.
+   *
+   * Tracked incompleteness: resolved into the IR, but `@indigodb/migrator`
+   * does not yet render `ON UPDATE` DDL from it — follow-up change:
+   * `fix-migrator-correctness`.
+   */
+  onUpdate?: string;
 }
 
 /** A secondary index (`@@index`) or composite unique (`@@unique`). */
@@ -119,9 +134,25 @@ export interface ResolvedTable {
   group?: string;
 }
 
+/** A single enum member: its schema name plus its physical (`@map`) label. */
+export interface ResolvedEnumMember {
+  name: string;
+  dbName: string;
+}
+
 export interface ResolvedEnum {
   name: string;
   values: string[];
+  /**
+   * Additive alongside `values` — `values` keeps its existing consumers
+   * (`postgres.ts`, `migrate.ts`, `client.ts`, `schema-adapter.ts`)
+   * unchanged. Optional because older `.snapshot.json` files written before
+   * this key existed have no `members` at all.
+   *
+   * Tracked incompleteness: reaches the IR, but `@indigodb/migrator` still
+   * renders `values` only — follow-up change: `fix-migrator-correctness`.
+   */
+  members?: ResolvedEnumMember[];
 }
 
 /** A resolved `TableGroup Name { ... }` block: a named, colored cluster of tables. */

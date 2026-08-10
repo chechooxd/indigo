@@ -68,6 +68,20 @@ fn resolve_column(field: &Field, is_enum: bool) -> ResolvedColumn {
     }
 }
 
+/// Extracts a schema-spelled referential action from either its bare-identifier
+/// form (`AttributeValue::Reference`, e.g. `onDelete: Cascade`) or its quoted
+/// form (`AttributeValue::String`, e.g. `onDelete: "Cascade"`), then maps it
+/// through `rules::action_sql`. Anything outside the closed domain resolves
+/// to `None` — an invalid value is a validation error, not a resolved one.
+fn resolve_action(value: Option<&AttributeValue>) -> Option<String> {
+    let raw = match value {
+        Some(AttributeValue::String { value }) => value.as_str(),
+        Some(AttributeValue::Reference { value }) => value.as_str(),
+        _ => return None,
+    };
+    crate::rules::action_sql(raw).map(str::to_string)
+}
+
 fn first_array_refs(attr: &Attribute) -> Vec<String> {
     let value = attr.args.iter().find(|a| a.name.is_empty()).map(|a| &a.value);
     as_reference_list(value)
@@ -113,7 +127,8 @@ fn resolve_relations(
         let rel_attr = get_attr(&field.attributes, "relation");
         let local_refs = as_reference_list(named_arg(rel_attr, "fields"));
         let target_refs = as_reference_list(named_arg(rel_attr, "references"));
-        let on_delete = as_string(named_arg(rel_attr, "onDelete"));
+        let on_delete = resolve_action(named_arg(rel_attr, "onDelete"));
+        let on_update = resolve_action(named_arg(rel_attr, "onUpdate"));
 
         let holds_fk = !local_refs.is_empty();
         let fk_columns: Vec<String> = local_refs
@@ -168,6 +183,7 @@ fn resolve_relations(
                 ref_columns,
                 name: None,
                 on_delete,
+                on_update,
             });
         }
     }
@@ -259,6 +275,15 @@ pub fn resolve(schema: &Schema) -> ResolvedSchema {
             .map(|e| ResolvedEnum {
                 name: e.name.clone(),
                 values: e.values.iter().map(|v| v.name.clone()).collect(),
+                members: e
+                    .values
+                    .iter()
+                    .map(|v| ResolvedEnumMember {
+                        name: v.name.clone(),
+                        db_name: first_string(get_attr(&v.attributes, "map"))
+                            .unwrap_or_else(|| v.name.clone()),
+                    })
+                    .collect(),
             })
             .collect(),
         datasource: schema.datasources.first().cloned(),

@@ -526,6 +526,20 @@
           "ADMIN",
           "USER",
           "GUEST"
+        ],
+        "members": [
+          {
+            "name": "ADMIN",
+            "dbName": "ADMIN"
+          },
+          {
+            "name": "USER",
+            "dbName": "USER"
+          },
+          {
+            "name": "GUEST",
+            "dbName": "GUEST"
+          }
         ]
       }
     ],

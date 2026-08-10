@@ -109,3 +109,81 @@ fn lexer_errors_do_not_suppress_parser_errors() {
     assert!(has_illegal_char, "expected an illegal-character diagnostic, got: {errors:?}");
     assert!(has_parser_error, "expected a parser diagnostic too, got: {errors:?}");
 }
+
+fn gadget_fk(schema: &indigo_compiler::ast::Schema) -> indigo_compiler::ir::ForeignKey {
+    let resolved = resolve::resolve(schema);
+    resolved
+        .tables
+        .into_iter()
+        .find(|t| t.name == "Gadget")
+        .expect("Gadget table")
+        .foreign_keys
+        .into_iter()
+        .next()
+        .expect("Gadget.widget foreign key")
+}
+
+#[test]
+fn bare_on_delete_reaches_the_foreign_key() {
+    let source = "Table Widget { id Int @id }\n\
+                  Table Gadget {\n\
+                  \x20 id Int @id\n\
+                  \x20 widgetId Int\n\
+                  \x20 widget Widget @relation(fields: [widgetId], references: [id], onDelete: Cascade)\n\
+                  }";
+    let schema = parse_source(source).unwrap();
+    assert_eq!(gadget_fk(&schema).on_delete.as_deref(), Some("CASCADE"));
+}
+
+#[test]
+fn quoted_on_delete_matches_bare_form() {
+    let source = "Table Widget { id Int @id }\n\
+                  Table Gadget {\n\
+                  \x20 id Int @id\n\
+                  \x20 widgetId Int\n\
+                  \x20 widget Widget @relation(fields: [widgetId], references: [id], onDelete: \"Cascade\")\n\
+                  }";
+    let schema = parse_source(source).unwrap();
+    assert_eq!(gadget_fk(&schema).on_delete.as_deref(), Some("CASCADE"));
+}
+
+#[test]
+fn absent_referential_actions_stay_absent() {
+    let source = "Table Widget { id Int @id }\n\
+                  Table Gadget {\n\
+                  \x20 id Int @id\n\
+                  \x20 widgetId Int\n\
+                  \x20 widget Widget @relation(fields: [widgetId], references: [id])\n\
+                  }";
+    let schema = parse_source(source).unwrap();
+    let fk = gadget_fk(&schema);
+    assert_eq!(fk.on_delete, None);
+    assert_eq!(fk.on_update, None);
+}
+
+#[test]
+fn bare_on_update_reaches_the_foreign_key() {
+    let source = "Table Widget { id Int @id }\n\
+                  Table Gadget {\n\
+                  \x20 id Int @id\n\
+                  \x20 widgetId Int\n\
+                  \x20 widget Widget @relation(fields: [widgetId], references: [id], onUpdate: Restrict)\n\
+                  }";
+    let schema = parse_source(source).unwrap();
+    assert_eq!(gadget_fk(&schema).on_update.as_deref(), Some("RESTRICT"));
+}
+
+#[test]
+fn enum_value_map_reaches_resolved_members() {
+    let source = "enum Status { ACTIVE @map(\"active\") INACTIVE }\n\
+                  Table Widget { id Int @id status Status }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let status = resolved.enums.into_iter().find(|e| e.name == "Status").expect("Status enum");
+    assert_eq!(status.members[0].name, "ACTIVE");
+    assert_eq!(status.members[0].db_name, "active");
+    assert_eq!(status.members[1].name, "INACTIVE");
+    assert_eq!(status.members[1].db_name, "INACTIVE");
+    // `values` stays a plain name list — unchanged consumer contract.
+    assert_eq!(status.values, vec!["ACTIVE", "INACTIVE"]);
+}
