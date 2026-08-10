@@ -67,15 +67,16 @@ Turborepo's `pnpm test` picks up, matching the compiler package's wiring.
 - WHEN Turborepo fans out `test` tasks
 - THEN the migrator golden suite runs and its result affects the overall `pnpm test` outcome
 
-### Requirement: Golden fixtures pin generated text, not applicability
+### Requirement: Golden fixtures pin generated text, applicability is proven separately
 
 Golden fixtures assert exact SQL **text** (or diagnostic content) produced by
-the migrator; they MUST NOT be read as proof that the DDL applies
-successfully against a real PostgreSQL server. No PostgreSQL instance runs
-in this suite or in CI.
+the migrator; passing this suite alone MUST NOT be read as proof that the
+DDL applies successfully against a real PostgreSQL server — that proof is
+the responsibility of the `migration-appliability-tests` capability, which
+executes the same fixtures against a real PostgreSQL engine (PGlite).
 
-#### Scenario: Text-correct fixture with unverified applicability
+#### Scenario: Text-correct fixture with separately-verified applicability
 
 - GIVEN a fixture asserting exact SQL text for a diff that is textually correct per manual review of PostgreSQL semantics
-- WHEN the harness passes
-- THEN this only confirms the text matches the approved golden — it does NOT confirm the SQL executes successfully against a live database; integration testing against real PostgreSQL remains explicitly out of scope and is a named follow-up change
+- WHEN the golden harness passes
+- THEN this confirms the text matches the approved golden — it does NOT by itself confirm the SQL executes successfully; that confirmation comes from the `migration-appliability-tests` suite, which runs the same fixture's DDL against a real PostgreSQL engine
