@@ -23,11 +23,19 @@
 # threaded codegen) than "pin the toolchain" turned out to be, so on `push` to
 # `main` this job self-heals instead of just failing: it rebuilds, and if the
 # committed bytes differ, it commits ITS OWN rebuild back to `main` as
-# `github-actions[bot]` and stops there. That push triggers a fresh CI run,
-# which finds its own artifact already in place and passes. A commit already
-# authored by `github-actions[bot]` skips the auto-fix (loop guard) — if THAT
-# still fails to match on rebuild, something is genuinely wrong, not host
-# noise, and the job fails loudly instead of committing forever.
+# `github-actions[bot]` and stops there — that run itself still finishes green,
+# because the bytes it just committed ARE its own build output by construction.
+#
+# That push does NOT trigger a fresh CI run: GitHub deliberately does not
+# chain workflow runs off a push made with the default GITHUB_TOKEN, to avoid
+# infinite-loop workflows. No verification run happens automatically, and none
+# is needed — `main` is self-consistent the moment the commit lands, since
+# nothing outside this job produced those bytes. The next PUSH BY A HUMAN is
+# what actually re-exercises the check, against a same-runner-pool baseline
+# instead of a laptop's. A commit already authored by `github-actions[bot]`
+# skips the auto-fix (loop guard) — if THAT still fails to match on rebuild,
+# something is genuinely wrong, not host noise, and the job fails loudly
+# instead of committing forever.
 #
 # On `pull_request`, this job never pushes (unsafe for fork branches, and
 # ambiguous for same-repo branches while a review is pending): it only reports
@@ -182,7 +190,7 @@ jobs:
           contributor's local rebuild is compared here. This commit is that
           rebuild, made canonical by running in CI."
           git push origin HEAD:${{ github.ref_name }}
-          echo "::notice::Committed CI's rebuild to ${{ github.ref_name }}. The push this triggers will verify clean."
+          echo "::notice::Committed CI's own rebuild to ${{ github.ref_name }}. GitHub does not chain a new run off a GITHUB_TOKEN push, so no follow-up run will appear — that's expected, not a gap: the committed bytes are this run's own build output."
 
       - name: Report drift that self-heal did not (or could not) fix
         if: steps.diff.outputs.matches == 'false' && (github.event_name != 'push' || github.actor == 'github-actions[bot]')
