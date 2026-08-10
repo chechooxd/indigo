@@ -20,4 +20,18 @@ export {
 } from "./postgres.js";
 
 // Versioned migration diff engine (`indigodb migrate`).
-export { diffResolved, renderMigrationSql } from "./migrate.js";
+export { planMigration, renderMigrationSql } from "./migrate.js";
+
+// Migration plan contract: phase-tagged statements plus blocking diagnostics.
+export {
+  splitMigrationSql,
+  NO_TRANSACTION_BEGIN,
+  NO_TRANSACTION_END,
+} from "./plan.js";
+export type {
+  MigrationPlan,
+  MigrationStatement,
+  MigrationPhase,
+  MigrationDiagnostic,
+  MigrationDiagnosticCode,
+} from "./plan.js";

@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { diffResolved, renderMigrationSql } from "@indigodb/migrator";
+import { planMigration, renderMigrationSql, splitMigrationSql } from "@indigodb/migrator";
 import type { ResolvedSchema } from "@indigodb/core";
 
 const MIGRATIONS_DIR = "migrations";
@@ -81,11 +81,39 @@ export interface DevOptions {
   connectionString: string;
 }
 
+/**
+ * Applies one migration file's SQL, leaving the transaction OPEN for the
+ * caller to record history and commit.
+ *
+ * Statements marked pre-transaction run first, each as its own `query()`
+ * call: `pg`'s simple query protocol wraps a multi-statement string in an
+ * implicit transaction, so batching them would put `ALTER TYPE ... ADD VALUE`
+ * back inside a transaction and defeat the split. A file carrying no marker
+ * yields no pre-transaction statements, so migrations written before this
+ * existed keep behaving exactly as they did.
+ */
+async function applyMigrationSql(client: pg.Client, sql: string): Promise<void> {
+  const { preTransaction, transactional } = splitMigrationSql(sql);
+  for (const statement of preTransaction) await client.query(statement);
+  await client.query("BEGIN");
+  if (transactional.trim().length > 0) await client.query(transactional);
+}
+
 /** Creates a migration from schema changes and applies it. */
 export async function migrateDev(options: DevOptions): Promise<void> {
   const prev = loadSnapshot();
-  const stmts = diffResolved(prev, options.resolved);
-  if (stmts.length === 0) {
+  // One diff, one plan: the plan carries the statements, their execution
+  // phase and any blocking diagnostics, so nothing below re-derives it.
+  const plan = planMigration(prev, options.resolved);
+
+  if (plan.diagnostics.length > 0) {
+    console.error("❌ Cannot generate a migration for this schema change:");
+    for (const d of plan.diagnostics) console.error(`   • ${d.message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (plan.statements.length === 0) {
     console.log("✅ No schema changes — database is up to date.");
     return;
   }
@@ -93,20 +121,19 @@ export async function migrateDev(options: DevOptions): Promise<void> {
   const id = `${timestamp()}_${slugify(options.name)}`;
   const dir = join(migrationsRoot(), id);
   mkdirSync(dir, { recursive: true });
-  const sql = renderMigrationSql(prev, options.resolved);
+  const sql = renderMigrationSql(plan);
   writeFileSync(join(dir, "migration.sql"), sql);
 
   const client = new pg.Client({ connectionString: options.connectionString });
   try {
     await client.connect();
     await ensureHistory(client);
-    await client.query("BEGIN");
-    await client.query(sql);
+    await applyMigrationSql(client, sql);
     await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
     await client.query("COMMIT");
     saveSnapshot(options.resolved);
     console.log(`✅ Migration created and applied: ${id}`);
-    console.log(`   ${stmts.length} statement(s) → migrations/${id}/migration.sql`);
+    console.log(`   ${plan.statements.length} statement(s) → migrations/${id}/migration.sql`);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     rmSync(dir, { recursive: true, force: true }); // discard the failed migration file
@@ -132,8 +159,7 @@ export async function migrateDeploy(connectionString: string): Promise<void> {
     }
     for (const id of pending) {
       const sql = readFileSync(join(migrationsRoot(), id, "migration.sql"), "utf-8");
-      await client.query("BEGIN");
-      await client.query(sql);
+      await applyMigrationSql(client, sql);
       await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
       await client.query("COMMIT");
       console.log(`  ✓ applied ${id}`);
