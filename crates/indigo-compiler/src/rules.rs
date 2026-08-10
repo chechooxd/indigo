@@ -8,7 +8,14 @@
 //! divergence structurally impossible: both passes read the same table.
 //!
 //! Phase 3 (`fix-compiler-correctness`) extends this module with the
-//! attribute whitelist/arity/argtype table consumed by `validate.rs`.
+//! attribute whitelist/arity/argtype table consumed by `validate.rs`. It is
+//! DERIVED from what `resolve.rs`/`validate.rs` consume
+//! (`resolve.rs:19,23,27,63,64,67,79,113,237,238`, `validate.rs:49,68,90`),
+//! not invented. Anything outside it — `@@id`, `@updatedAt`, `@@ignore`, an
+//! unknown `@relation` named arg — compiled silently before Phase 3 and is
+//! now a hard `ValidationError` (see `release-notes.md`).
+
+use crate::ast::AttributeValue;
 
 /// Referential actions accepted for `onDelete` / `onUpdate`
 /// (`@relation(onDelete: ..., onUpdate: ...)`), PascalCase, case-sensitive —
@@ -36,6 +43,78 @@ pub fn action_sql(name: &str) -> Option<&'static str> {
     REFERENTIAL_ACTIONS.iter().find(|(schema_name, _)| *schema_name == name).map(|(_, sql)| *sql)
 }
 
+/// Which kind of AST node an attribute is declared on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttributeTarget {
+    Field,
+    Model,
+    EnumValue,
+}
+
+/// Arity/argument-shape contract for a recognized attribute. `Default` and
+/// `Relation` need bespoke checks that `validate.rs` implements directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgShape {
+    /// No arguments (`@id`, `@unique`, `@@realtime`).
+    None,
+    /// Exactly one positional string (`@map("x")`, `@note("x")`).
+    OneString,
+    /// Exactly one positional reference array (`@@index([a, b])`).
+    OneReferenceArray,
+    /// Literal type must match the field's scalar type; generator calls and
+    /// enum-typed bare references are always accepted.
+    Default,
+    /// Named args only, keys checked against `RELATION_ARG_KEYS`.
+    Relation,
+}
+
+/// `(target, attribute name, shape)` — every attribute recognized anywhere
+/// in the language. Every attribute in `fixtures/*.indigo` is covered.
+pub const ATTRIBUTE_RULES: &[(AttributeTarget, &str, ArgShape)] = &[
+    (AttributeTarget::Field, "id", ArgShape::None),
+    (AttributeTarget::Field, "unique", ArgShape::None),
+    (AttributeTarget::Field, "map", ArgShape::OneString),
+    (AttributeTarget::Field, "note", ArgShape::OneString),
+    (AttributeTarget::Field, "default", ArgShape::Default),
+    (AttributeTarget::Field, "relation", ArgShape::Relation),
+    (AttributeTarget::Model, "realtime", ArgShape::None),
+    (AttributeTarget::Model, "map", ArgShape::OneString),
+    (AttributeTarget::Model, "note", ArgShape::OneString),
+    (AttributeTarget::Model, "index", ArgShape::OneReferenceArray),
+    (AttributeTarget::Model, "unique", ArgShape::OneReferenceArray),
+    (AttributeTarget::EnumValue, "map", ArgShape::OneString),
+];
+
+/// `None` means `name` is not recognized on `target` at all.
+pub fn attribute_rule(target: AttributeTarget, name: &str) -> Option<ArgShape> {
+    ATTRIBUTE_RULES.iter().find(|(t, n, _)| *t == target && *n == name).map(|(.., s)| *s)
+}
+
+/// `@relation` named-argument keys. A misspelled key (e.g. `onDlete`) was a
+/// silent no-op before this change — the exact failure mode it exists to kill.
+pub const RELATION_ARG_KEYS: [&str; 4] = ["fields", "references", "onDelete", "onUpdate"];
+
+/// Generator calls always accepted as a `@default(...)` value, regardless
+/// of the field's scalar type (`resolve.rs::resolve_default` passthrough).
+pub const DEFAULT_GENERATOR_FUNCTIONS: [&str; 4] = ["autoincrement", "now", "uuid", "cuid"];
+
+/// The only supported `datasource.provider` value — unrelated to
+/// `generator.provider` (`"indigodb-client-ts"`), a different AST node.
+pub const DATASOURCE_PROVIDER: &str = "postgresql";
+
+/// Whether a `@default` literal matches `scalar_type`. Only judges literal
+/// values; generator calls and enum references are handled by the caller.
+/// `DateTime`/`Json`/`BigInt`/`Bytes` have no literal syntax yet — only a
+/// generator call is a valid default for those types.
+pub fn default_literal_matches(scalar_type: &str, value: &AttributeValue) -> bool {
+    matches!(
+        (scalar_type, value),
+        ("String", AttributeValue::String { .. })
+            | ("Int" | "Float" | "Decimal", AttributeValue::Number { .. })
+            | ("Boolean", AttributeValue::Boolean { .. })
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +132,21 @@ mod tests {
     fn rejects_unknown_and_lowercase_values() {
         assert_eq!(action_sql("Nonsense"), None);
         assert_eq!(action_sql("cascade"), None);
+    }
+
+    #[test]
+    fn attribute_rule_distinguishes_targets() {
+        assert!(attribute_rule(AttributeTarget::Field, "id").is_some());
+        assert!(attribute_rule(AttributeTarget::Model, "id").is_none());
+        assert!(attribute_rule(AttributeTarget::Model, "index").is_some());
+        assert!(attribute_rule(AttributeTarget::EnumValue, "map").is_some());
+        assert!(attribute_rule(AttributeTarget::Field, "uniqe").is_none());
+    }
+
+    #[test]
+    fn default_literal_matches_checks_scalar_type() {
+        assert!(default_literal_matches("String", &AttributeValue::String { value: "x".into() }));
+        assert!(default_literal_matches("Int", &AttributeValue::Number { value: 1.0 }));
+        assert!(!default_literal_matches("Int", &AttributeValue::String { value: "nope".into() }));
     }
 }

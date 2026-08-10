@@ -59,23 +59,25 @@ Branch `fix/compiler-referential-actions-and-enums` (stacked on `fix/compiler-di
 - [x] 2.12 `pnpm test` (expect RED on goldens 01/02/03); `node packages/compiler/test/regen-snapshots.mjs`; review diff (01/02 gain `members` only; 03 also gains `onDelete: "CASCADE"`)
 - [x] 2.13 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
 
-## Phase 3: Attribute, Relation & Datasource Validation (PR 3)
+## Phase 3: Attribute, Relation & Datasource Validation (PR 3) — COMPLETE
 
-- [ ] 3.1 Extend `rules.rs` with the attribute table keyed by (target, name): field `{id,unique}`=0 args, field `{map,note}`=1 string, field `default`=type-matched literal (generator calls + enum reference always allowed), field `relation`=named args ⊆ `{fields,references,onDelete,onUpdate}`, model `{realtime}`=0 args, model `{map,note}`=1 string, model `{index,unique}`=1 reference array, enum-value `map`=1 string
-- [ ] 3.2 RED: `@relation(onDlete: Cascade)` (unknown named arg, misspelled key) → diagnostic naming the unknown key vs the whitelist (attribute-validation)
-- [ ] 3.3 RED: `@uniqe`, `@@deafult` → unrecognized-attribute diagnostics naming model/field (attribute-validation)
-- [ ] 3.4 RED: `@id("x")`, `@map()` → arity diagnostics; `@default("nope")` on `Int` → argtype diagnostic; `autoincrement()`/enum-ref defaults stay clean (attribute-validation)
-- [ ] 3.5 RED: full `fixtures/*.indigo` corpus (excl. `errors/`) → zero attribute-validation diagnostics (attribute-validation)
-- [ ] 3.6 RED: reciprocal `Post[]`/`Tag[]`, no `@relation` → diagnostic naming both models + "explicit join model"; explicit FK one-to-many and explicit join-model schemas stay clean (relation-validation)
-- [ ] 3.7 RED: `onDelete: Nonsense` and lowercase `onDelete: cascade` → diagnostics naming value + allowed set (referential-actions, validate half)
-- [ ] 3.8 RED: `provider = "mysql"`, absent `provider`, two `datasource` blocks → diagnostics; `generator.provider` untouched (datasource-validation)
-- [ ] 3.9 GREEN: `validate.rs` — attribute whitelist/arity/argtype pass, incl. `@relation` named-arg key whitelist, reading `rules.rs`
-- [ ] 3.10 GREEN: `validate.rs` — implicit many-to-many rejection pass
-- [ ] 3.11 GREEN: `validate.rs` — referential-action domain check (positionless, model/field) reading `rules::REFERENTIAL_ACTIONS`
-- [ ] 3.12 GREEN: `validate.rs` — datasource `provider` + duplicate-block checks (message-only diagnostic)
-- [ ] 3.13 Add `fixtures/errors/*` cases covering each new rejection exercised in 3.2–3.8
-- [ ] 3.14 Verify `cd crates && cargo test` GREEN
-- [ ] 3.15 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
-- [ ] 3.16 `pnpm test` (goldens 04/05 must stay unchanged); regen only if a diff appears; review
-- [ ] 3.17 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
-- [ ] 3.18 Write `openspec/changes/fix-compiler-correctness/release-notes.md`: every new rejection class (unknown escapes; unrecognized/misapplied attributes incl. `@@id([a,b])`, `@updatedAt`, `@@ignore`, unknown `@relation` args; invalid/lowercase referential actions; implicit many-to-many; bad/absent/duplicate datasource provider) plus the two tracked incompletenesses handed to a future `fix-migrator-correctness` change (`onUpdate` reaches the IR with no DDL emitted; enum `members` reaches the IR but the migrator still renders `values` only)
+Branch `fix/compiler-schema-validation` (stacked on `fix/compiler-referential-actions-and-enums` @ `4e5ac52`). See `sdd/fix-compiler-correctness/apply-progress` for full TDD evidence.
+
+- [x] 3.1 Extend `rules.rs` with the attribute table keyed by (target, name): field `{id,unique}`=0 args, field `{map,note}`=1 string, field `default`=type-matched literal (generator calls + enum reference always allowed), field `relation`=named args ⊆ `{fields,references,onDelete,onUpdate}`, model `{realtime}`=0 args, model `{map,note}`=1 string, model `{index,unique}`=1 reference array, enum-value `map`=1 string
+- [x] 3.2 RED: `@relation(onDlete: Cascade)` (unknown named arg, misspelled key) → diagnostic naming the unknown key vs the whitelist (attribute-validation)
+- [x] 3.3 RED: `@uniqe`, `@@deafult` → unrecognized-attribute diagnostics naming model/field (attribute-validation)
+- [x] 3.4 RED: `@id("x")`, `@map()` → arity diagnostics; `@default("nope")` on `Int` → argtype diagnostic; `autoincrement()`/enum-ref defaults stay clean (attribute-validation)
+- [x] 3.5 RED: full `fixtures/*.indigo` corpus (excl. `errors/`) → zero attribute-validation diagnostics (attribute-validation)
+- [x] 3.6 RED: reciprocal `Post[]`/`Tag[]`, no `@relation` → diagnostic naming both models + "explicit join model"; explicit FK one-to-many and explicit join-model schemas stay clean (relation-validation)
+- [x] 3.7 RED: `onDelete: Nonsense` and lowercase `onDelete: cascade` → diagnostics naming value + allowed set (referential-actions, validate half)
+- [x] 3.8 RED: `provider = "mysql"`, absent `provider`, two `datasource` blocks → diagnostics; `generator.provider` untouched (datasource-validation)
+- [x] 3.9 GREEN: `validate.rs` — attribute whitelist/arity/argtype pass, incl. `@relation` named-arg key whitelist, reading `rules.rs`
+- [x] 3.10 GREEN: `validate.rs` — implicit many-to-many rejection pass
+- [x] 3.11 GREEN: `validate.rs` — referential-action domain check (positionless, model/field) reading `rules::REFERENTIAL_ACTIONS`
+- [x] 3.12 GREEN: `validate.rs` — datasource `provider` + duplicate-block checks (message-only diagnostic)
+- [x] 3.13 DEVIATION: `fixtures/errors/*` is checked by `parity.mjs` only for parse-failure, not validation-failure; a semantically-invalid fixture there would break that harness. Covered 3.2–3.8 as `cargo test` cases instead — see apply-progress.
+- [x] 3.14 Verify `cd crates && cargo test` GREEN
+- [x] 3.15 `pnpm --filter @indigodb/compiler build:wasm`; commit `packages/compiler/wasm/`
+- [x] 3.16 `pnpm test` — GREEN with zero golden diff (no regen needed; the 5 valid fixtures' `ValidationError[]` already matched)
+- [x] 3.17 Verify `pnpm test`, `pnpm build`, `pnpm lint` GREEN
+- [x] 3.18 Wrote `openspec/changes/fix-compiler-correctness/release-notes.md`
