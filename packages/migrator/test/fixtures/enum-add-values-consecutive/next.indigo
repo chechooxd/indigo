@@ -1,0 +1,9 @@
+// Both enums grow. Expect two pre-transaction statements, not one.
+enum A { X Y }
+enum B { P Q }
+
+Table T {
+  id Int @id
+  a  A
+  b  B
+}

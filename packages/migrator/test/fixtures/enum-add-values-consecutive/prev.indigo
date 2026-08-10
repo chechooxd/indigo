@@ -1,0 +1,12 @@
+// Two enums each gaining a value in one migration, so the rendered file
+// carries two CONSECUTIVE pre-transaction marker blocks. splitMigrationSql
+// must recover both; recovering only one would silently run the second
+// ALTER TYPE inside the transaction.
+enum A { X }
+enum B { P }
+
+Table T {
+  id Int @id
+  a  A
+  b  B
+}
