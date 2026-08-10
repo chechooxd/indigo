@@ -1,0 +1,14 @@
+// Regression: A is declared before B, but A's NEW column carries a FK to
+// the NEW table B. The 3a/3b/3c pass creates B (3b) before adding A's FK
+// (3c) regardless of declaration order — the bug this fixture pins was
+// ordering by declaration, not by dependency.
+
+Table A {
+  id  Int  @id @default(autoincrement())
+  bId Int?
+  b   B?   @relation(fields: [bId], references: [id])
+}
+
+Table B {
+  id Int @id @default(autoincrement())
+}

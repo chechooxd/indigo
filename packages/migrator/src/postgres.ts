@@ -13,8 +13,24 @@ import type {
   ResolvedTable,
   ResolvedColumn,
   ResolvedDefault,
+  ResolvedEnum,
+  ResolvedEnumMember,
   ForeignKey,
 } from "@indigodb/core";
+
+/** A member's schema name plus the PostgreSQL label it must render as; falls
+ * back to `values` (name === dbName) for `.snapshot.json` files written
+ * before `members` existed. */
+export function enumMembers(e: ResolvedEnum): ResolvedEnumMember[] {
+  return e.members ?? e.values.map((v) => ({ name: v, dbName: v }));
+}
+
+/** Looks up the PostgreSQL label for one enum member by its logical name. */
+function enumDbName(enums: ResolvedEnum[], enumName: string, memberName: string): string {
+  const e = enums.find((x) => x.name === enumName);
+  const member = e && enumMembers(e).find((m) => m.name === memberName);
+  return member ? member.dbName : memberName;
+}
 
 /** Maps an IndigoDB scalar type to a PostgreSQL column type. */
 export function mapScalarToPg(indigoType: string): string {
@@ -48,8 +64,13 @@ export function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-/** Renders a SQL default clause fragment (without the leading DEFAULT keyword). */
-function renderDefault(def: ResolvedDefault, column: ResolvedColumn): string | undefined {
+/**
+ * Renders a SQL default clause fragment (without the leading DEFAULT
+ * keyword). `enums` resolves an enum literal default to its PostgreSQL
+ * label (`dbName`) — omitting it would cast using the LOGICAL member name,
+ * which fails at apply time once that member carries an explicit `@map`.
+ */
+function renderDefault(def: ResolvedDefault, column: ResolvedColumn, enums: ResolvedEnum[]): string | undefined {
   if (def.kind === "function") {
     switch (def.name) {
       case "now":
@@ -68,8 +89,12 @@ function renderDefault(def: ResolvedDefault, column: ResolvedColumn): string | u
   const v = def.value;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return String(v);
-  // strings and enum members are quoted; enum members cast to the enum type.
-  if (column.isEnum) return `'${escapeLiteral(v)}'::${quoteIdent(column.type)}`;
+  // strings and enum members are quoted; enum members cast to the enum type
+  // using their PostgreSQL label, not their logical schema name.
+  if (column.isEnum) {
+    const label = enumDbName(enums, column.type, String(v));
+    return `'${escapeLiteral(label)}'::${quoteIdent(column.type)}`;
+  }
   return `'${escapeLiteral(v)}'`;
 }
 
@@ -80,15 +105,16 @@ function escapeLiteral(v: string | number | boolean): string {
 /**
  * Renders a column's DEFAULT fragment (without the `DEFAULT` keyword), or
  * undefined when there is no SQL default (e.g. autoincrement/cuid). Reused by
- * the migration engine for `ALTER COLUMN ... SET DEFAULT`.
+ * the migration engine for `ALTER COLUMN ... SET DEFAULT`. `enums` defaults
+ * to `[]` for callers with no enum default in play.
  */
-export function renderDefaultClause(column: ResolvedColumn): string | undefined {
+export function renderDefaultClause(column: ResolvedColumn, enums: ResolvedEnum[] = []): string | undefined {
   if (!column.default || column.autoincrement) return undefined;
-  return renderDefault(column.default, column);
+  return renderDefault(column.default, column, enums);
 }
 
 /** Renders a single column definition line inside CREATE TABLE. */
-export function renderColumn(column: ResolvedColumn): string {
+export function renderColumn(column: ResolvedColumn, enums: ResolvedEnum[] = []): string {
   const parts = [quoteIdent(column.dbName)];
 
   if (column.autoincrement) {
@@ -101,7 +127,7 @@ export function renderColumn(column: ResolvedColumn): string {
   if (!column.nullable) parts.push("NOT NULL");
 
   if (column.default && !column.autoincrement) {
-    const clause = renderDefault(column.default, column);
+    const clause = renderDefault(column.default, column, enums);
     if (clause) parts.push(`DEFAULT ${clause}`);
   }
 
@@ -109,8 +135,8 @@ export function renderColumn(column: ResolvedColumn): string {
 }
 
 /** Renders the `CREATE TABLE IF NOT EXISTS` for a table (columns + PK). */
-function renderCreateTable(table: ResolvedTable): string {
-  const lines = table.columns.map((c) => `  ${renderColumn(c)}`);
+function renderCreateTable(table: ResolvedTable, enums: ResolvedEnum[]): string {
+  const lines = table.columns.map((c) => `  ${renderColumn(c, enums)}`);
   if (table.primaryKey.length > 0) {
     lines.push(`  PRIMARY KEY (${table.primaryKey.map(quoteIdent).join(", ")})`);
   }
@@ -118,12 +144,12 @@ function renderCreateTable(table: ResolvedTable): string {
 }
 
 /** Additive `ADD COLUMN IF NOT EXISTS` for schema evolution on existing tables. */
-function renderAddColumns(table: ResolvedTable): string[] {
+function renderAddColumns(table: ResolvedTable, enums: ResolvedEnum[]): string[] {
   return table.columns
     .filter((c) => !c.isPk) // PK columns come from the initial CREATE
     .map(
       (c) =>
-        `ALTER TABLE ${quoteIdent(table.dbName)} ADD COLUMN IF NOT EXISTS ${renderColumn(c)};`,
+        `ALTER TABLE ${quoteIdent(table.dbName)} ADD COLUMN IF NOT EXISTS ${renderColumn(c, enums)};`,
     );
 }
 
@@ -134,20 +160,21 @@ function renderForeignKey(table: ResolvedTable, fk: ForeignKey): string {
   const cols = fk.columns.map(quoteIdent).join(", ");
   const refCols = fk.refColumns.map(quoteIdent).join(", ");
   const onDelete = fk.onDelete ? ` ON DELETE ${fk.onDelete}` : "";
+  const onUpdate = fk.onUpdate ? ` ON UPDATE ${fk.onUpdate}` : "";
   return [
     "DO $$ BEGIN",
     `  ALTER TABLE ${quoteIdent(table.dbName)} ADD CONSTRAINT ${quoteIdent(name)}`,
-    `    FOREIGN KEY (${cols}) REFERENCES ${quoteIdent(fk.refTable)} (${refCols})${onDelete};`,
+    `    FOREIGN KEY (${cols}) REFERENCES ${quoteIdent(fk.refTable)} (${refCols})${onDelete}${onUpdate};`,
     "EXCEPTION WHEN duplicate_object THEN null; END $$;",
   ].join("\n");
 }
 
-/** Renders a guarded `CREATE TYPE ... AS ENUM`. */
-function renderEnum(name: string, values: string[]): string {
-  const vals = values.map((v) => `'${escapeLiteral(v)}'`).join(", ");
+/** Renders a guarded `CREATE TYPE ... AS ENUM`, one PostgreSQL label per member. */
+function renderEnum(e: ResolvedEnum): string {
+  const vals = enumMembers(e).map((m) => `'${escapeLiteral(m.dbName)}'`).join(", ");
   return [
     "DO $$ BEGIN",
-    `  CREATE TYPE ${quoteIdent(name)} AS ENUM (${vals});`,
+    `  CREATE TYPE ${quoteIdent(e.name)} AS ENUM (${vals});`,
     "EXCEPTION WHEN duplicate_object THEN null; END $$;",
   ].join("\n");
 }
@@ -222,12 +249,12 @@ export function renderPushSql(schema: ResolvedSchema): string {
   ];
 
   // 1. Enum types.
-  for (const e of schema.enums) blocks.push(renderEnum(e.name, e.values));
+  for (const e of schema.enums) blocks.push(renderEnum(e));
 
   // 2. Tables (create + additive columns).
   for (const table of schema.tables) {
-    blocks.push(renderCreateTable(table));
-    blocks.push(...renderAddColumns(table));
+    blocks.push(renderCreateTable(table, schema.enums));
+    blocks.push(...renderAddColumns(table, schema.enums));
   }
 
   // 3. Unique constraints (column-level @unique + composite @@unique) as indexes.

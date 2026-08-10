@@ -1,11 +1,8 @@
-// CHARACTERIZATION — current behaviour is incorrect, fixed in PR2.
-//
-// Post is declared before the User table it references. `diffResolved`
-// emits each table's full CREATE TABLE + constraints (including its FKs)
-// before moving to the next table in declaration order, so Post's FK
-// statement is emitted BEFORE `CREATE TABLE "User"` exists — a migration
-// that fails outright when applied. PR2 defers all FK constraints into a
-// dedicated pass (3c) that runs after every table is created.
+// Regression, fixed in PR2: Post is declared before the User table it
+// references. The 3a/3b/3c pass defers every FK constraint into a dedicated
+// pass (3c) that runs after every table is created, so `CREATE TABLE
+// "User"` exists before `Post`'s FK constraint references it — regardless
+// of declaration order.
 
 Table Post {
   id     Int  @id @default(autoincrement())

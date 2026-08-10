@@ -1,0 +1,22 @@
+// Regression: every category in one migration — enum ADD VALUE
+// (pre-transaction), a dropped table+enum, a new table with a FK to an
+// EXISTING table, and an unchanged table. Pins the full top-level order:
+// enums → notify fn → 3a (none here) → 3b (User unchanged, Post created) →
+// 3c (Post's FK to User) → DROP TABLE Old CASCADE → DROP TYPE Deprecated.
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+Table User {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id])
+}

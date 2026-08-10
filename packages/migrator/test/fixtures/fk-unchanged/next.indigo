@@ -1,0 +1,13 @@
+// Regression: an identical FK (columns, ref, AND both referential actions)
+// on both sides must emit ZERO FK-related DDL — `fkDefinition()` matches on
+// both sides, so neither the 3a drop nor the 3c add pass fires for it.
+
+Table User {
+  id Int @id @default(autoincrement())
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}

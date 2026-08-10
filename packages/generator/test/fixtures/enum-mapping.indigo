@@ -1,0 +1,9 @@
+enum Status {
+  ACTIVE @map("active")
+  INACTIVE
+}
+
+Table Widget {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}

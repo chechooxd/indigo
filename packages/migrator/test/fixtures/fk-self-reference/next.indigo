@@ -1,0 +1,9 @@
+// Regression: a self-referencing FK on a brand-new table. The 3a/3b/3c pass
+// still gets this right by construction — 3c only runs after 3b, so the
+// table already exists (created by itself) before its own FK is added.
+
+Table Node {
+  id       Int   @id @default(autoincrement())
+  parentId Int?
+  parent   Node? @relation(fields: [parentId], references: [id])
+}

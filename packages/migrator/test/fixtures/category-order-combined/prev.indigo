@@ -1,0 +1,17 @@
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum Deprecated {
+  X
+}
+
+Table Old {
+  id Int @id @default(autoincrement())
+}
+
+Table User {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}

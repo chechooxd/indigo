@@ -1,0 +1,13 @@
+// Regression: a NEW FK carries both `onDelete` and `onUpdate`. Both must be
+// emitted by both renderers — `migrate.ts`'s `addForeignKey` and
+// `postgres.ts`'s `renderForeignKey`.
+
+Table User {
+  id Int @id @default(autoincrement())
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}

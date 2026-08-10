@@ -1,11 +1,8 @@
-// CHARACTERIZATION — current behaviour is incorrect, fixed in PR2.
-//
-// Only `onDelete` changes (Cascade → SetNull); columns/refTable/refColumns
-// are unchanged. `fkSignature` omits both referential actions, so the diff
-// sees "the same FK" on both sides and emits ZERO DDL — the constraint in
-// the database keeps its old, now-wrong, ON DELETE behaviour. PR2 adds
-// `fkDefinition()` (identity + actions) so an action-only change re-issues
-// the constraint (DROP + ADD).
+// Regression, fixed in PR2: only `onDelete` changes (Cascade → SetNull);
+// columns/refTable/refColumns are unchanged. `fkDefinition()` (identity +
+// referential actions) detects the action-only change and re-issues the
+// SAME-named constraint (DROP in 3a, ADD in 3c) instead of `fkSignature`
+// alone, which would see "the same FK" on both sides and emit zero DDL.
 
 Table User {
   id Int @id @default(autoincrement())

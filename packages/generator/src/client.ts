@@ -7,8 +7,15 @@
  * the runtime `IndigoClientBase` from `@indigodb/client`.
  */
 
-import type { ResolvedSchema, ResolvedTable, ResolvedColumn } from "@indigodb/core";
+import type { ResolvedSchema, ResolvedTable, ResolvedColumn, ResolvedEnum, ResolvedEnumMember } from "@indigodb/core";
 import { ScalarType } from "@indigodb/ast";
+
+/** A member's schema name plus the PostgreSQL label it must round-trip as;
+ * falls back to `values` (name === dbName) for `.snapshot.json` files
+ * written before `members` existed. */
+function enumMembers(e: ResolvedEnum): ResolvedEnumMember[] {
+  return e.members ?? e.values.map((v) => ({ name: v, dbName: v }));
+}
 
 const SCALAR_TO_TS: Record<string, string> = {
   [ScalarType.String]: "string",
@@ -56,9 +63,14 @@ export function generateClient(schema: ResolvedSchema): string {
   );
 
   // ─── Enums ───────────────────────────────────────────────────────────────
+  // The TS enum key is the LOGICAL member name; its value is the PHYSICAL
+  // (`@map`) PostgreSQL label, so the runtime sends exactly what
+  // `@indigodb/migrator` created the type with (Prisma models it the same
+  // way). Sending the logical name for a `@map`'d member fails at the
+  // database with `invalid input value for enum`.
   for (const e of schema.enums) {
     out.push(`export enum ${e.name} {`);
-    for (const v of e.values) out.push(`  ${v} = "${v}",`);
+    for (const m of enumMembers(e)) out.push(`  ${m.name} = "${m.dbName}",`);
     out.push("}", "");
   }
 

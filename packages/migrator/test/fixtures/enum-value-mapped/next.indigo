@@ -1,0 +1,14 @@
+// Regression: a NEW enum member carries an explicit `@map`. `ADD VALUE`
+// must use the PostgreSQL label (`dbName`), not the logical member name —
+// `enumMembers()` closes this in both `migrate.ts` and `postgres.ts`.
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING @map("pending_review")
+}
+
+Table Widget {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}

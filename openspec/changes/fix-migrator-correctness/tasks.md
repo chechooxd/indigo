@@ -44,16 +44,16 @@ Branch topology (hard constraint, confirmed): PR1 branches from `fix/compiler-sc
 
 ## Phase 2: Ordering, Phase Split, Referential Actions, Enum `dbName` (PR2)
 
-- [ ] 2.1 RED: add fixtures `fk-self-reference`, `fk-cycle`, `fk-to-new-table-from-existing`, `category-order-combined`, `enum-value-mapped`, `fk-actions-emitted`, `fk-actions-changed`, `fk-unchanged`; update `fk-order-declaration`/`enum-add-value` expectations to correct output.
-- [ ] 2.2 GREEN: `migrate.ts` — split table DDL into 3a (all `DROP CONSTRAINT`) → 3b (per table: `CREATE TABLE`|`RENAME COLUMN`→ADD/DROP/ALTER COLUMN→PK→indexes→trigger) → 3c (all `ADD CONSTRAINT`); remove FK emission from `createTable`/`tableConstraints`. Top-level order (`:214-259`) unchanged; `postgres.ts` untouched (already correct per finding).
-- [ ] 2.3 GREEN: tag enum `ADD VALUE` `phase: "pre-transaction"`; emit `-- indigo:begin/end no-transaction` markers only when present.
-- [ ] 2.4 GREEN: add `fkDefinition()` (identity + onDelete/onUpdate); `fkSignature` (`:135`) stays identity-only. A definition-only change on an FK present both sides emits DROP (3a) + ADD (3c) same name; fully unchanged FK emits nothing.
-- [ ] 2.5 GREEN: emit `ON UPDATE` in `addForeignKey` (`migrate.ts:85`) and `renderForeignKey` (`postgres.ts:131`) from `fk.onUpdate`.
-- [ ] 2.6 GREEN: add `enumMembers(e) = e.members ?? e.values.map(v => ({name:v, dbName:v}))`; render `CREATE TYPE`/`ADD VALUE` from members' `dbName` in `migrate.ts` (`:50`, `:228`) and `postgres.ts` (`renderEnum`, `:146`/`:225`).
-- [ ] 2.7 GREEN (scope addition): fix `renderDefault` (`postgres.ts:52-74`) so an enum literal default casts using the member's `dbName`; thread the `enumMembers` lookup from `schema.enums` through `renderColumn`/`renderDefaultClause` call sites in `postgres.ts` (`renderCreateTable`, `renderAddColumns`) and `migrate.ts` (`createTable`, `alterColumn`, `columnSignature`). Confirm `migrate.ts` has no separate default-rendering path (it reuses `renderDefaultClause` — nothing else to fix).
-- [ ] 2.8 GREEN (scope addition): fix `packages/generator/src/client.ts:61` — emit `${member.name} = "${member.dbName}"` via `enumMembers`.
-- [ ] 2.9 (scope addition) Add `packages/generator/test/enum-mapping.mjs` (plain Node) + `"test": "node test/enum-mapping.mjs"` in `packages/generator/package.json`: parse+resolve an `@map`'d-enum fixture, run `generateClient`, assert the enum block. First test this package has.
-- [ ] 2.10 Gates: `pnpm test` (migrator + generator), `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
+- [x] 2.1 RED: add fixtures `fk-self-reference`, `fk-cycle`, `fk-to-new-table-from-existing`, `category-order-combined`, `enum-value-mapped`, `fk-actions-emitted`, `fk-actions-changed`, `fk-unchanged`; update `fk-order-declaration`/`enum-add-value` expectations to correct output.
+- [x] 2.2 GREEN: `migrate.ts` — split table DDL into 3a (all `DROP CONSTRAINT`) → 3b (per table: `CREATE TABLE`|`RENAME COLUMN`→ADD/DROP/ALTER COLUMN→PK→indexes→trigger) → 3c (all `ADD CONSTRAINT`); remove FK emission from `createTable`/`tableConstraints`. Top-level order (`:214-259`) unchanged; `postgres.ts` untouched (already correct per finding).
+- [x] 2.3 GREEN: tag enum `ADD VALUE` `phase: "pre-transaction"`; emit `-- indigo:begin/end no-transaction` markers only when present.
+- [x] 2.4 GREEN: add `fkDefinition()` (identity + onDelete/onUpdate); `fkSignature` (`:135`) stays identity-only. A definition-only change on an FK present both sides emits DROP (3a) + ADD (3c) same name; fully unchanged FK emits nothing.
+- [x] 2.5 GREEN: emit `ON UPDATE` in `addForeignKey` (`migrate.ts:85`) and `renderForeignKey` (`postgres.ts:131`) from `fk.onUpdate`.
+- [x] 2.6 GREEN: add `enumMembers(e) = e.members ?? e.values.map(v => ({name:v, dbName:v}))`; render `CREATE TYPE`/`ADD VALUE` from members' `dbName` in `migrate.ts` (`:50`, `:228`) and `postgres.ts` (`renderEnum`, `:146`/`:225`).
+- [x] 2.7 GREEN (scope addition): fix `renderDefault` (`postgres.ts:52-74`) so an enum literal default casts using the member's `dbName`; thread the `enumMembers` lookup from `schema.enums` through `renderColumn`/`renderDefaultClause` call sites in `postgres.ts` (`renderCreateTable`, `renderAddColumns`) and `migrate.ts` (`createTable`, `alterColumn`, `columnSignature`). Confirm `migrate.ts` has no separate default-rendering path (it reuses `renderDefaultClause` — nothing else to fix).
+- [x] 2.8 GREEN (scope addition): fix `packages/generator/src/client.ts:61` — emit `${member.name} = "${member.dbName}"` via `enumMembers`.
+- [x] 2.9 (scope addition) Add `packages/generator/test/enum-mapping.mjs` (plain Node) + `"test": "node test/enum-mapping.mjs"` in `packages/generator/package.json`: parse+resolve an `@map`'d-enum fixture, run `generateClient`, assert the enum block. First test this package has.
+- [x] 2.10 Gates: `pnpm test` (migrator + generator), `pnpm build`, `pnpm lint`, `cd crates && cargo test` — all green.
 
 ## Phase 3: Diff Completeness + Safety Guards (PR3)
 

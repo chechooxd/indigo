@@ -1,0 +1,17 @@
+// Regression: a genuine A↔B cycle between two brand-new tables. The
+// 3a/3b/3c pass handles this by construction — every `CREATE TABLE` (3b)
+// runs before either FK constraint (3c), so neither side needs to exist
+// first. A topological sort would additionally have to decide what to do
+// with this exact case; the deferred pass needs no special case at all.
+
+Table A {
+  id  Int  @id @default(autoincrement())
+  bId Int?
+  b   B?   @relation(fields: [bId], references: [id])
+}
+
+Table B {
+  id  Int  @id @default(autoincrement())
+  aId Int?
+  a   A?   @relation(fields: [aId], references: [id])
+}
