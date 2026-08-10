@@ -17,11 +17,22 @@ function resolveFixture(dir, file) {
   return resolve(parse(source));
 }
 
-/** Computes the golden-comparable output for one fixture directory. */
-export function computeActual(dir) {
+/**
+ * Loads and resolves one fixture directory's schema pair. `prev` is `null`
+ * when `prev.indigo` is absent (no prior schema). Shared by the golden
+ * harness and the PostgreSQL appliability suite so both diff the exact same
+ * resolved schemas.
+ */
+export function loadFixture(dir) {
   const prev = resolveFixture(dir, "prev.indigo");
   const next = resolveFixture(dir, "next.indigo");
   if (!next) throw new Error(`${dir}: next.indigo is required`);
+  return { prev, next };
+}
+
+/** Computes the golden-comparable output for one fixture directory. */
+export function computeActual(dir) {
+  const { prev, next } = loadFixture(dir);
   const plan = planMigration(prev, next);
   return {
     // Statements are recorded with their execution phase: a golden must fail
