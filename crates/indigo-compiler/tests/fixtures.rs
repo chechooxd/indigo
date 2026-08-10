@@ -323,3 +323,31 @@ fn enum_value_map_reaches_resolved_members() {
     // `values` stays a plain name list — unchanged consumer contract.
     assert_eq!(status.values, vec!["ACTIVE", "INACTIVE"]);
 }
+
+#[test]
+fn enum_value_map_is_subject_to_attribute_validation() {
+    // `@map` on an enum value goes through the same arity and argument-type
+    // rules as field and model attributes. Without this test the enum-value
+    // target of that rule is unexercised, so a regression there would be
+    // silent — which is the defect class this whole change exists to remove.
+    let table = "\nTable Widget { id Int @id status Status }";
+
+    let missing_arg = validate_src(&format!("enum Status {{ ACTIVE @map() }}{table}"));
+    assert!(
+        missing_arg.iter().any(|e| e.message.contains("@map")),
+        "expected an arity diagnostic for `@map()` on an enum value, got: {missing_arg:?}"
+    );
+
+    let wrong_type = validate_src(&format!("enum Status {{ ACTIVE @map(1) }}{table}"));
+    assert!(
+        wrong_type.iter().any(|e| e.message.contains("@map")),
+        "expected an argument-type diagnostic for `@map(1)` on an enum value, got: {wrong_type:?}"
+    );
+
+    // The valid spelling must stay clean, or the rule is over-strict.
+    let valid = validate_src(&format!("enum Status {{ ACTIVE @map(\"active\") }}{table}"));
+    assert!(
+        !valid.iter().any(|e| e.message.contains("@map")),
+        "valid `@map(\"active\")` must not be diagnosed, got: {valid:?}"
+    );
+}
