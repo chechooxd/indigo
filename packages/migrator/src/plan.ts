@@ -88,13 +88,23 @@ export function splitMigrationSql(
 
   for (const block of blocks) {
     const lines = block.split("\n");
+    // When the marker block is the LAST block in the file, `renderMigrationSql`'s
+    // single trailing "\n" lands inside THIS block (only one "\n", not "\n\n",
+    // so it survives the split), leaving an empty final line after the END
+    // marker. Strip exactly that one trailing blank line before checking the
+    // marker shape — detection only; the ORIGINAL `block` (with its trailing
+    // newline intact) is still what gets pushed to `transactionalBlocks` below
+    // when a block turns out not to be marked, so unmarked byte-for-byte output
+    // is unaffected.
+    const markerLines = lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines;
     const isMarked =
-      lines[0] === NO_TRANSACTION_BEGIN && lines[lines.length - 1] === NO_TRANSACTION_END;
+      markerLines[0] === NO_TRANSACTION_BEGIN &&
+      markerLines[markerLines.length - 1] === NO_TRANSACTION_END;
     if (!isMarked) {
       transactionalBlocks.push(block);
       continue;
     }
-    const statement = lines
+    const statement = markerLines
       .slice(1, -1)
       .filter((line) => !line.startsWith("--"))
       .join("\n")
