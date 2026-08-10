@@ -1,0 +1,19 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR2.
+//
+// Post is declared before the User table it references. `diffResolved`
+// emits each table's full CREATE TABLE + constraints (including its FKs)
+// before moving to the next table in declaration order, so Post's FK
+// statement is emitted BEFORE `CREATE TABLE "User"` exists — a migration
+// that fails outright when applied. PR2 defers all FK constraints into a
+// dedicated pass (3c) that runs after every table is created.
+
+Table Post {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+}
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  posts Post[]
+}

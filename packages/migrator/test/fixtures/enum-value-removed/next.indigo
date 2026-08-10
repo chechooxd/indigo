@@ -1,0 +1,19 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR3.
+//
+// `ARCHIVED` is removed from `Status`. The enum diff loop only ever adds
+// values present in `next` but missing from `prev` — it never checks for
+// values present in `prev` but missing from `next` — so a removal emits
+// ZERO DDL and silently leaves the stale label in the database forever.
+// PostgreSQL cannot drop an enum value without recreating the type, so PR3
+// refuses generation with an `enum-value-removed` diagnostic instead of
+// silently doing nothing.
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+Table Widget {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}

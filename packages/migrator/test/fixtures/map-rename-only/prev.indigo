@@ -1,0 +1,4 @@
+Table User {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+}

@@ -1,0 +1,8 @@
+// Regression: a required column WITH a default stays unguarded — Postgres
+// backfills existing rows safely, so this must keep emitting plain DDL
+// across PR1/PR2/PR3.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String @default("")
+}

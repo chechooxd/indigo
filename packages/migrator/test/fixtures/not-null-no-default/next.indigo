@@ -1,0 +1,14 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR3.
+//
+// `email` is a new required column (no `@default`) added to a table that
+// already exists in `prev`. `diffTable`'s added-column loop emits a plain,
+// UNGUARDED `ALTER TABLE ... ADD COLUMN "email" text NOT NULL;` — which
+// fails outright against any table already holding rows ("column contains
+// null values"). PR3 refuses generation with a
+// `required-column-without-default` diagnostic instead of emitting DDL
+// that is guaranteed to fail on populated tables.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String
+}

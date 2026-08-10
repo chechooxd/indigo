@@ -1,0 +1,4 @@
+Table Item {
+  id   Int    @id
+  code String @unique
+}

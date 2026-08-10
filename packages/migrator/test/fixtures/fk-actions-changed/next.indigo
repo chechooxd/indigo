@@ -1,0 +1,18 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR2.
+//
+// Only `onDelete` changes (Cascade → SetNull); columns/refTable/refColumns
+// are unchanged. `fkSignature` omits both referential actions, so the diff
+// sees "the same FK" on both sides and emits ZERO DDL — the constraint in
+// the database keeps its old, now-wrong, ON DELETE behaviour. PR2 adds
+// `fkDefinition()` (identity + actions) so an action-only change re-issues
+// the constraint (DROP + ADD).
+
+Table User {
+  id Int @id @default(autoincrement())
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id], onDelete: SetNull)
+}

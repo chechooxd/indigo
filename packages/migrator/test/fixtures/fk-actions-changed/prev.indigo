@@ -1,0 +1,9 @@
+Table User {
+  id Int @id @default(autoincrement())
+}
+
+Table Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}

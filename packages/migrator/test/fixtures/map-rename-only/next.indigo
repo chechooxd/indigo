@@ -1,0 +1,13 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR3.
+//
+// Only the `@map` changes; the field name `createdAt` is unchanged.
+// `diffTable` matches columns by logical field name, and `columnSignature`
+// never looks at `dbName`, so this rename is invisible to the diff and
+// emits ZERO DDL — the physical column keeps its old name forever while the
+// generated client/queries assume the new one. PR3 detects an unambiguous
+// `@map`-only rename and emits `ALTER TABLE ... RENAME COLUMN`.
+
+Table User {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) @map("creation_date")
+}

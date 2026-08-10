@@ -1,0 +1,8 @@
+// Regression: an optional column (nullable, no default) stays unguarded —
+// no NOT NULL means no populated-table failure. Must keep emitting plain
+// DDL across PR1/PR2/PR3.
+
+Table User {
+  id       Int     @id @default(autoincrement())
+  nickname String?
+}

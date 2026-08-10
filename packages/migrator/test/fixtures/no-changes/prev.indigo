@@ -1,0 +1,6 @@
+// Baseline regression: identical prev/next schemas must yield zero DDL.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String @unique
+}

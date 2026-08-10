@@ -1,0 +1,13 @@
+// CHARACTERIZATION — current behaviour is incorrect, fixed in PR3.
+//
+// The primary key moves from `id` to `code`. `diffTable` never inspects
+// `table.primaryKey` at all, and neither column's type/nullable/default/
+// unique flag changes, so `columnSignature` matches on both sides and the
+// diff emits ZERO DDL — the database keeps the old primary key forever.
+// PR3 detects a primary-key-column-set change and emits
+// `DROP CONSTRAINT ... ` then `ADD PRIMARY KEY (...)`.
+
+Table Item {
+  id   Int
+  code String @unique @id
+}
