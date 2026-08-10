@@ -1,0 +1,12 @@
+// ACTIVE's physical label moves from "active" to "enabled". Emitting nothing
+// here would leave the database holding a label the schema no longer names —
+// a silent divergence, which is the defect class this change exists to remove.
+enum Status {
+  ACTIVE   @map("enabled")
+  ARCHIVED
+}
+
+Table Widget {
+  id     Int    @id
+  status Status
+}

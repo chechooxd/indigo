@@ -544,6 +544,19 @@ function computeStatements(
         );
       }
     }
+    // A member kept under the same name but pointed at a new physical label
+    // is an unambiguous rename — the enum analogue of a column `@map` rename.
+    // Emitting nothing would leave the database holding a label the schema no
+    // longer names, with no signal anywhere.
+    const oldByName = new Map(oldMembers.map((m) => [m.name, m]));
+    for (const m of nextMembers) {
+      const before = oldByName.get(m.name);
+      if (!before || before.dbName === m.dbName) continue;
+      push(stmts, [
+        `ALTER TYPE ${quoteIdent(e.name)} RENAME VALUE '${esc(before.dbName)}' TO '${esc(m.dbName)}';`,
+      ]);
+    }
+
     const removed = oldMembers.filter((m) => !nextNames.has(m.name)).map((m) => m.name);
     if (removed.length > 0) diagnostics.push(enumValueRemovedDiagnostic(e, removed));
   }

@@ -1,0 +1,12 @@
+// The member name stays the same; only its @map target moves. That is an
+// unambiguous label rename, the enum analogue of a column @map rename, and
+// PostgreSQL supports it directly with ALTER TYPE ... RENAME VALUE.
+enum Status {
+  ACTIVE   @map("active")
+  ARCHIVED
+}
+
+Table Widget {
+  id     Int    @id
+  status Status
+}
