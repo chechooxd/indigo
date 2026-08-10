@@ -1,0 +1,9 @@
+enum S {
+  A
+  B
+}
+
+Table T {
+  id Int    @id
+  s  S      @default(B)
+}
