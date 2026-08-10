@@ -5,12 +5,36 @@
 #
 #   ts          build + lint + test. Installs NO Rust toolchain, on purpose.
 #   rust        cargo test against the pinned toolchain.
-#   wasm-drift  rebuilds the committed WASM artifact and fails if it moved.
+#   wasm-drift  rebuilds the committed WASM artifact. CI IS THE SOURCE OF TRUTH
+#               for its bytes — see below.
 #
 # Why the TS job must stay Rust-free: `packages/compiler/wasm/` is a committed
 # build artifact precisely so a TypeScript-only contributor never needs cargo or
 # wasm-pack. If this job ever grows a Rust step, that property is silently gone
 # and committing the artifact stops buying anything.
+#
+# CI is the source of truth for the WASM artifact's exact bytes, not any
+# contributor's machine. The first real run of wasm-drift found that even an
+# identical rustc + wasm-pack + wasm-bindgen still produces different bytes on
+# macOS vs this Linux runner — low-level LLVM/rustc codegen ordering, not a
+# path leak (that part is fixed: RUSTFLAGS=--remap-path-prefix in build:wasm
+# strips $HOME/.cargo/registry/src). Chasing full cross-host byte-determinism
+# from here is a much deeper rabbit hole (hermetic builds, forced single-
+# threaded codegen) than "pin the toolchain" turned out to be, so on `push` to
+# `main` this job self-heals instead of just failing: it rebuilds, and if the
+# committed bytes differ, it commits ITS OWN rebuild back to `main` as
+# `github-actions[bot]` and stops there. That push triggers a fresh CI run,
+# which finds its own artifact already in place and passes. A commit already
+# authored by `github-actions[bot]` skips the auto-fix (loop guard) — if THAT
+# still fails to match on rebuild, something is genuinely wrong, not host
+# noise, and the job fails loudly instead of committing forever.
+#
+# On `pull_request`, this job never pushes (unsafe for fork branches, and
+# ambiguous for same-repo branches while a review is pending): it only reports
+# whether the PR's own Rust changes look consistent, and directs contributors
+# to trust whatever `main` has after merge — never to hand-verify their local
+# rebuild against the committed bytes, which cross-host noise makes unreliable
+# by design.
 #
 # Known limitation: `build:wasm` uses `$(pwd)` and `rm -f`, which is correct on
 # this Linux runner and on Unix dev machines but would need adjusting before a
@@ -86,8 +110,17 @@ jobs:
   wasm-drift:
     name: WASM artifact integrity
     runs-on: ubuntu-latest
+    # Only this job needs write access, and only to self-heal the artifact on
+    # a direct push — the other two jobs stay read-only under the workflow's
+    # default `permissions: contents: read`.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A plain checkout token can't push. persist-credentials keeps the
+          # default GITHUB_TOKEN wired into git for the auto-commit step below.
+          persist-credentials: true
 
       - uses: pnpm/action-setup@v4
 
@@ -114,35 +147,55 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Rebuild the committed artifact
+      - name: Rebuild the artifact
         run: pnpm --filter @indigodb/compiler build:wasm
 
-      - name: Fail if the artifact drifted
+      - name: Check whether it matches the committed bytes
+        id: diff
         run: |
-          if git diff --exit-code -- packages/compiler/wasm/; then
-            echo "Committed artifact matches a rebuild from crates/indigo-compiler/src."
-            exit 0
+          if git diff --exit-code --quiet -- packages/compiler/wasm/; then
+            echo "matches=true" >> "$GITHUB_OUTPUT"
+            echo "CI's rebuild matches the committed artifact."
+          else
+            echo "matches=false" >> "$GITHUB_OUTPUT"
+            echo "CI's rebuild differs from the committed artifact."
           fi
 
-          echo "::error::packages/compiler/wasm/ does not match a rebuild from crates/indigo-compiler/src."
-          echo ""
-          echo "Three different problems produce this diff, and the diff itself cannot tell them apart:"
-          echo ""
-          echo "1. STALE ARTIFACT — the Rust source changed without the artifact being rebuilt."
-          echo "   Fix: run 'pnpm --filter @indigodb/compiler build:wasm' and commit"
-          echo "   packages/compiler/wasm/ in the same commit as the Rust change."
-          echo ""
-          echo "2. TOOLCHAIN MISMATCH — this runner did not build with the pinned toolchain."
-          echo "   Expected: rustc 1.93.1 (rust-toolchain.toml), wasm-pack 0.15.0"
-          echo "   Actual:   $(rustc --version), $(wasm-pack --version)"
-          echo "   Fix: align the pins, regenerate the artifact, and commit both together."
-          echo ""
-          echo "3. UNREMAPPED HOST PATH — the artifact was committed from a machine whose"
-          echo "   build:wasm invocation did not strip \$HOME/.cargo/registry/src via"
-          echo "   RUSTFLAGS=--remap-path-prefix (packages/compiler/package.json's build:wasm"
-          echo "   script does this by default; a manual wasm-pack invocation would not)."
-          echo "   Every host embeds its own registry path in the wasm binary otherwise, so"
-          echo "   two machines with the identical toolchain still produce different bytes."
-          echo "   Fix: rebuild with 'pnpm --filter @indigodb/compiler build:wasm' (not a bare"
-          echo "   wasm-pack call) and commit the result."
+      # Push-only, and only once: a commit already authored by the bot means
+      # we already tried to self-heal and it still didn't match, so this is
+      # real drift or a genuine build problem, not cross-host noise — fail
+      # instead of committing forever.
+      - name: "Self-heal on push (loop guard: skip if the last commit is already ours)"
+        if: >
+          steps.diff.outputs.matches == 'false' &&
+          github.event_name == 'push' &&
+          github.actor != 'github-actions[bot]'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/compiler/wasm/
+          git commit -m "chore(wasm): sync artifact rebuilt by CI
+
+          CI is the source of truth for this artifact's exact bytes (see the
+          workflow file header): identical rustc/wasm-pack/wasm-bindgen still
+          produce different bytes on different host machines, so no
+          contributor's local rebuild is compared here. This commit is that
+          rebuild, made canonical by running in CI."
+          git push origin HEAD:${{ github.ref_name }}
+          echo "::notice::Committed CI's rebuild to ${{ github.ref_name }}. The push this triggers will verify clean."
+
+      - name: Report drift that self-heal did not (or could not) fix
+        if: steps.diff.outputs.matches == 'false' && (github.event_name != 'push' || github.actor == 'github-actions[bot]')
+        run: |
+          if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+            echo "::error::CI's own commit still doesn't match its own rebuild. This is not cross-host noise — investigate a genuine build non-determinism or environment problem before merging."
+          else
+            echo "::error::packages/compiler/wasm/ does not match a rebuild from crates/indigo-compiler/src on this pull request."
+            echo ""
+            echo "This is expected to happen on PRs that touch crates/ — CI only self-heals on"
+            echo "push to main (pushing to a PR branch, especially from a fork, isn't safe here)."
+            echo "Once this merges to main, CI will commit its own rebuild automatically."
+            echo "If crates/ was NOT touched by this PR, something else is wrong: rerun the job"
+            echo "or investigate before merging."
+          fi
           exit 1

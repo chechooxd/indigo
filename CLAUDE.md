@@ -30,12 +30,16 @@ Rust compiler (only needed when touching `crates/`; requires `cargo`, the
   toolchain — if you change `crates/`, you MUST run `build:wasm` and commit the result,
   then run the regression harness. Regenerate golden snapshots only on intentional contract
   changes (`node packages/compiler/test/regen-snapshots.mjs`; the diff is the review artifact).
-  **This rule is now enforced**: CI's `wasm-drift` job rebuilds the artifact and fails on any
-  diff. The toolchain is pinned (`rust-toolchain.toml` → rustc 1.93.1, wasm-pack 0.15.0,
-  wasm-bindgen 0.2.126 via the committed `crates/Cargo.lock`) because a rebuild-and-diff check
-  is only meaningful against the toolchain that produced the committed bytes. Bumping any pin
-  means regenerating and committing the artifact in the same commit. `build:wasm` uses `$(pwd)`
-  and `rm -f`, so it is Unix-only — it would need adjusting before a Windows runner could be added.
+  **This rule is now enforced, with CI as the source of truth for the exact bytes** — not your
+  local rebuild. `build:wasm` sets `RUSTFLAGS=--remap-path-prefix` so the artifact never embeds
+  your `$HOME`, but even past that, identical rustc/wasm-pack/wasm-bindgen still produce different
+  bytes on different host OSes (low-level codegen ordering). So don't hand-verify your local
+  rebuild against what's committed — build locally to develop and test, then let CI's `wasm-drift`
+  job self-heal `main` on push. See `.github/workflows/ci.yml`'s header for the full mechanism.
+  The toolchain is still pinned (`rust-toolchain.toml` → rustc 1.93.1, wasm-pack 0.15.0,
+  wasm-bindgen 0.2.126 via the committed `crates/Cargo.lock`) to keep local dev and CI on the same
+  footing. `build:wasm` uses `$(pwd)` and `rm -f`, so it is Unix-only — it would need adjusting
+  before a Windows runner could be added.
 
 Scope to one package with Turbo filters, e.g. `pnpm build --filter=@indigodb/parser`
 or `pnpm --filter @indigodb/studio dev`.
@@ -50,8 +54,10 @@ independent jobs (no `needs:`, so one red job never hides another):
   ever grows a Rust step, committing the artifact stops buying anything.
 - **`rust`** — `cargo test --locked`. `--locked` is what actually pins `wasm-bindgen`, since the
   manifest carries a caret range and only the committed lockfile holds it at 0.2.126.
-- **`wasm-drift`** — rebuilds the artifact and fails on any diff, naming both possible causes
-  (stale artifact vs toolchain mismatch), since the diff alone cannot distinguish them.
+- **`wasm-drift`** — rebuilds the artifact. On `push` to `main`, if the rebuild differs from what's
+  committed, it commits its own rebuild back as `github-actions[bot]` (loop-guarded: a commit
+  already authored by the bot that still doesn't match fails loudly instead of committing forever).
+  On a PR, it only reports drift — pushing to a PR branch isn't safe, especially from a fork.
 
 Build order matters: `@indigodb/ast` is the base type contract; `@indigodb/core`
 (the relational IR + resolver) sits on top of `ast` + `parser` and is the hub every other

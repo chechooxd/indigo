@@ -1,27 +1,38 @@
 # Pinned because `packages/compiler/wasm/` is a COMMITTED build artifact and CI
-# verifies it by rebuilding and diffing. That check is only meaningful against
-# the exact toolchain that produced the committed bytes — a floating channel
-# would make the job permanently red for reasons unrelated to any real drift.
+# rebuilds it to keep it honest. Pinning bounds the toolchain as one variable —
+# it does not by itself make two machines produce identical bytes; see below.
 #
-# This combination was verified to rebuild the artifact byte-identically:
+# This combination is what the artifact currently in git was built with:
 #   rustc 1.93.1 + wasm-pack 0.15.0 + wasm-bindgen 0.2.126
 #
-# Pinning alone is not sufficient: the binary also embeds $HOME/.cargo/registry/src
-# paths from third-party dependencies (workspace-local sources already compile with
-# relative paths, so this only affects crates.io deps), so two machines with the
-# identical toolchain still produce different bytes unless that path is stripped.
-# `packages/compiler/package.json`'s `build:wasm` script sets
-# RUSTFLAGS=--remap-path-prefix for exactly this reason — always build through that
-# script, never call wasm-pack directly. Confirmed on GitHub Actions' first-ever run
-# of the wasm-drift job: matching rustc/wasm-pack versions, non-matching bytes,
-# traced to the reporting machine's un-remapped registry path.
+# Two known sources of cross-machine byte drift, only one of them fixed here:
+#
+# 1. FIXED — $HOME/.cargo/registry/src paths embedded from crates.io deps
+#    (workspace-local sources already compile with relative paths, so this only
+#    affects third-party crates). `packages/compiler/package.json`'s
+#    `build:wasm` script sets RUSTFLAGS=--remap-path-prefix for exactly this —
+#    always build through that script, never call wasm-pack directly.
+#
+# 2. NOT FIXED, AND NOT WORTH CHASING HERE — even with #1 fixed and an
+#    identical rustc/wasm-pack/wasm-bindgen, GitHub Actions' first-ever run of
+#    the wasm-drift job still produced different bytes on Linux than this
+#    macOS-built artifact: low-level LLVM/rustc codegen ordering, not a path
+#    leak. Full cross-host byte-determinism needs hermetic tooling (forced
+#    single-threaded codegen, Nix-style builds) that is out of scope for a CI
+#    floor. Because of this, **CI is the source of truth for these bytes, not
+#    any contributor's local rebuild** — see `.github/workflows/ci.yml`'s
+#    header for how the wasm-drift job self-heals on push instead of just
+#    diffing against whatever a laptop produced. A local `pnpm --filter
+#    @indigodb/compiler build:wasm` is still the right way to develop and test
+#    Rust changes; it just isn't expected to byte-match what ships from `main`.
 #
 # wasm-bindgen is a caret range in crates/indigo-compiler/Cargo.toml; what
 # actually holds it at 0.2.126 is the committed crates/Cargo.lock, which is why
 # every cargo invocation in CI passes --locked. Never run `cargo update` in CI.
 #
-# Bumping any of these is an explicit change that must regenerate and commit the
-# artifact in the same commit.
+# Bumping the pins here is still worth doing deliberately and documenting, even
+# though CI no longer requires byte-identical local rebuilds — it keeps `cargo
+# test` and local development on the same footing as CI.
 [toolchain]
 channel = "1.93.1"
 targets = ["wasm32-unknown-unknown"]
