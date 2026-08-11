@@ -30,3 +30,21 @@ export async function withDatabase(fn) {
 export function createPgliteExecutor(db) {
   return async (sql, params) => (await db.query(sql, params)).rows;
 }
+
+/**
+ * Adapts a PGlite instance to `@indigodb/client`'s full `options.db` shape
+ * (`{ exec, transaction }`), including the `transaction` hook used by
+ * `$transaction`/`$withSession`. PGlite owns the session for the duration
+ * of `db.transaction(...)` — the inner closure must never touch the outer
+ * `db`, only the `tx` handle it receives, or PGlite rejects it
+ * (electric-sql/pglite#76).
+ */
+export function createPgliteDb(db) {
+  return {
+    exec: async (sql, params) => (await db.query(sql, params)).rows,
+    transaction: (fn) =>
+      db.transaction(async (tx) =>
+        fn(async (sql, params) => (await tx.query(sql, params)).rows),
+      ),
+  };
+}

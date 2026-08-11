@@ -15,7 +15,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/client.mjs"
+    "test": "node test/client.mjs && node test/transactions.mjs && node test/transactions-pg.mjs"
   },
   "dependencies": {
     "@indigodb/realtime": "workspace:*",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-socket": "^0.2.7",
     "@types/pg": "^8.11.0",
     "typescript": "^5.8.0"
   }
