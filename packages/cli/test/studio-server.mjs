@@ -12,9 +12,30 @@
  * `WITH x AS (DELETE ...) SELECT * FROM x` payload trivially defeats.
  */
 
+import { request as httpRequest } from "node:http";
 import { parse, resolve } from "@indigodb/core";
 import { withDatabase, withStudio } from "./studio-harness.mjs";
 import { redactSource } from "../dist/studio-server.js";
+
+/**
+ * `fetch()` refuses to send a caller-supplied `Host` header — it's a
+ * forbidden header per the Fetch spec, silently dropped even if set. Sending
+ * a mismatched `Host` for real (not just `Origin`) needs the raw HTTP client.
+ */
+function rawGet(port, path, headers) {
+  return new Promise((resolvePromise, reject) => {
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path, method: "GET", headers },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolvePromise({ status: res.statusCode, body }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 let failures = 0;
 
@@ -300,6 +321,50 @@ await check("matching Origin header succeeds", async () => {
       });
       assert(res.status === 200, `expected 200, got ${res.status}`);
     });
+  });
+});
+
+await check("mismatched Host header is rejected with 403", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ port }) => {
+      const res = await rawGet(port, "/api/schema", {
+        Host: "evil.example.com:9999",
+      });
+      assert(res.status === 403, `expected 403, got ${res.status}`);
+      const body = JSON.parse(res.body);
+      assert(typeof body.error === "string" && body.error.length > 0, "expected an error message");
+    });
+  });
+});
+
+await check("matching Host header succeeds", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ host, port }) => {
+      const res = await rawGet(port, "/api/schema", { Host: `${host}:${port}` });
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+    });
+  });
+});
+
+// ─── Non-loopback startup warning ──────────────────────────────────────────
+await check("binding to a non-loopback host prints a risk warning", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    const originalLog = console.log;
+    const lines = [];
+    console.log = (...args) => lines.push(args.join(" "));
+    try {
+      await withStudio(db, fixture, async () => {}, { host: "0.0.0.0" });
+    } finally {
+      console.log = originalLog;
+    }
+    const printed = lines.join("\n");
+    assert(
+      /0\.0\.0\.0/.test(printed) && /reachable|risk|warn/i.test(printed),
+      `expected a startup warning naming the non-loopback host, got:\n${printed}`,
+    );
   });
 });
 
