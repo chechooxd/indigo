@@ -112,4 +112,46 @@ describe('useTableData — filter + sort', () => {
     });
     expect(result.current.visibleColumns.some((c) => c.name === 'email')).toBe(true);
   });
+
+  it('sorts null/undefined values last, in both directions', () => {
+    // compareRows' nullish-last rule (useTableData.ts) has no seeded mock
+    // fixture with a missing field, so it was implemented but never exercised
+    // — this pins it directly against a table built for the purpose.
+    useDataStore.setState({
+      tables: [
+        {
+          ...INITIAL_TABLES[0],
+          records: [
+            { id: 1, full_name: 'Bravo' },
+            { id: 2, full_name: null },
+            { id: 3, full_name: 'Alpha' },
+            { id: 4, full_name: undefined },
+          ],
+        },
+      ],
+    });
+    const { result } = renderHook(() => useTableData());
+
+    act(() => {
+      result.current.cycleSort('full_name');
+    });
+    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'asc' });
+    expect(result.current.filteredRecords.map((r) => r.full_name)).toEqual([
+      'Alpha',
+      'Bravo',
+      null,
+      undefined,
+    ]);
+
+    act(() => {
+      result.current.cycleSort('full_name');
+    });
+    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'desc' });
+    expect(result.current.filteredRecords.map((r) => r.full_name)).toEqual([
+      'Bravo',
+      'Alpha',
+      null,
+      undefined,
+    ]);
+  });
 });
