@@ -62,16 +62,16 @@ Chain strategy: stacked-to-main
 
 ## Phase D: Disable Write Actions + Sample-Data Banner
 
-- [ ] D.1 RED: write component tests asserting Add Record, Save, Discard, and Create Table submit buttons are `disabled` and have `title="Row editing isn't available yet — this build is read-only."`, and that clicking them causes no store mutation.
-- [ ] D.2 RED: write component tests asserting `SampleDataBanner` renders with `role="status"` when `isBackendAvailable()` is false (mocked `../../../lib/api`), and renders nothing when true.
-- [ ] D.3 RED: write a component test asserting Refresh is `disabled` with `title="Refresh needs a connected database — this build is showing sample data."` when no backend, and an integration test asserting Refresh calls `fetchTableRows` exactly once when a backend is connected.
-- [ ] D.4 GREEN: create `apps/studio/src/features/studio/browser/components/SampleDataBanner.tsx` — no props, calls `isBackendAvailable()` itself, `role="status"`, non-dismissible, returns `null` when connected.
-- [ ] D.5 GREEN: mount `<SampleDataBanner />` as the first child of the workspace `<section>` in `TableBrowserPage.tsx`, above the existing 48px toolbar.
-- [ ] D.6 GREEN: disable Add Record button in `TableBrowserPage.tsx` with the read-only `title`; disable Save/Discard in `RecordInspector.tsx` (inputs `readOnly`/`disabled` too) with the same `title`; disable Create Table submit in `CreateTableModal.tsx` with the same `title`.
-- [ ] D.7 GREEN: implement real `refreshActiveTable()` with an `isRefreshing` state in `TableBrowserPage.tsx`; disable the Refresh control with its `title` when `!isBackendAvailable()`.
-- [ ] D.8 Confirm `handleSaveChanges`'s malformed-JSON `alert()` in `useRecordEditor.ts` is genuinely unreachable once Save is unconditionally disabled (no other call path reaches it), then delete `handleSaveChanges`, `handleAddRecord` ('Simulated Workspace Row'/'Simulated Value'), and `handleDiscardChanges`; keep edit buffers as read-only display values. Record this removal explicitly in apply-progress as a documented deviation from the spec's "unchanged, not respecified" note (per design's Open Questions).
-- [ ] D.9 GREEN: delete `useCreateTableForm.ts`'s fabricated `setTables` push and the validation `alert()`s that become unreachable once submit is disabled (verify unreachability first, same as D.8).
-- [ ] D.10 Verify: `pnpm --filter @indigodb/studio test`, `pnpm --filter @indigodb/studio build`, `pnpm lint`.
+- [x] D.1 RED: write component tests asserting Add Record, Save, Discard, and Create Table submit buttons are `disabled` and have `title="Row editing isn't available yet — this build is read-only."`, and that clicking them causes no store mutation.
+- [x] D.2 RED: write component tests asserting `SampleDataBanner` renders with `role="status"` when `isBackendAvailable()` is false (mocked `../../../lib/api`), and renders nothing when true.
+- [x] D.3 RED: write a component test asserting Refresh is `disabled` with `title="Refresh needs a connected database — this build is showing sample data."` when no backend, and an integration test asserting Refresh calls `fetchTableRows` exactly once when a backend is connected.
+- [x] D.4 GREEN: create `apps/studio/src/features/studio/browser/components/SampleDataBanner.tsx` — no props, calls `isBackendAvailable()` itself, `role="status"`, non-dismissible, returns `null` when connected.
+- [x] D.5 GREEN: mount `<SampleDataBanner />` as the first child of the workspace `<section>` in `TableBrowserPage.tsx`, above the existing 48px toolbar.
+- [x] D.6 GREEN: disable Add Record button in `TableBrowserPage.tsx` with the read-only `title`; disable Save/Discard in `RecordInspector.tsx` (inputs `readOnly`/`disabled` too) with the same `title`; disable Create Table submit in `CreateTableModal.tsx` with the same `title`.
+- [x] D.7 GREEN: implement real `refreshActiveTable()` with an `isRefreshing` state in `TableBrowserPage.tsx`; disable the Refresh control with its `title` when `!isBackendAvailable()`.
+- [x] D.8 Confirm `handleSaveChanges`'s malformed-JSON `alert()` in `useRecordEditor.ts` is genuinely unreachable once Save is unconditionally disabled (no other call path reaches it), then delete `handleSaveChanges`, `handleAddRecord` ('Simulated Workspace Row'/'Simulated Value'), and `handleDiscardChanges`; keep edit buffers as read-only display values. Record this removal explicitly in apply-progress as a documented deviation from the spec's "unchanged, not respecified" note (per design's Open Questions).
+- [x] D.9 GREEN: delete `useCreateTableForm.ts`'s fabricated `setTables` push and the validation `alert()`s that become unreachable once submit is disabled (verify unreachability first, same as D.8).
+- [x] D.10 Verify: `pnpm --filter @indigodb/studio test`, `pnpm --filter @indigodb/studio build`, `pnpm lint`.
 
 ## Phase E: Cross-Slice Verification (after D lands)
 

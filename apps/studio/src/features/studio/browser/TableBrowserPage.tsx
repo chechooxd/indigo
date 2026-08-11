@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
@@ -12,7 +12,11 @@ import { useRecordEditor } from './hooks/useRecordEditor';
 import { TableList } from './components/TableList';
 import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
+import { SampleDataBanner } from './components/SampleDataBanner';
 import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
+
+const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
+const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
 import { useDataStore } from '../../../store/useDataStore';
 import {
   DropdownMenu,
@@ -45,7 +49,9 @@ export default function TableBrowserPage() {
 
   const createForm = useCreateTableForm();
 
-  const editor = useRecordEditor(activeTableIndex);
+  const editor = useRecordEditor();
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Under the studio backend, load real rows for the active table on demand.
   useEffect(() => {
@@ -62,12 +68,17 @@ export default function TableBrowserPage() {
   }, [activeTable?.name]);
 
   // Manual refresh: re-fetch the active table's rows when a backend is
-  // connected. With no backend there is nothing to refetch from, so this is
-  // an honest no-op rather than a fabricated confirmation.
-  const handleRefresh = async () => {
+  // connected. With no backend there is nothing to refetch from, so the
+  // control is disabled outright instead of being a silent no-op.
+  const refreshActiveTable = async () => {
     if (!isBackendAvailable() || !activeTable) return;
-    const result = await fetchTableRows(activeTable.name);
-    if (result) updateTableRecords(activeTable.name, result.rows);
+    setIsRefreshing(true);
+    try {
+      const result = await fetchTableRows(activeTable.name);
+      if (result) updateTableRecords(activeTable.name, result.rows);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Sync edit buffers whenever the active row or active table changes
@@ -101,6 +112,7 @@ export default function TableBrowserPage() {
 
       {/* Main Workspace Area */}
       <section className="flex-1 flex flex-col bg-[#09090b] overflow-hidden">
+        <SampleDataBanner />
         {/* Contextual Toolbar */}
         <div className="h-[48px] bg-[#09090b] border-b border-zinc-800/80 flex items-center justify-between px-4 shrink-0">
           <div className="flex items-center gap-4">
@@ -111,8 +123,13 @@ export default function TableBrowserPage() {
               </span>
             </div>
             <div className="h-4 w-px bg-zinc-800" />
-            <button onClick={() => { void handleRefresh(); }} className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs">
-              <RefreshCw className="w-3.5 h-3.5" /><span>Refresh</span>
+            <button
+              onClick={() => { void refreshActiveTable(); }}
+              disabled={!isBackendAvailable() || isRefreshing}
+              title={!isBackendAvailable() ? REFRESH_DISABLED_TITLE : undefined}
+              className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /><span>Refresh</span>
             </button>
           </div>
           <div className="flex items-center gap-3">
@@ -120,7 +137,11 @@ export default function TableBrowserPage() {
               <button onClick={() => setIsStructureView(false)} className={`px-3 py-1 rounded-lg cursor-pointer transition-all ${!isStructureView ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Data Grid</button>
               <button onClick={() => setIsStructureView(true)} className={`px-3 py-1 rounded-lg cursor-pointer transition-all ${isStructureView ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Structure Specs</button>
             </div>
-            <button onClick={() => editor.handleAddRecord(activeTable)} className="bg-white hover:bg-zinc-200 text-black px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-white/5">
+            <button
+              disabled
+              title={READ_ONLY_TITLE}
+              className="bg-white text-black px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <Plus className="w-3.5 h-3.5" /><span>Add Record</span>
             </button>
           </div>
@@ -252,11 +273,6 @@ export default function TableBrowserPage() {
           editRole={editor.editRole}
           editMetadata={editor.editMetadata}
           onClose={() => editor.setDetailsPanelOpen(false)}
-          onEmailChange={editor.setEditEmail}
-          onRoleChange={editor.setEditRole}
-          onMetadataChange={editor.setEditMetadata}
-          onSave={() => editor.handleSaveChanges(activeTable)}
-          onDiscard={() => editor.handleDiscardChanges(activeTable)}
         />
       )}
 
@@ -266,7 +282,6 @@ export default function TableBrowserPage() {
         newTableName={createForm.newTableName}
         newTableSchema={createForm.newTableSchema}
         newTableColumns={createForm.newTableColumns}
-        allTables={tables}
         onClose={createForm.handleCloseCreateModal}
         onTableNameChange={createForm.setNewTableName}
         onTableSchemaChange={createForm.setNewTableSchema}
@@ -274,7 +289,6 @@ export default function TableBrowserPage() {
         onRemoveColumn={createForm.handleRemoveColumn}
         onUpdateColumn={createForm.handleUpdateColumn}
         onSubmit={createForm.handleCreateTableSubmit}
-        onSuccess={(newIndex) => { setActiveTableIndex(newIndex); editor.setSelectedRowIndex(0); }}
       />
     </div>
   );

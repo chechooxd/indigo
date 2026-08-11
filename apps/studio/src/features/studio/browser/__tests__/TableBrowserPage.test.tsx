@@ -149,4 +149,86 @@ describe('TableBrowserPage', () => {
     expect(dataRows).toHaveLength(1);
     expect(dataRows[0].textContent).toContain('Sarah Jenkins');
   });
+
+  it('disables Add Record with an explanatory title, and clicking it never mutates the store', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const recordsBefore = useDataStore.getState().tables;
+
+    const addRecordButton = screen.getByRole('button', { name: /add record/i });
+    expect(addRecordButton).toBeDisabled();
+    expect(addRecordButton).toHaveAttribute(
+      'title',
+      "Row editing isn't available yet — this build is read-only.",
+    );
+
+    await user.click(addRecordButton);
+
+    expect(useDataStore.getState().tables).toBe(recordsBefore);
+  });
+
+  it('disables Save and Discard in the Record Inspector with an explanatory title, and clicking never mutates the store', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const recordsBefore = useDataStore.getState().tables;
+
+    const saveButton = screen.getByRole('button', { name: /save row/i });
+    const discardButton = screen.getByRole('button', { name: /discard/i });
+
+    expect(saveButton).toBeDisabled();
+    expect(saveButton).toHaveAttribute(
+      'title',
+      "Row editing isn't available yet — this build is read-only.",
+    );
+    expect(discardButton).toBeDisabled();
+    expect(discardButton).toHaveAttribute(
+      'title',
+      "Row editing isn't available yet — this build is read-only.",
+    );
+
+    await user.click(saveButton);
+    await user.click(discardButton);
+
+    expect(useDataStore.getState().tables).toBe(recordsBefore);
+  });
+
+  it('disables Create Table submit with an explanatory title, and submitting never adds a table', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const tablesBefore = useDataStore.getState().tables;
+
+    await user.click(screen.getByTitle('Create new table'));
+
+    const submitButton = screen.getByRole('button', { name: /^create table$/i });
+    expect(submitButton).toBeDisabled();
+    expect(submitButton).toHaveAttribute(
+      'title',
+      "Table creation isn't available yet — this build is read-only.",
+    );
+
+    expect(useDataStore.getState().tables).toBe(tablesBefore);
+  });
+
+  it('disables Refresh with an explanatory title when there is no backend', () => {
+    vi.mocked(isBackendAvailable).mockReturnValue(false);
+    render(<TableBrowserPage />);
+
+    const refreshButton = screen.getByRole('button', { name: /refresh/i });
+    expect(refreshButton).toBeDisabled();
+    expect(refreshButton).toHaveAttribute(
+      'title',
+      'Refresh needs a connected database — this build is showing sample data.',
+    );
+  });
+
+  it('enables Refresh (no title) when a backend is connected', () => {
+    vi.mocked(isBackendAvailable).mockReturnValue(true);
+    render(<TableBrowserPage />);
+
+    const refreshButton = screen.getByRole('button', { name: /refresh/i });
+    expect(refreshButton).not.toBeDisabled();
+  });
 });
