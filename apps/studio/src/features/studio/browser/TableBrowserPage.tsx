@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect } from 'react';
-import { RefreshCw, Search, Plus, Check, Circle } from 'lucide-react';
+import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
 import { useCreateTableForm } from './hooks/useCreateTableForm';
@@ -14,6 +14,12 @@ import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
 import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
 import { useDataStore } from '../../../store/useDataStore';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+} from '../../../components/ui/dropdown-menu';
 
 export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
@@ -26,10 +32,15 @@ export default function TableBrowserPage() {
     tableFilterQuery,
     recordSearchQuery,
     isStructureView,
+    hiddenColumns,
+    visibleColumns,
+    sort,
     setActiveTableIndex,
     setTableFilterQuery,
     setRecordSearchQuery,
     setIsStructureView,
+    toggleColumnVisibility,
+    cycleSort,
   } = useTableData();
 
   const createForm = useCreateTableForm();
@@ -117,6 +128,27 @@ export default function TableBrowserPage() {
 
         {/* Grid Navigation / Controls */}
         <div className="h-10 bg-zinc-950/40 border-b border-zinc-800/60 flex items-center px-4 gap-6 shrink-0">
+          {!isStructureView && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Filter columns"
+                className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs"
+              >
+                <Filter className="w-3.5 h-3.5" /><span>Filter Columns</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {activeTable?.columns.map((col) => (
+                  <DropdownMenuCheckboxItem
+                    key={col.name}
+                    checked={!hiddenColumns.has(col.name)}
+                    onCheckedChange={() => toggleColumnVisibility(col.name)}
+                  >
+                    {col.name}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <div className="ml-auto">
             <div className="w-48 h-7 bg-[#09090b] border border-zinc-805 rounded-xl flex items-center px-2.5">
               <Search className="w-3 h-3 text-zinc-500" />
@@ -155,26 +187,37 @@ export default function TableBrowserPage() {
               <thead className="sticky top-0 z-20 bg-zinc-950 border-b border-zinc-800">
                 <tr>
                   <th className="w-10 px-3 py-2 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 focus:ring-0 text-white" type="checkbox" readOnly checked /></th>
-                  {activeTable?.columns.map((col) => (
-                    <th key={col.name} className="px-4 py-3 border-r border-zinc-800 min-w-[120px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-500 uppercase tracking-wider">{col.name}</span>
-                        {col.isPK && <span className="text-[9px] text-zinc-400 font-semibold border border-zinc-800 px-1.5 py-0.2 rounded">PK</span>}
-                      </div>
-                    </th>
-                  ))}
+                  {visibleColumns.map((col) => {
+                    const isSorted = sort?.column === col.name;
+                    const SortIcon = isSorted ? (sort?.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+                    return (
+                      <th
+                        key={col.name}
+                        onClick={() => cycleSort(col.name)}
+                        className="px-4 py-3 border-r border-zinc-800 min-w-[120px] cursor-pointer select-none hover:bg-zinc-900/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-zinc-500 uppercase tracking-wider">{col.name}</span>
+                          <div className="flex items-center gap-1">
+                            {col.isPK && <span className="text-[9px] text-zinc-400 font-semibold border border-zinc-800 px-1.5 py-0.2 rounded">PK</span>}
+                            <SortIcon className={`w-3 h-3 ${isSorted ? 'text-white' : 'text-zinc-600'}`} />
+                          </div>
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
                 {filteredRecords.length === 0 ? (
-                  <tr><td colSpan={(activeTable?.columns.length ?? 0) + 1} className="p-12 text-center text-zinc-500 italic font-sans text-xs">No matching records found. Clear filters or add new rows.</td></tr>
+                  <tr><td colSpan={visibleColumns.length + 1} className="p-12 text-center text-zinc-500 italic font-sans text-xs">No matching records found. Clear filters or add new rows.</td></tr>
                 ) : (
                   filteredRecords.map((row, idx) => {
                     const isSelected = editor.selectedRowIndex === idx;
                     return (
                       <tr key={row.id || idx} onClick={() => editor.setSelectedRowIndex(idx)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-zinc-900/30 border-y border-zinc-800 font-semibold' : 'hover:bg-zinc-900/10'}`}>
                         <td className="px-3 py-2.5 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 text-white focus:ring-0" type="checkbox" checked={isSelected} onChange={() => editor.setSelectedRowIndex(idx)} /></td>
-                        {activeTable?.columns.map((col) => {
+                        {visibleColumns.map((col) => {
                           const rawValue = row[col.name];
                           return (
                             <td key={col.name} className="px-4 py-2.5 border-r border-zinc-800/60 text-zinc-300 max-w-xs truncate">

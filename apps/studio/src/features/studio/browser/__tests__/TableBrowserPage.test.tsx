@@ -79,4 +79,74 @@ describe('TableBrowserPage', () => {
     expect(within(usersEntry as HTMLElement).getByText('4')).toBeInTheDocument();
     expect(screen.queryByText('1.2k')).not.toBeInTheDocument();
   });
+
+  it('toggling a column in the Filter Columns dropdown hides it from header and rows, and restores it on re-toggle', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    expect(screen.getByRole('columnheader', { name: /email/i })).toBeInTheDocument();
+    expect(screen.getByText('alex@indigodb.io')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /filter columns/i }));
+    const emailOption = await screen.findByRole('menuitemcheckbox', { name: /email/i });
+    await user.click(emailOption);
+
+    expect(screen.queryByRole('columnheader', { name: /email/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('alex@indigodb.io')).not.toBeInTheDocument();
+
+    await user.click(emailOption);
+
+    expect(screen.getByRole('columnheader', { name: /email/i })).toBeInTheDocument();
+    expect(screen.getByText('alex@indigodb.io')).toBeInTheDocument();
+  });
+
+  it('clicking a column header cycles sort asc -> desc -> unsorted and reorders the displayed rows', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const fullNameHeader = screen.getByRole('columnheader', { name: /full_name/i });
+
+    const cellOrder = () =>
+      screen.getAllByRole('row').slice(1).map((row) => row.textContent);
+
+    const originalOrder = cellOrder();
+
+    await user.click(fullNameHeader);
+    const ascOrder = cellOrder();
+    expect(ascOrder).not.toEqual(originalOrder);
+
+    await user.click(fullNameHeader);
+    const descOrder = cellOrder();
+    expect(descOrder).not.toEqual(ascOrder);
+
+    await user.click(fullNameHeader);
+    expect(cellOrder()).toEqual(originalOrder);
+  });
+
+  it('sorting never mutates the Zustand store\'s underlying records array', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const recordsBefore = useDataStore.getState().tables[0].records;
+    const namesBefore = recordsBefore.map((r) => r.full_name);
+
+    await user.click(screen.getByRole('columnheader', { name: /full_name/i }));
+
+    const recordsAfter = useDataStore.getState().tables[0].records;
+
+    expect(recordsAfter).toBe(recordsBefore);
+    expect(recordsAfter.map((r) => r.full_name)).toEqual(namesBefore);
+  });
+
+  it('composes filter and sort: sorts only the search-filtered rows, not the full unfiltered set', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    await user.type(screen.getByPlaceholderText('Search active records...'), 'gmail');
+    await user.click(screen.getByRole('columnheader', { name: /full_name/i }));
+
+    const dataRows = screen.getAllByRole('row').slice(1);
+    expect(dataRows).toHaveLength(1);
+    expect(dataRows[0].textContent).toContain('Sarah Jenkins');
+  });
 });
