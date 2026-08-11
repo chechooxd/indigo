@@ -61,8 +61,12 @@ export function createPgliteStudioDb(db) {
  * Starts a real `startStudio` server on an ephemeral port (`port: 0`),
  * backed by `db` (a PGlite instance) via the injected `StudioDb` adapter.
  * Runs `fn({ baseUrl, db })` and always tears the server down afterwards.
+ *
+ * `options` is forwarded to `startStudio` (e.g. `{ host }`) so bind-address
+ * and Origin/Host allowlist tests can exercise those code paths without
+ * duplicating the harness.
  */
-export async function withStudio(db, { resolved, source }, fn) {
+export async function withStudio(db, { resolved, source }, fn, options = {}) {
   const server = await startStudio({
     resolved,
     source,
@@ -70,9 +74,14 @@ export async function withStudio(db, { resolved, source }, fn) {
     port: 0,
     open: false,
     db: createPgliteStudioDb(db),
+    ...options,
   });
   try {
-    return await fn({ baseUrl: `http://127.0.0.1:${server.port}`, port: server.port });
+    return await fn({
+      baseUrl: `http://${server.host}:${server.port}`,
+      port: server.port,
+      host: server.host,
+    });
   } finally {
     await server.close();
   }

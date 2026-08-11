@@ -92,7 +92,7 @@ Stacks on S1. Requirements covered: `studio-server-security` (loopback default,
 explicit opt-in, datasource redaction for both JSON and source-text endpoints,
 Origin/Host validation).
 
-9. **[S2.1] RED: bind-address test.** In `studio-server.mjs`, assert that starting
+9. [x] **[S2.1] RED: bind-address test.** In `studio-server.mjs`, assert that starting
    the server with no host option binds `server.address().address` to a loopback
    value (`127.0.0.1`), and a separate case asserts the explicit-`host` option is
    honored (`server.address().address` matches the passed value). Do not attempt to
@@ -103,7 +103,7 @@ Origin/Host validation).
    - Depends on: S1.8
    - Sequential
 
-10. **[S2.2] Add `host` to `StudioOptions` and thread `listen(port, host)`.** Default
+10. [x] **[S2.2] Add `host` to `StudioOptions` and thread `listen(port, host)`.** Default
     `host` to `127.0.0.1` when not provided. When an explicit non-loopback host is
     passed, print a startup warning naming the risk (per design: relaxed Host
     validation follows in S2.4).
@@ -112,7 +112,7 @@ Origin/Host validation).
     - Depends on: S2.1 (RED first)
     - Sequential
 
-11. **[S2.3] Add `--host <host>` to the `studio` CLI command** in
+11. [x] **[S2.3] Add `--host <host>` to the `studio` CLI command** in
     `packages/cli/src/index.ts` (default `127.0.0.1`, overridable via
     `INDIGODB_STUDIO_HOST` env var, explicit flag wins), passed through to
     `startStudio`.
@@ -121,7 +121,7 @@ Origin/Host validation).
     - Depends on: S2.2
     - Can run in parallel with S2.4–S2.6 (different file)
 
-12. **[S2.4] RED: redaction tests.** Assert `/api/schema` JSON has no `datasource`
+12. [x] **[S2.4] RED: redaction tests.** Assert `/api/schema` JSON has no `datasource`
     key (both literal-URL and `env()`-URL fixtures), and `/api/schema/source` text
     contains neither the raw block nor any connection string, for a fixture whose
     `datasource { ... }` block is multi-line and nested.
@@ -130,7 +130,7 @@ Origin/Host validation).
     - Depends on: S1.8
     - Sequential
 
-13. **[S2.5] Implement `redactSchema` (shallow copy minus `datasource`, computed
+13. [x] **[S2.5] Implement `redactSchema` (shallow copy minus `datasource`, computed
     once into `publicSchema`) and `redactSource` (brace-depth line scan — NOT a
     regex — replacing the whole `datasource { ... }` block with
     `// datasource redacted by Studio`, computed once into `publicSource`).** Wire
@@ -141,7 +141,7 @@ Origin/Host validation).
     - Depends on: S2.4 (RED first)
     - Sequential
 
-14. **[S2.6] RED: Origin/Host validation tests.** Assert a request with a mismatched
+14. [x] **[S2.6] RED: Origin/Host validation tests.** Assert a request with a mismatched
     `Origin` header gets `403 {"error":"Forbidden origin"}` before any route/body
     logic runs (including static asset paths); assert a matching or absent `Origin`
     passes through; assert `Host` is checked on every request including static
@@ -151,7 +151,7 @@ Origin/Host validation).
     - Depends on: S2.2 (needs `host` option to build the allowlist)
     - Sequential
 
-15. **[S2.7] Implement `validateHeaders`.** Allowlist =
+15. [x] **[S2.7] Implement `validateHeaders`.** Allowlist =
     `{localhost, 127.0.0.1, ::1, <configured host>} × server port`. Runs before
     routing for every request. `Host` always checked; `Origin`, when present, must
     parse and match. Under an explicit non-loopback bind, relax `Host` validation to
@@ -162,7 +162,7 @@ Origin/Host validation).
     - Depends on: S2.6 (RED first)
     - Sequential
 
-16. **[S2.8] Documentation note for the non-loopback Host relaxation.** Add a short
+16. [x] **[S2.8] Documentation note for the non-loopback Host relaxation.** Add a short
     note (README or CLI help text — wherever `--host` is documented) stating that
     under an explicit non-loopback bind, Host validation is intentionally weakened to
     port-match only, so operators understand the tradeoff they're opting into.
@@ -171,7 +171,7 @@ Origin/Host validation).
     - Depends on: S2.7
     - Can run in parallel with S2.9
 
-17. **[S2.9] Forward-looking constraint note.** Add a code comment near
+17. [x] **[S2.9] Forward-looking constraint note.** Add a code comment near
     `redactSource`/`/api/schema/source` stating that redaction is safe only because
     no save-back/editor-write endpoint exists yet, and that a future write-back
     endpoint (`apps/studio` roadmap item) must not round-trip the redacted text.
@@ -179,7 +179,7 @@ Origin/Host validation).
     - Depends on: S2.5
     - Can run in parallel with S2.8
 
-18. **[S2.10] Full S2 suite green, root `pnpm test`, `pnpm build --filter @indigodb/cli`
+18. [x] **[S2.10] Full S2 suite green, root `pnpm test`, `pnpm build --filter @indigodb/cli`
     and `pnpm lint` clean.** Confirm all four hardening blockers (bind, redaction,
     CTE-DELETE, cross-origin) plus the aliasing regression pass together in one run.
     - Spec: `studio-server-tests` / all four blocker scenarios, combined
