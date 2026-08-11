@@ -51,8 +51,12 @@ function stubExecutor(rows = []) {
 
 await check("constructs with options.db and no connectionString/pool", () => {
   const { exec } = stubExecutor();
-  // Must not throw.
-  new IndigoClientBase({ db: { exec } });
+  const client = new IndigoClientBase({ db: { exec } });
+  // `private` compiles away — TS fields are ordinary properties at runtime,
+  // so this white-box read is how the spec's "no pg.Pool is constructed on
+  // the injected path" requirement gets a real assertion instead of "the
+  // constructor didn't throw" standing in for it.
+  assert(client["pool"] === null, "no pg.Pool should be constructed when options.db is supplied");
 });
 
 await check(
@@ -149,6 +153,23 @@ await check("realtime is torn down on $disconnect (default pool path)", async ()
   assert(client.realtimeManager !== null, "expected a realtime manager to exist");
   await client.$disconnect();
   assert(client.realtimeManager === null, "expected realtime manager to be torn down");
+});
+
+await check("$disconnect calls pool.end() on the default (non-injected) path", async () => {
+  const client = new IndigoClientBase({ connectionString: "postgres://unused/unused" });
+  const pool = client["pool"];
+  let endCalled = false;
+  const originalEnd = pool.end.bind(pool);
+  // A spy, not a stub: still calls through to the real pg.Pool#end so this
+  // doesn't mask a genuine failure there, it only proves $disconnect() is
+  // the caller — a regression that silently dropped that call would leave
+  // endCalled false while $disconnect() itself keeps resolving cleanly.
+  pool.end = async (...args) => {
+    endCalled = true;
+    return originalEnd(...args);
+  };
+  await client.$disconnect();
+  assert(endCalled === true, "$disconnect() must call pool.end() on the default path");
 });
 
 // ─── Phase 5: CRUD passthrough smoke test ─────────────────────────────────
