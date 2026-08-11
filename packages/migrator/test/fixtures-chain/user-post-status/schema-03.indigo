@@ -1,0 +1,17 @@
+// Chain replay fixture, hop 3: append a new enum value. This must run
+// PRE-TRANSACTION (`ALTER TYPE ... ADD VALUE`) — the value is only consumed
+// later, in hop 4, which is exactly the cross-migration boundary this suite
+// exercises.
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+Table User {
+  id     Int     @id @default(autoincrement())
+  email  String  @unique
+  status Status  @default(ACTIVE)
+  name   String?
+}

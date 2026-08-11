@@ -1,0 +1,13 @@
+// Chain replay fixture, hop 2: add a nullable column to `User`.
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+Table User {
+  id     Int     @id @default(autoincrement())
+  email  String  @unique
+  status Status  @default(ACTIVE)
+  name   String?
+}
