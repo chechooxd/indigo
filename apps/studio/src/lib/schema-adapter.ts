@@ -83,7 +83,6 @@ export function resolvedToTables(resolved: ResolvedSchema): Table[] {
       schema: 'public',
       columns,
       records: [],
-      recordCount: 0,
     };
   });
 }

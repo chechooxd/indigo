@@ -3,13 +3,6 @@ import type { ResolvedSchema } from '@indigodb/core';
 import { Table, RecentSchema, SystemAlert } from '../types';
 import { INITIAL_TABLES, INITIAL_SCHEMAS, INITIAL_ALERTS } from '../data/mockData';
 
-/**
- * The mock `users` table ships 4 sample rows but its `recordCount` is meant to
- * look like a real production table in the standalone demo — replaced with
- * the real count once a backend/updateTableRecords writes non-mock data.
- */
-const MOCK_USERS_DISPLAY_RECORD_COUNT = 1_200_000;
-
 interface DataState {
   schemas: RecentSchema[];
   alerts: SystemAlert[];
@@ -82,7 +75,6 @@ export const useDataStore = create<DataState>((set) => ({
         return {
           ...t,
           records: newRecords,
-          recordCount: newRecords.length === 4 ? MOCK_USERS_DISPLAY_RECORD_COUNT : newRecords.length
         };
       }
       return t;

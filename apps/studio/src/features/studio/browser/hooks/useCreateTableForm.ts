@@ -106,7 +106,6 @@ export function useCreateTableForm(): UseCreateTableFormReturn {
         name: col.name.trim().toLowerCase().replace(/[^a-z0-9_]/g, ''),
       })),
       records: [],
-      recordCount: 0,
     };
 
     setTables(prev => [...prev, newTable]);

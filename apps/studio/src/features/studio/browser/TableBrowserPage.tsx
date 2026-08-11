@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect } from 'react';
-import { RefreshCw, Filter, ArrowUpDown, Search, Plus, Check, Circle } from 'lucide-react';
+import { RefreshCw, Search, Plus, Check, Circle } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
 import { useCreateTableForm } from './hooks/useCreateTableForm';
@@ -50,6 +50,15 @@ export default function TableBrowserPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTable?.name]);
 
+  // Manual refresh: re-fetch the active table's rows when a backend is
+  // connected. With no backend there is nothing to refetch from, so this is
+  // an honest no-op rather than a fabricated confirmation.
+  const handleRefresh = async () => {
+    if (!isBackendAvailable() || !activeTable) return;
+    const result = await fetchTableRows(activeTable.name);
+    if (result) updateTableRecords(activeTable.name, result.rows);
+  };
+
   // Sync edit buffers whenever the active row or active table changes
   useEffect(() => {
     if (activeTable?.records?.[editor.selectedRowIndex]) {
@@ -91,7 +100,7 @@ export default function TableBrowserPage() {
               </span>
             </div>
             <div className="h-4 w-px bg-zinc-800" />
-            <button onClick={() => alert('Table browser refreshed.')} className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs">
+            <button onClick={() => { void handleRefresh(); }} className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs">
               <RefreshCw className="w-3.5 h-3.5" /><span>Refresh</span>
             </button>
           </div>
@@ -108,14 +117,6 @@ export default function TableBrowserPage() {
 
         {/* Grid Navigation / Controls */}
         <div className="h-10 bg-zinc-950/40 border-b border-zinc-800/60 flex items-center px-4 gap-6 shrink-0">
-          <div className="flex items-center gap-3 text-xs font-semibold text-zinc-400">
-            <button onClick={() => alert('Simulating database filtration builder...')} className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors hover:bg-zinc-900 px-2.5 py-1 rounded-xl">
-              <Filter className="w-3.5 h-3.5 text-zinc-500" /><span>Filter Columns</span>
-            </button>
-            <button onClick={() => alert('Simulating sorting rules...')} className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors hover:bg-zinc-900 px-2.5 py-1 rounded-xl">
-              <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" /><span>Sort Grid</span>
-            </button>
-          </div>
           <div className="ml-auto">
             <div className="w-48 h-7 bg-[#09090b] border border-zinc-805 rounded-xl flex items-center px-2.5">
               <Search className="w-3 h-3 text-zinc-500" />
@@ -195,12 +196,7 @@ export default function TableBrowserPage() {
 
         {/* Footer */}
         <div className="h-10 bg-[#09090b] border-t border-zinc-800/80 flex items-center justify-between px-4 shrink-0 text-xs text-zinc-500 font-sans font-medium">
-          <span>Showing {filteredRecords.length} of {activeTable?.records?.length ?? 0} rows (simulated client memory cache)</span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px]">Jump page</span>
-            <button className="px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-lg text-white font-bold" onClick={() => alert('Simulation handles client-side filtering and mutations directly.')}>1</button>
-            <button className="px-2 py-0.5 hover:bg-zinc-900 rounded-lg text-zinc-500" onClick={() => alert('All results loaded directly into memory for optimal speed.')}>2</button>
-          </div>
+          <span>Showing {filteredRecords.length} of {activeTable?.records?.length ?? 0} rows</span>
         </div>
       </section>
 

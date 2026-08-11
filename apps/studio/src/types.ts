@@ -21,7 +21,6 @@ export interface Table {
   // arbitrary keys (e.g. row.email, row.id) directly, so values are untyped.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   records: Record<string, any>[];
-  recordCount: number;
 }
 
 export interface RecentSchema {
