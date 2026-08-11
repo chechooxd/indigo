@@ -1,0 +1,181 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Category",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "name",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "parentId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          },
+          {
+            "name": "parent",
+            "type": {
+              "name": "Category",
+              "scalar": false,
+              "list": false,
+              "optional": true
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "parentId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Category",
+        "dbName": "Category",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "name",
+            "dbName": "name",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "parentId",
+            "dbName": "parentId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "parentId"
+            ],
+            "refTable": "Category",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "parent",
+            "targetModel": "Category",
+            "type": "OneToMany",
+            "list": false,
+            "optional": true,
+            "fkColumns": [
+              "parentId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

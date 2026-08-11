@@ -1,0 +1,277 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Sample",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "name",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "price",
+            "type": {
+              "name": "Float",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "active",
+            "type": {
+              "name": "Boolean",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "created",
+            "type": {
+              "name": "DateTime",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "meta",
+            "type": {
+              "name": "Json",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "bigNum",
+            "type": {
+              "name": "BigInt",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "raw",
+            "type": {
+              "name": "Bytes",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "amount",
+            "type": {
+              "name": "Decimal",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "tags",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": true,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "nickname",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Sample",
+        "dbName": "Sample",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "name",
+            "dbName": "name",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "price",
+            "dbName": "price",
+            "type": "Float",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "active",
+            "dbName": "active",
+            "type": "Boolean",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "created",
+            "dbName": "created",
+            "type": "DateTime",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "meta",
+            "dbName": "meta",
+            "type": "Json",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "bigNum",
+            "dbName": "bigNum",
+            "type": "BigInt",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "raw",
+            "dbName": "raw",
+            "type": "Bytes",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "amount",
+            "dbName": "amount",
+            "type": "Decimal",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "tags",
+            "dbName": "tags",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "nickname",
+            "dbName": "nickname",
+            "type": "String",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

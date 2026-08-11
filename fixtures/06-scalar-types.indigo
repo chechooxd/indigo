@@ -1,0 +1,15 @@
+// Exercises every SCALAR_TYPES member, plus a list form and an optional form.
+
+Table Sample {
+  id       Int      @id @default(autoincrement())
+  name     String
+  price    Float
+  active   Boolean
+  created  DateTime
+  meta     Json
+  bigNum   BigInt
+  raw      Bytes
+  amount   Decimal
+  tags     String[]
+  nickname String?
+}

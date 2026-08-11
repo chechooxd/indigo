@@ -1,0 +1,70 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Widget",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": [
+          {
+            "name": "ignore",
+            "args": []
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Widget",
+        "dbName": "Widget",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Unknown model attribute \"@@ignore\" on model \"Widget\".",
+      "model": "Widget"
+    }
+  ]
+}

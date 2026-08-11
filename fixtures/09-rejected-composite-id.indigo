@@ -1,0 +1,10 @@
+// @@id([a, b]) (composite primary key) is not recognized: parses cleanly but
+// is rejected as an unknown model attribute, and the model then also has no
+// field-level @id.
+
+Table Membership {
+  a Int
+  b Int
+
+  @@id([a, b])
+}

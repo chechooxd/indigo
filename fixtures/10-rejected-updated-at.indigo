@@ -1,0 +1,7 @@
+// @updatedAt is not recognized: parses cleanly but is rejected as an unknown
+// field attribute. The model keeps a valid field-level @id.
+
+Table Widget {
+  id        Int      @id
+  updatedAt DateTime @updatedAt
+}

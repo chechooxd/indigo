@@ -299,6 +299,19 @@ fn corpus_validation_errors_are_unchanged_by_new_rules() {
             "@relation(fields:) references unknown local field \"missingLocal\".",
             "@relation(references:) points at unknown field \"missingTarget\" on \"User\".",
         ]),
+        ("06-scalar-types.indigo", &[]),
+        ("07-referential-actions.indigo", &[]),
+        ("08-self-relation.indigo", &[]),
+        ("09-rejected-composite-id.indigo", &[
+            "Unknown model attribute \"@@id\" on model \"Membership\".",
+            "Model \"Membership\" has no @id primary key.",
+        ]),
+        ("10-rejected-updated-at.indigo", &[
+            "Unknown field attribute \"@updatedAt\" on field \"Widget.updatedAt\".",
+        ]),
+        ("11-rejected-ignore.indigo", &[
+            "Unknown model attribute \"@@ignore\" on model \"Widget\".",
+        ]),
     ];
     for (name, messages) in expected {
         let source = fs::read_to_string(fixtures_dir().join(name)).unwrap();
