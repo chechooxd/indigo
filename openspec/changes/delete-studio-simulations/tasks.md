@@ -49,16 +49,16 @@ Chain strategy: stacked-to-main
 
 ## Phase C: Real Filter Columns + Sort Grid
 
-- [ ] C.1 RED: write a `renderHook` test for `useTableData` asserting `filteredRecords` sorts a **copy**, not the store's original array (assert `useDataStore.getState().tables[i].records` is unchanged in reference/order after `cycleSort` is applied) — this is its own explicit scenario, not folded into a general sort test.
-- [ ] C.2 RED: write a `renderHook` test asserting filter runs before sort (filtered-out rows never affect sort order) and tri-state cycle (asc → desc → unsorted) on repeated `cycleSort` calls.
-- [ ] C.3 RED: write a `renderHook` test asserting `hiddenColumns` and `sort` reset when `activeTableIndex` changes.
-- [ ] C.4 RED: write a component test asserting toggling a column in the Filter Columns dropdown hides its header+cells and restores them on re-toggle.
-- [ ] C.5 GREEN: extend `UseTableDataReturn` in `apps/studio/src/features/studio/browser/hooks/useTableData.ts` with `hiddenColumns: Set<string>`, `visibleColumns`, `toggleColumnVisibility`, `sort: {column, direction} | null`, `cycleSort`; reset both on `activeTableIndex` change.
-- [ ] C.6 GREEN: implement `filteredRecords` as filter-then-`.slice().sort(cmp)` (never in-place `.sort()` on `activeTable.records`); comparator: nullish last, numbers numeric, booleans `false < true`, else `String().localeCompare`.
-- [ ] C.7 GREEN: replace the standalone "Sort Grid" toolbar button in `TableBrowserPage.tsx` with sortable `<th>` clicks over `visibleColumns` (ArrowUp/ArrowDown/ArrowUpDown indicator).
-- [ ] C.8 GREEN: replace the Filter toolbar `alert()` with a real `DropdownMenuCheckboxItem`-per-column dropdown (or A.5's plain-checkbox fallback if the smoke test failed), `checked = !hiddenColumns.has(col.name)`.
-- [ ] C.9 Confirm Structure Specs view still renders all columns unaffected by `hiddenColumns` (spec requirement — Structure Specs documents schema, not the grid).
-- [ ] C.10 Verify: `pnpm --filter @indigodb/studio test`, `pnpm --filter @indigodb/studio build`.
+- [x] C.1 RED: write a `renderHook` test for `useTableData` asserting `filteredRecords` sorts a **copy**, not the store's original array (assert `useDataStore.getState().tables[i].records` is unchanged in reference/order after `cycleSort` is applied) — this is its own explicit scenario, not folded into a general sort test.
+- [x] C.2 RED: write a `renderHook` test asserting filter runs before sort (filtered-out rows never affect sort order) and tri-state cycle (asc → desc → unsorted) on repeated `cycleSort` calls.
+- [x] C.3 RED: write a `renderHook` test asserting `hiddenColumns` and `sort` reset when `activeTableIndex` changes.
+- [x] C.4 RED: write a component test asserting toggling a column in the Filter Columns dropdown hides its header+cells and restores them on re-toggle.
+- [x] C.5 GREEN: extend `UseTableDataReturn` in `apps/studio/src/features/studio/browser/hooks/useTableData.ts` with `hiddenColumns: Set<string>`, `visibleColumns`, `toggleColumnVisibility`, `sort: {column, direction} | null`, `cycleSort`; reset both on `activeTableIndex` change.
+- [x] C.6 GREEN: implement `filteredRecords` as filter-then-`.slice().sort(cmp)` (never in-place `.sort()` on `activeTable.records`); comparator: nullish last, numbers numeric, booleans `false < true`, else `String().localeCompare`.
+- [x] C.7 GREEN: replace the standalone "Sort Grid" toolbar button in `TableBrowserPage.tsx` with sortable `<th>` clicks over `visibleColumns` (ArrowUp/ArrowDown/ArrowUpDown indicator).
+- [x] C.8 GREEN: replace the Filter toolbar `alert()` with a real `DropdownMenuCheckboxItem`-per-column dropdown (or A.5's plain-checkbox fallback if the smoke test failed), `checked = !hiddenColumns.has(col.name)`.
+- [x] C.9 Confirm Structure Specs view still renders all columns unaffected by `hiddenColumns` (spec requirement — Structure Specs documents schema, not the grid).
+- [x] C.10 Verify: `pnpm --filter @indigodb/studio test`, `pnpm --filter @indigodb/studio build`.
 
 ## Phase D: Disable Write Actions + Sample-Data Banner
 
