@@ -90,3 +90,11 @@ export interface ModelMeta {
 
 /** Executes a parameterized SQL statement, returning result rows. */
 export type Executor = (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>;
+
+/**
+ * Runs `fn` on a session-scoped `Executor` bound to one exclusive
+ * transaction, owned and lifecycle-managed by the host engine (e.g. PGlite's
+ * own `db.transaction`). Used by `IndigoClientOptions.db.transaction` so
+ * non-`pg` executors can support `$transaction`.
+ */
+export type TransactionHook = <T>(fn: (exec: Executor) => Promise<T>) => Promise<T>;
