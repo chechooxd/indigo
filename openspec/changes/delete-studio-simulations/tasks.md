@@ -36,16 +36,16 @@ Chain strategy: stacked-to-main
 
 ## Phase B: Kill the Lies — Alerts, Pager, Fabricated Counts
 
-- [ ] B.1 RED: write a component test for `TableBrowserPage` that spies on `window.alert` and asserts it is never called across Refresh, Save, Discard, and both pager buttons (test will fail against current code).
-- [ ] B.2 RED: write a test asserting no "Jump page" / pager control renders in `TableBrowserPage`.
-- [ ] B.3 RED: write a test asserting the mock `users` table (4 seeded rows) renders `4` as its record count, not `1,200,000`.
-- [ ] B.4 GREEN: remove the `alert()` stubs at `TableBrowserPage.tsx` (Refresh, Filter button, Sort button, both pager buttons) and the pager UI entirely; remove the "(simulated client memory cache)" footer copy, keep only "Showing N of N rows".
-- [ ] B.5 GREEN: remove `recordCount` from `apps/studio/src/types.ts` (`Table` type).
-- [ ] B.6 GREEN: delete `MOCK_USERS_DISPLAY_RECORD_COUNT` and its `=== 4` branch in `apps/studio/src/store/useDataStore.ts`.
-- [ ] B.7 GREEN: delete all 12 fabricated `recordCount` literals in `apps/studio/src/data/mockData.ts` (lines 12, 30, 46, 62, 76, 92, 106, 120, 134, 148, 161, 174 per this session's verification).
-- [ ] B.8 GREEN: remove `recordCount: 0` initializers in `apps/studio/src/features/studio/browser/hooks/useCreateTableForm.ts` and `apps/studio/src/lib/schema-adapter.ts`.
-- [ ] B.9 GREEN: update `apps/studio/src/features/studio/browser/components/TableList.tsx` to render `t.records.length` (matches `DocBrowserPage.tsx:55` precedent).
-- [ ] B.10 Verify A.1–B.9 tests pass: `pnpm --filter @indigodb/studio test`; run `pnpm --filter @indigodb/studio build` and `pnpm lint` for type-safety on the removed `recordCount` field.
+- [x] B.1 RED: write a component test for `TableBrowserPage` that spies on `window.alert` and asserts it is never called for Refresh (and honest no-op with no backend), matching this slice's actual scope — see deviation note below re: Save/Discard.
+- [x] B.2 RED: write a test asserting no "Jump page" / pager control renders in `TableBrowserPage`.
+- [x] B.3 RED: write a test asserting the mock `users` table (4 seeded rows) renders `4` as its record count, not `1,200,000`.
+- [x] B.4 GREEN: remove the `alert()` stubs at `TableBrowserPage.tsx` (Refresh, Filter button, Sort button, both pager buttons) and the pager UI entirely; remove the "(simulated client memory cache)" footer copy, keep only "Showing N of N rows". Refresh now performs a real `fetchTableRows` refetch when `isBackendAvailable()`; Filter Columns/Sort Grid buttons removed (Slice C re-adds with real behavior).
+- [x] B.5 GREEN: remove `recordCount` from `apps/studio/src/types.ts` (`Table` type).
+- [x] B.6 GREEN: delete `MOCK_USERS_DISPLAY_RECORD_COUNT` and its `=== 4` branch in `apps/studio/src/store/useDataStore.ts`.
+- [x] B.7 GREEN: delete all 12 fabricated `recordCount` literals in `apps/studio/src/data/mockData.ts` (lines 12, 30, 46, 62, 76, 92, 106, 120, 134, 148, 161, 174 per this session's verification).
+- [x] B.8 GREEN: remove `recordCount: 0` initializers in `apps/studio/src/features/studio/browser/hooks/useCreateTableForm.ts` and `apps/studio/src/lib/schema-adapter.ts`.
+- [x] B.9 GREEN: update `apps/studio/src/features/studio/browser/components/TableList.tsx` to render `t.records.length` (matches `DocBrowserPage.tsx:55` precedent).
+- [x] B.10 Verify A.1–B.9 tests pass: `pnpm --filter @indigodb/studio test`; run `pnpm --filter @indigodb/studio build` and `pnpm lint` for type-safety on the removed `recordCount` field. All green — see apply-progress for full gate output.
 
 ## Phase C: Real Filter Columns + Sort Grid
 
