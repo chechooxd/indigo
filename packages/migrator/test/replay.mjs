@@ -18,6 +18,8 @@
 
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { loadChainFixture } from "./lib.mjs";
 import { withDatabase, applyPlan, introspectPublicSchema, assertSameStructure } from "./pg-harness.mjs";
 import { planMigration, renderMigrationSql, renderPushSql } from "../dist/index.js";
@@ -102,6 +104,58 @@ await check("comparator self-test: reports a missing table once, not per-column"
       }
     });
   });
+});
+
+// ─── loadChainFixture error handling ─────────────────────────────────────────
+// sdd-verify flagged these branches as real defensive code with zero coverage
+// — genuinely untested, not a spec gap (no scenario required it), closed here.
+
+function withTempChainDir(files, fn) {
+  const dir = mkdtempSync(join(tmpdir(), "indigo-chain-"));
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(dir, name), content);
+    }
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+await check("loadChainFixture throws on an empty directory", () => {
+  withTempChainDir({}, (dir) => {
+    let threw = false;
+    try {
+      loadChainFixture(dir);
+    } catch (err) {
+      threw = true;
+      if (!err.message.includes("no schema-NN.indigo files found")) {
+        throw new Error(`unexpected message: ${err.message}`);
+      }
+    }
+    if (!threw) throw new Error("expected loadChainFixture to throw on an empty directory");
+  });
+});
+
+await check("loadChainFixture throws on a gap in the hop sequence", () => {
+  withTempChainDir(
+    {
+      "schema-01.indigo": 'Table T { id Int @id }',
+      "schema-03.indigo": 'Table T { id Int @id  name String? }',
+    },
+    (dir) => {
+      let threw = false;
+      try {
+        loadChainFixture(dir);
+      } catch (err) {
+        threw = true;
+        if (!err.message.includes("expected contiguous hops starting at 1, found gap")) {
+          throw new Error(`unexpected message: ${err.message}`);
+        }
+      }
+      if (!threw) throw new Error("expected loadChainFixture to throw on a gapped sequence");
+    },
+  );
 });
 
 // ─── Chain replay ────────────────────────────────────────────────────────────
