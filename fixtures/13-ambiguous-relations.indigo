@@ -1,0 +1,27 @@
+// Ambiguous relation pairing: an all-unnamed relation set, and a
+// partially-named relation set, both fail deterministic pairing and must be
+// rejected. Expect the new ambiguity ERROR (and, for the partially-named
+// pair, the additional unresolved-name diagnostic) in this fixture's golden
+// `validation` array.
+
+Table User {
+  id       Int       @id @default(autoincrement())
+  posts    Post[]
+  comments Comment[]
+}
+
+Table Post {
+  id         Int  @id @default(autoincrement())
+  authorId   Int
+  reviewerId Int
+  author     User @relation(fields: [authorId], references: [id])
+  reviewer   User @relation(fields: [reviewerId], references: [id])
+}
+
+Table Comment {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  editorId Int
+  author   User @relation("CommentAuthor", fields: [authorId], references: [id])
+  editor   User @relation(fields: [editorId], references: [id])
+}

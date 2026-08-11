@@ -295,6 +295,11 @@ fn corpus_validation_errors_are_unchanged_by_new_rules() {
         ("03-quirks-values.indigo", &["Model \"NoPk\" has no @id primary key.", "Unknown type \"Missing\" on field \"broken\"."]),
         ("04-tablegroup-edge.indigo", &[]),
         ("05-relations.indigo", &[
+            // NEW (relations-epic): Post.author + Post.ghost are both unnamed FK
+            // relations to User, with User.posts an observable unnamed inverse —
+            // this is genuinely ambiguous under the new pairing rule (deliberate
+            // churn, not a regression; see design.md Open Questions).
+            "Ambiguous relation between \"Post\" and \"User\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides.",
             "Duplicate model \"User\".",
             "@relation(fields:) references unknown local field \"missingLocal\".",
             "@relation(references:) points at unknown field \"missingTarget\" on \"User\".",
@@ -335,6 +340,234 @@ fn enum_value_map_reaches_resolved_members() {
     assert_eq!(status.members[1].db_name, "INACTIVE");
     // `values` stays a plain name list — unchanged consumer contract.
     assert_eq!(status.values, vec!["ACTIVE", "INACTIVE"]);
+}
+
+// ─── Phase 1: positional `@relation("Name", ...)` name is allowed ───────────
+
+#[test]
+fn relation_positional_name_is_allowed() {
+    // Widget declares no counterpart `@relation("GadgetWidget")` field, so this
+    // legitimately still produces the (separate, relations-epic) unresolved-name
+    // diagnostic — the point of this test is that the positional-arg rejection
+    // is gone.
+    let errors = validate_src(
+        "Table Widget { id Int @id } \
+         Table Gadget { id Int @id widgetId Int widget Widget @relation(\"GadgetWidget\", fields: [widgetId], references: [id]) }",
+    );
+    assert!(
+        errors.iter().all(|e| !e.message.contains("does not accept positional arguments")),
+        "expected the positional @relation name to be accepted, got: {errors:?}"
+    );
+}
+
+#[test]
+fn relation_second_positional_arg_is_still_rejected() {
+    let two_positional = validate_src(
+        "Table Widget { id Int @id } \
+         Table Gadget { id Int @id widgetId Int widget Widget @relation(\"GadgetWidget\", \"Extra\", fields: [widgetId], references: [id]) }",
+    );
+    assert!(
+        two_positional.iter().any(|e| e.message.contains("does not accept positional arguments")),
+        "expected the second positional arg to be rejected with the existing message, got: {two_positional:?}"
+    );
+
+    let non_string_positional = validate_src(
+        "Table Widget { id Int @id } \
+         Table Gadget { id Int @id widgetId Int widget Widget @relation(123, fields: [widgetId], references: [id]) }",
+    );
+    assert!(
+        non_string_positional.iter().any(|e| e.message.contains("does not accept positional arguments")),
+        "expected a non-string positional arg to be rejected with the existing message, got: {non_string_positional:?}"
+    );
+}
+
+// ─── Phase 2: relation name retention in the IR ──────────────────────────────
+
+fn find_relation<'a>(
+    resolved: &'a indigo_compiler::ir::ResolvedSchema,
+    table: &str,
+    field: &str,
+) -> &'a indigo_compiler::ir::ResolvedRelation {
+    resolved
+        .tables
+        .iter()
+        .find(|t| t.name == table)
+        .unwrap_or_else(|| panic!("table {table} not found"))
+        .relations
+        .iter()
+        .find(|r| r.name == field)
+        .unwrap_or_else(|| panic!("relation {table}.{field} not found"))
+}
+
+#[test]
+fn relation_name_is_retained_in_the_ir() {
+    let source = "Table User { id Int @id } \
+                   Table Post { id Int @id authorId Int author User @relation(\"PostAuthor\", fields: [authorId], references: [id]) }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let author = find_relation(&resolved, "Post", "author");
+    assert_eq!(author.relation_name.as_deref(), Some("PostAuthor"));
+}
+
+#[test]
+fn unnamed_relation_omits_relation_name_key() {
+    let source = "Table User { id Int @id } \
+                   Table Post { id Int @id authorId Int author User @relation(fields: [authorId], references: [id]) }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let json = serde_json::to_string(&resolved).unwrap();
+    assert!(!json.contains("relationName"), "expected no relationName key for an unnamed relation, got: {json}");
+}
+
+// ─── Phase 3: cross-model relation pairing ───────────────────────────────────
+
+#[test]
+fn single_unnamed_relation_pairs_implicitly() {
+    let source = "Table User { id Int @id posts Post[] } \
+                   Table Post { id Int @id authorId Int author User @relation(fields: [authorId], references: [id]) }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let author = find_relation(&resolved, "Post", "author");
+    let posts = find_relation(&resolved, "User", "posts");
+    assert_eq!(posts.fk_columns, author.fk_columns, "inverse fkColumns should mirror the FK holder");
+    assert_eq!(posts.ref_columns, author.ref_columns, "inverse refColumns should mirror the FK holder");
+    assert_eq!(posts.inverse, Some(true), "inverse side must be flagged");
+    assert_eq!(author.inverse, None, "FK-holding side must never be flagged inverse");
+}
+
+#[test]
+fn named_relations_pair_by_name() {
+    let source = "Table User { id Int @id authoredPosts Post[] @relation(\"PostAuthor\") reviewedPosts Post[] @relation(\"PostReviewer\") } \
+                   Table Post { id Int @id authorId Int reviewerId Int \
+                   author User @relation(\"PostAuthor\", fields: [authorId], references: [id]) \
+                   reviewer User @relation(\"PostReviewer\", fields: [reviewerId], references: [id]) }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let author = find_relation(&resolved, "Post", "author");
+    let reviewer = find_relation(&resolved, "Post", "reviewer");
+    let authored = find_relation(&resolved, "User", "authoredPosts");
+    let reviewed = find_relation(&resolved, "User", "reviewedPosts");
+    assert_eq!(authored.fk_columns, author.fk_columns);
+    assert_eq!(reviewed.fk_columns, reviewer.fk_columns);
+    assert_ne!(author.fk_columns, reviewer.fk_columns, "sanity: the two FK legs must differ");
+    assert_eq!(authored.inverse, Some(true));
+    assert_eq!(reviewed.inverse, Some(true));
+}
+
+#[test]
+fn self_relation_never_pairs_a_field_with_itself() {
+    let source = "Table Category { id Int @id parentId Int? parent Category? @relation(fields: [parentId], references: [id]) }";
+    let schema = parse_source(source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let parent = find_relation(&resolved, "Category", "parent");
+    assert_eq!(parent.inverse, None, "a lone FK leg with no counterpart must never be flagged inverse");
+    assert_eq!(parent.fk_columns, vec!["parentId".to_string()]);
+}
+
+// ─── Phase 4: ambiguous relation pairing is a validation error ──────────────
+
+#[test]
+fn two_unnamed_relations_to_the_same_target_are_ambiguous() {
+    let errors = validate_src(
+        "Table User { id Int @id posts Post[] } \
+         Table Post { id Int @id authorId Int reviewerId Int \
+         author User @relation(fields: [authorId], references: [id]) \
+         reviewer User @relation(fields: [reviewerId], references: [id]) }",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("Ambiguous relation") && e.message.contains("Post") && e.message.contains("User")),
+        "expected an ambiguity diagnostic naming Post and User, got: {errors:?}"
+    );
+}
+
+#[test]
+fn naming_only_one_side_does_not_resolve_ambiguity() {
+    let errors = validate_src(
+        "Table User { id Int @id posts Post[] } \
+         Table Post { id Int @id authorId Int reviewerId Int \
+         author User @relation(\"PostAuthor\", fields: [authorId], references: [id]) \
+         reviewer User @relation(fields: [reviewerId], references: [id]) }",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("Ambiguous relation") && e.message.contains("Post") && e.message.contains("User")),
+        "expected the unnamed relation to still be reported as ambiguous, got: {errors:?}"
+    );
+}
+
+#[test]
+fn named_relation_with_no_counterpart_is_reported() {
+    let errors = validate_src(
+        "Table User { id Int @id } \
+         Table Post { id Int @id authorId Int \
+         author User @relation(\"PostAuthor\", fields: [authorId], references: [id]) }",
+    );
+    assert!(
+        errors.iter().any(|e| e.message.contains("PostAuthor") && e.message.contains("Post") && e.message.contains("User")),
+        "expected a diagnostic naming the unresolved relation name and both models, got: {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|e| !e.message.contains("Ambiguous relation")),
+        "must not report general ambiguity for a single named relation with no siblings, got: {errors:?}"
+    );
+}
+
+#[test]
+fn ambiguity_diagnostic_is_deduplicated_per_pair() {
+    let errors = validate_src(
+        "Table User { id Int @id posts Post[] } \
+         Table Post { id Int @id a1 Int a2 Int a3 Int \
+         author1 User @relation(fields: [a1], references: [id]) \
+         author2 User @relation(fields: [a2], references: [id]) \
+         author3 User @relation(fields: [a3], references: [id]) }",
+    );
+    let ambiguous: Vec<_> = errors.iter().filter(|e| e.message.contains("Ambiguous relation")).collect();
+    assert_eq!(ambiguous.len(), 1, "expected exactly one ambiguity diagnostic even with 3 conflicting relations, got: {errors:?}");
+    assert!(ambiguous[0].message.contains("Post") && ambiguous[0].message.contains("User"));
+}
+
+// ─── Phase 5: dedicated fixtures for relation naming/ambiguity ──────────────
+
+#[test]
+fn fixture_12_relation_naming_has_zero_validation_errors() {
+    let source = fs::read_to_string(fixtures_dir().join("12-relation-naming.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    assert!(errors.is_empty(), "expected zero validation errors, got: {errors:?}");
+}
+
+#[test]
+fn fixture_13_ambiguous_relations_reports_both_ambiguity_and_unresolved_name() {
+    let source = fs::read_to_string(fixtures_dir().join("13-ambiguous-relations.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+
+    // All-unnamed pair: Post.author + Post.reviewer vs. User.posts.
+    assert!(
+        errors.iter().any(|e| e.message.contains("Ambiguous relation") && e.message.contains("Post") && e.message.contains("User")),
+        "expected an ambiguity diagnostic for Post/User, got: {errors:?}"
+    );
+    // Partially-named pair: Comment.author ("CommentAuthor", no counterpart) +
+    // Comment.editor vs. User.comments.
+    assert!(
+        errors.iter().any(|e| e.message.contains("Ambiguous relation") && e.message.contains("Comment") && e.message.contains("User")),
+        "expected an ambiguity diagnostic for Comment/User, got: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.message.contains("CommentAuthor")),
+        "expected the unresolved-name diagnostic for Comment.author, got: {errors:?}"
+    );
+}
+
+#[test]
+fn fixture_08_self_relation_is_unaffected() {
+    let source = fs::read_to_string(fixtures_dir().join("08-self-relation.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    assert!(errors.is_empty(), "08-self-relation.indigo must stay unaffected by relation pairing, got: {errors:?}");
 }
 
 #[test]

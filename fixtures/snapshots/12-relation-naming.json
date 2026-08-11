@@ -1,0 +1,569 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "authoredPosts",
+            "type": {
+              "name": "Post",
+              "scalar": false,
+              "list": true,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "PostAuthor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "reviewedPosts",
+            "type": {
+              "name": "Post",
+              "scalar": false,
+              "list": true,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "PostReviewer"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "profile",
+            "type": {
+              "name": "Profile",
+              "scalar": false,
+              "list": false,
+              "optional": true
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "Post",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "authorId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "reviewerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "author",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "PostAuthor"
+                    }
+                  },
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "authorId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "reviewer",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "PostReviewer"
+                    }
+                  },
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "reviewerId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "Profile",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "userId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "unique",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "user",
+            "type": {
+              "name": "User",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "userId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "authoredPosts",
+            "targetModel": "Post",
+            "type": "OneToMany",
+            "list": true,
+            "optional": false,
+            "fkColumns": [
+              "authorId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "relationName": "PostAuthor",
+            "inverse": true
+          },
+          {
+            "name": "reviewedPosts",
+            "targetModel": "Post",
+            "type": "OneToMany",
+            "list": true,
+            "optional": false,
+            "fkColumns": [
+              "reviewerId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "relationName": "PostReviewer",
+            "inverse": true
+          },
+          {
+            "name": "profile",
+            "targetModel": "Profile",
+            "type": "OneToOne",
+            "list": false,
+            "optional": true,
+            "fkColumns": [
+              "userId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "inverse": true
+          }
+        ]
+      },
+      {
+        "name": "Post",
+        "dbName": "Post",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "authorId",
+            "dbName": "authorId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "reviewerId",
+            "dbName": "reviewerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "authorId"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          },
+          {
+            "columns": [
+              "reviewerId"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "author",
+            "targetModel": "User",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "authorId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "relationName": "PostAuthor"
+          },
+          {
+            "name": "reviewer",
+            "targetModel": "User",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "reviewerId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "relationName": "PostReviewer"
+          }
+        ]
+      },
+      {
+        "name": "Profile",
+        "dbName": "Profile",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "userId",
+            "dbName": "userId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": true,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "userId"
+            ],
+            "refTable": "User",
+            "refColumns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "user",
+            "targetModel": "User",
+            "type": "OneToOne",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "userId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

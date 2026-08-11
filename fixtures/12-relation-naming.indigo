@@ -1,0 +1,24 @@
+// Cross-model relation pairing: two named relations to the same target pair
+// correctly by name, and a single unnamed relation to a distinct target still
+// pairs implicitly. Expect zero validation errors.
+
+Table User {
+  id            Int    @id @default(autoincrement())
+  authoredPosts Post[] @relation("PostAuthor")
+  reviewedPosts Post[] @relation("PostReviewer")
+  profile       Profile?
+}
+
+Table Post {
+  id         Int  @id @default(autoincrement())
+  authorId   Int
+  reviewerId Int
+  author     User @relation("PostAuthor", fields: [authorId], references: [id])
+  reviewer   User @relation("PostReviewer", fields: [reviewerId], references: [id])
+}
+
+Table Profile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+}

@@ -337,8 +337,13 @@
             "type": "OneToOne",
             "list": false,
             "optional": true,
-            "fkColumns": [],
-            "refColumns": []
+            "fkColumns": [
+              "userId"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "inverse": true
           }
         ]
       },
@@ -511,6 +516,9 @@
     "enums": []
   },
   "validation": [
+    {
+      "message": "Ambiguous relation between \"Post\" and \"User\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides."
+    },
     {
       "message": "Duplicate model \"User\".",
       "model": "User"

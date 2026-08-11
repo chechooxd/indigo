@@ -513,8 +513,13 @@
             "type": "OneToMany",
             "list": true,
             "optional": false,
-            "fkColumns": [],
-            "refColumns": []
+            "fkColumns": [
+              "author_id"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "inverse": true
           },
           {
             "name": "profile",
@@ -522,8 +527,13 @@
             "type": "OneToOne",
             "list": false,
             "optional": true,
-            "fkColumns": [],
-            "refColumns": []
+            "fkColumns": [
+              "user_id"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "inverse": true
           }
         ],
         "color": "#c3c0ff",

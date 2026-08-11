@@ -412,8 +412,13 @@
             "type": "OneToMany",
             "list": true,
             "optional": false,
-            "fkColumns": [],
-            "refColumns": []
+            "fkColumns": [
+              "author_id"
+            ],
+            "refColumns": [
+              "id"
+            ],
+            "inverse": true
           }
         ],
         "color": "#818cf8",
