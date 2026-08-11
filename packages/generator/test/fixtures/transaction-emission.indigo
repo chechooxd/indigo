@@ -1,0 +1,13 @@
+Table User {
+  id   Int    @id @default(autoincrement())
+  name String
+}
+
+Table Message {
+  id     Int    @id @default(autoincrement())
+  userId Int    @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body   String
+
+  @@realtime
+}
