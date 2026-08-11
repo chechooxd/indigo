@@ -17,6 +17,7 @@ pub fn validate(schema: &Schema) -> Vec<ValidationError> {
 
     validate_attributes(&mut errors, schema, &enum_names);
     validate_implicit_many_to_many(&mut errors, schema, &model_names);
+    validate_relation_ambiguity(&mut errors, schema, &model_names);
     validate_datasources(&mut errors, schema);
 
     // Duplicate model names.
@@ -263,11 +264,21 @@ fn validate_relation_args(
     location: &str,
 ) {
     let known = rules::RELATION_ARG_KEYS.join(", ");
+    let mut positional_seen = 0usize;
     for arg in &attr.args {
         let message = if arg.name.is_empty() {
-            Some(format!(
-                "Attribute \"@relation\" on {location} does not accept positional arguments; use named arguments ({known})."
-            ))
+            positional_seen += 1;
+            // Exactly one positional STRING argument (the `@relation("Name", ...)`
+            // name) is allowed; a second positional, or a non-string positional,
+            // keeps the original rejection message verbatim (parity contract).
+            let is_allowed_name = positional_seen == 1 && matches!(arg.value, AttributeValue::String { .. });
+            if is_allowed_name {
+                None
+            } else {
+                Some(format!(
+                    "Attribute \"@relation\" on {location} does not accept positional arguments; use named arguments ({known})."
+                ))
+            }
         } else if !rules::RELATION_ARG_KEYS.contains(&arg.name.as_str()) {
             Some(format!("Unknown @relation argument \"{}\" on {location}. Known arguments: {known}.", arg.name))
         } else {
@@ -329,6 +340,110 @@ fn validate_implicit_many_to_many(errors: &mut Vec<ValidationError>, schema: &Sc
                     field: Some(field.name.clone()),
                 });
             }
+        }
+    }
+}
+
+// ─── Relation pairing ambiguity (relations-epic) ─────────────────────────────
+
+fn relation_field_name(field: &Field) -> Option<String> {
+    as_string(positional_arg(get_attr(&field.attributes, "relation"), 0).map(|a| &a.value))
+}
+
+fn relation_field_holds_fk(field: &Field) -> bool {
+    !as_reference_list(named_arg(get_attr(&field.attributes, "relation"), "fields")).is_empty()
+}
+
+/// A relation field that targets another model, addressed by
+/// `(model_idx, field_idx)` into `schema.models`.
+#[derive(Clone, Copy)]
+struct Candidate {
+    model_idx: usize,
+    field_idx: usize,
+}
+
+/// Mirrors `resolve.rs::pair_relations`'s algorithm (see design.md's "Pairing
+/// Algorithm"), but never mutates and only ever produces diagnostics:
+///
+/// - a named relation field with no counterpart field on the target model
+///   declaring the same `@relation("Name")` is always reported, regardless
+///   of how many sibling relations exist between the two models;
+/// - after name-matching removes deterministic pairs, if the remaining
+///   (unconsumed) candidates leave 2+ on one side and 1+ on the other, the
+///   pair set is ambiguous — deduplicated once per unordered `{A, B}`.
+fn validate_relation_ambiguity(errors: &mut Vec<ValidationError>, schema: &Schema, model_names: &HashSet<&str>) {
+    let mut groups: std::collections::HashMap<(String, String), Vec<Candidate>> = std::collections::HashMap::new();
+    for (mi, model) in schema.models.iter().enumerate() {
+        for (fi, field) in model.fields.iter().enumerate() {
+            if !model_names.contains(field.field_type.name.as_str()) {
+                continue;
+            }
+            let mut pair = [model.name.clone(), field.field_type.name.clone()];
+            pair.sort();
+            groups.entry((pair[0].clone(), pair[1].clone())).or_default().push(Candidate { model_idx: mi, field_idx: fi });
+        }
+    }
+
+    let field_of = |c: Candidate| -> (&Model, &Field) {
+        let m = &schema.models[c.model_idx];
+        (m, &m.fields[c.field_idx])
+    };
+    let is_counterpart_of = |c: Candidate, other: Candidate, name: &str| -> bool {
+        let (model, field) = field_of(c);
+        let (other_model, other_field) = field_of(other);
+        other_field.field_type.name == model.name
+            && other_model.name == field.field_type.name
+            && relation_field_name(other_field).as_deref() == Some(name)
+    };
+
+    let mut reported_ambiguous: HashSet<(String, String)> = HashSet::new();
+
+    for ((a, b), candidates) in &groups {
+        // Named relation with no counterpart declaring the same name: always
+        // reported, independent of the ambiguity threshold below.
+        for &c in candidates {
+            let (model, field) = field_of(c);
+            let Some(name) = relation_field_name(field) else { continue };
+            let has_counterpart =
+                candidates.iter().any(|&other| !(other.model_idx == c.model_idx && other.field_idx == c.field_idx) && is_counterpart_of(c, other, &name));
+            if !has_counterpart {
+                errors.push(ValidationError {
+                    message: format!(
+                        "@relation(\"{name}\") on \"{}.{}\" has no counterpart field on \"{}\" declaring @relation(\"{name}\").",
+                        model.name, field.name, field.field_type.name
+                    ),
+                    model: Some(model.name.clone()),
+                    field: Some(field.name.clone()),
+                });
+            }
+        }
+
+        // Name-match consumption (mirrors resolve.rs's pairing phase 1).
+        let mut consumed: HashSet<(usize, usize)> = HashSet::new();
+        for &c in candidates {
+            let (_, field) = field_of(c);
+            let Some(name) = relation_field_name(field) else { continue };
+            let matches: Vec<Candidate> =
+                candidates.iter().copied().filter(|&other| !(other.model_idx == c.model_idx && other.field_idx == c.field_idx) && is_counterpart_of(c, other, &name)).collect();
+            if matches.len() == 1 {
+                consumed.insert((c.model_idx, c.field_idx));
+                consumed.insert((matches[0].model_idx, matches[0].field_idx));
+            }
+        }
+
+        let remaining: Vec<Candidate> = candidates.iter().copied().filter(|c| !consumed.contains(&(c.model_idx, c.field_idx))).collect();
+        let remaining_fk = remaining.iter().filter(|&&c| relation_field_holds_fk(field_of(c).1)).count();
+        let remaining_inverse = remaining.len() - remaining_fk;
+
+        let ambiguous = (remaining_fk >= 2 && remaining_inverse >= 1) || (remaining_inverse >= 2 && remaining_fk >= 1);
+        if ambiguous && reported_ambiguous.insert((a.clone(), b.clone())) {
+            errors.push(ValidationError {
+                message: format!(
+                    "Ambiguous relation between \"{a}\" and \"{b}\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides."
+                ),
+                model: None,
+                field: None,
+            });
         }
     }
 }

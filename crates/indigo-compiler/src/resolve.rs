@@ -125,6 +125,7 @@ fn resolve_relations(
 
         let target_model = field.field_type.name.clone();
         let rel_attr = get_attr(&field.attributes, "relation");
+        let relation_name = as_string(positional_arg(rel_attr, 0).map(|a| &a.value));
         let local_refs = as_reference_list(named_arg(rel_attr, "fields"));
         let target_refs = as_reference_list(named_arg(rel_attr, "references"));
         let on_delete = resolve_action(named_arg(rel_attr, "onDelete"));
@@ -171,6 +172,8 @@ fn resolve_relations(
             optional: field.field_type.optional,
             fk_columns: fk_columns.clone(),
             ref_columns: ref_columns.clone(),
+            relation_name,
+            inverse: None,
         });
 
         if holds_fk && !ref_columns.is_empty() {
@@ -216,47 +219,48 @@ pub fn resolve(schema: &Schema) -> ResolvedSchema {
     }
 
     // Pass 2: build tables.
-    let tables: Vec<ResolvedTable> = schema
-        .models
-        .iter()
-        .map(|model| {
-            let field_to_db = &field_db_names_by_model[&model.name];
+    let mut tables: Vec<ResolvedTable> = Vec::with_capacity(schema.models.len());
+    for model in &schema.models {
+        let field_to_db = &field_db_names_by_model[&model.name];
 
-            let mut columns = Vec::new();
-            let mut primary_key = Vec::new();
-            for field in &model.fields {
-                let is_scalar_type = is_scalar(&field.field_type.name);
-                let is_enum_type = enum_names.contains(field.field_type.name.as_str());
-                if !is_scalar_type && !is_enum_type {
-                    continue; // relation field, not a column
-                }
-                let column = resolve_column(field, is_enum_type);
-                if column.is_pk {
-                    primary_key.push(column.db_name.clone());
-                }
-                columns.push(column);
+        let mut columns = Vec::new();
+        let mut primary_key = Vec::new();
+        for field in &model.fields {
+            let is_scalar_type = is_scalar(&field.field_type.name);
+            let is_enum_type = enum_names.contains(field.field_type.name.as_str());
+            if !is_scalar_type && !is_enum_type {
+                continue; // relation field, not a column
             }
-
-            let (relations, foreign_keys) =
-                resolve_relations(model, &model_db_names, &field_db_names_by_model);
-
-            let group = group_by_table.get(model.name.as_str());
-
-            ResolvedTable {
-                name: model.name.clone(),
-                db_name: model_db_names[&model.name].clone(),
-                columns,
-                primary_key,
-                foreign_keys,
-                indexes: resolve_indexes(model, field_to_db),
-                relations,
-                note: first_string(get_attr(&model.attributes, "note")),
-                realtime: if has_attr(&model.attributes, "realtime") { Some(true) } else { None },
-                color: group.and_then(|(_, c)| c.map(str::to_string)),
-                group: group.map(|(name, _)| name.to_string()),
+            let column = resolve_column(field, is_enum_type);
+            if column.is_pk {
+                primary_key.push(column.db_name.clone());
             }
-        })
-        .collect();
+            columns.push(column);
+        }
+
+        let (relations, foreign_keys) =
+            resolve_relations(model, &model_db_names, &field_db_names_by_model);
+
+        let group = group_by_table.get(model.name.as_str());
+
+        tables.push(ResolvedTable {
+            name: model.name.clone(),
+            db_name: model_db_names[&model.name].clone(),
+            columns,
+            primary_key,
+            foreign_keys,
+            indexes: resolve_indexes(model, field_to_db),
+            relations,
+            note: first_string(get_attr(&model.attributes, "note")),
+            realtime: if has_attr(&model.attributes, "realtime") { Some(true) } else { None },
+            color: group.and_then(|(_, c)| c.map(str::to_string)),
+            group: group.map(|(name, _)| name.to_string()),
+        });
+    }
+
+    // Pass 3: cross-model relation pairing — populate each inverse side with
+    // its counterpart's FK/reference columns and flag it `inverse: Some(true)`.
+    pair_relations(&mut tables);
 
     ResolvedSchema {
         tables,
@@ -287,5 +291,111 @@ pub fn resolve(schema: &Schema) -> ResolvedSchema {
             })
             .collect(),
         datasource: schema.datasources.first().cloned(),
+    }
+}
+
+/// A read-only projection of one relation field, used to compute pairing
+/// writes without holding a live borrow into `tables` (see design.md's
+/// "two-phase" decision: restructuring into a flat re-attached relation list
+/// was rejected because it would disturb serde field order — the JSON
+/// contract).
+struct RelRef {
+    table_idx: usize,
+    rel_idx: usize,
+    source: String,
+    target: String,
+    name: Option<String>,
+    holds_fk: bool,
+    fk_columns: Vec<String>,
+    ref_columns: Vec<String>,
+}
+
+/// Cross-model relation pairing (design.md's "Pairing Algorithm"), per
+/// unordered model pair `{A, B}` (self-relations: `A == B`; a field is never
+/// its own inverse since holder/inverse partitioning is by distinct relation
+/// field, never the same one):
+///
+/// 1. name-match: each named FK-holder pairs with the inverse carrying the
+///    same name (0 or >1 candidates → left unresolved; validate.rs surfaces
+///    the diagnostic, `resolve` never errors).
+/// 2. implicit: remaining STRICTLY UNNAMED candidates pair iff exactly one
+///    unnamed FK-holder and at most one unnamed inverse remain — naming
+///    stays opt-in, so a named-but-unmatched holder must never silently fall
+///    back to an implicit match (relation-identity spec: "Named relation
+///    with no matching counterpart name").
+///
+/// Writes apply only to inverse sides (empty `fkColumns`); an FK-holder is
+/// never overwritten.
+fn pair_relations(tables: &mut [ResolvedTable]) {
+    let mut all: Vec<RelRef> = Vec::new();
+    for (ti, table) in tables.iter().enumerate() {
+        for (ri, rel) in table.relations.iter().enumerate() {
+            all.push(RelRef {
+                table_idx: ti,
+                rel_idx: ri,
+                source: table.name.clone(),
+                target: rel.target_model.clone(),
+                name: rel.relation_name.clone(),
+                holds_fk: !rel.fk_columns.is_empty(),
+                fk_columns: rel.fk_columns.clone(),
+                ref_columns: rel.ref_columns.clone(),
+            });
+        }
+    }
+
+    let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    for (i, rel) in all.iter().enumerate() {
+        let mut pair = [rel.source.clone(), rel.target.clone()];
+        pair.sort();
+        groups.entry((pair[0].clone(), pair[1].clone())).or_default().push(i);
+    }
+
+    let mut writes: Vec<(usize, usize, Vec<String>, Vec<String>)> = Vec::new();
+
+    for indices in groups.values() {
+        let holder_idxs: Vec<usize> = indices.iter().copied().filter(|&i| all[i].holds_fk).collect();
+        let inverse_idxs: Vec<usize> = indices.iter().copied().filter(|&i| !all[i].holds_fk).collect();
+
+        let mut consumed_holders: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut consumed_inverses: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+        // Phase 1: name-match.
+        for &hi in &holder_idxs {
+            let Some(name) = all[hi].name.clone() else { continue };
+            let matches: Vec<usize> =
+                inverse_idxs.iter().copied().filter(|&ii| all[ii].name.as_deref() == Some(name.as_str())).collect();
+            if matches.len() == 1 {
+                let ii = matches[0];
+                consumed_holders.insert(hi);
+                consumed_inverses.insert(ii);
+                writes.push((all[ii].table_idx, all[ii].rel_idx, all[hi].fk_columns.clone(), all[hi].ref_columns.clone()));
+            }
+        }
+
+        // Phase 2: implicit — only strictly-unnamed remaining candidates.
+        let remaining_unnamed_holders: Vec<usize> = holder_idxs
+            .iter()
+            .copied()
+            .filter(|i| !consumed_holders.contains(i) && all[*i].name.is_none())
+            .collect();
+        let remaining_unnamed_inverses: Vec<usize> = inverse_idxs
+            .iter()
+            .copied()
+            .filter(|i| !consumed_inverses.contains(i) && all[*i].name.is_none())
+            .collect();
+
+        if remaining_unnamed_holders.len() == 1 && remaining_unnamed_inverses.len() <= 1 {
+            if let Some(&ii) = remaining_unnamed_inverses.first() {
+                let hi = remaining_unnamed_holders[0];
+                writes.push((all[ii].table_idx, all[ii].rel_idx, all[hi].fk_columns.clone(), all[hi].ref_columns.clone()));
+            }
+        }
+    }
+
+    for (ti, ri, fk_columns, ref_columns) in writes {
+        let rel = &mut tables[ti].relations[ri];
+        rel.fk_columns = fk_columns;
+        rel.ref_columns = ref_columns;
+        rel.inverse = Some(true);
     }
 }
