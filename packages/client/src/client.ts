@@ -28,6 +28,18 @@ export interface IndigoClientOptions {
   connectionString?: string;
   /** Additional `pg` pool configuration. */
   pool?: PoolConfig;
+  /**
+   * Inject a pre-built query executor instead of letting the client own a
+   * `pg.Pool`. Useful for embedding IndigoDB over an existing connection
+   * (e.g. PGlite, a shared pool, a test harness). When provided, no
+   * `pg.Pool` is constructed and `connectionString`/`pool` are ignored.
+   */
+  db?: {
+    /** Runs a parameterized SQL statement and returns its result rows. */
+    exec: Executor;
+    /** Optional teardown hook invoked by `$disconnect()`. */
+    close?: () => Promise<void>;
+  };
   /** Log every executed SQL statement (for debugging). */
   log?: boolean;
   /** Realtime subscription settings (models marked `@@realtime`). */
@@ -35,20 +47,33 @@ export interface IndigoClientOptions {
 }
 
 export class IndigoClientBase {
-  private readonly pool: PgPool;
+  private readonly pool: PgPool | null;
+  private readonly run: Executor;
+  private readonly closeInjected: (() => Promise<void>) | undefined;
   private readonly log: boolean;
   private readonly realtimeUrl: string | undefined;
   private realtimeManager: RealtimeConnectionManager | null = null;
 
   constructor(options: IndigoClientOptions = {}) {
-    const connectionString =
-      options.connectionString ?? process.env.DATABASE_URL;
-    if (!connectionString && !options.pool) {
-      throw new Error(
-        "IndigoClient: no connection string. Pass `connectionString` or set DATABASE_URL.",
-      );
+    if (options.db) {
+      this.pool = null;
+      this.run = options.db.exec;
+      this.closeInjected = options.db.close;
+    } else {
+      const connectionString =
+        options.connectionString ?? process.env.DATABASE_URL;
+      if (!connectionString && !options.pool) {
+        throw new Error(
+          "IndigoClient: no connection string. Pass `connectionString` or set DATABASE_URL.",
+        );
+      }
+      const pool = new Pool({ connectionString, ...options.pool });
+      this.pool = pool;
+      this.run = async (sql, params) =>
+        (await pool.query(sql, params as unknown[]))
+          .rows as Record<string, unknown>[];
+      this.closeInjected = undefined;
     }
-    this.pool = new Pool({ connectionString, ...options.pool });
     this.log = options.log ?? false;
     this.realtimeUrl =
       options.realtime?.url ?? process.env.INDIGO_REALTIME_URL;
@@ -75,8 +100,7 @@ export class IndigoClientBase {
   /** Parameterized query executor passed to each model delegate. */
   protected readonly exec: Executor = async (sql, params) => {
     if (this.log) console.log("[indigodb]", sql, params);
-    const result = await this.pool.query(sql, params as unknown[]);
-    return result.rows as Record<string, unknown>[];
+    return this.run(sql, params);
   };
 
   /** Runs a raw parameterized query and returns the result rows. */
@@ -87,10 +111,11 @@ export class IndigoClientBase {
     return (await this.exec(sql, params)) as T[];
   }
 
-  /** Closes the connection pool and any open realtime subscriptions. */
+  /** Closes the connection pool (or injected executor) and any open realtime subscriptions. */
   async $disconnect(): Promise<void> {
     this.realtimeManager?.close();
     this.realtimeManager = null;
-    await this.pool.end();
+    if (this.pool) await this.pool.end();
+    else await this.closeInjected?.();
   }
 }
