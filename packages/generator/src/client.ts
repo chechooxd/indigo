@@ -58,7 +58,7 @@ export function generateClient(schema: ResolvedSchema): string {
     "// ──────────────────────────────────────────────────────────────────────────────",
     "",
     `import { ${runtimeImports.join(", ")} } from "@indigodb/client";`,
-    'import type { IndigoClientOptions } from "@indigodb/client";',
+    'import type { IndigoClientOptions, Executor, RealtimeConnectionManager } from "@indigodb/client";',
     "",
   );
 
@@ -91,31 +91,82 @@ export function generateClient(schema: ResolvedSchema): string {
   }
   out.push("} as const;", "");
 
+  // ─── TransactionClient interface ────────────────────────────────────────
+  // Per-model delegates + $queryRaw, bound to whatever executor `__delegates`
+  // is handed. Deliberately NOT `Omit<IndigoClient, "$transaction">` — that
+  // would also leak `$disconnect` and the options surface onto `tx`, making
+  // it look closeable when it is only valid for the callback's duration.
+  out.push("export interface TransactionClient {");
+  for (const table of schema.tables) {
+    const d = delegateName(table.name);
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
+    const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
+    out.push(`  readonly ${d}: ${delegateType};`);
+  }
+  out.push("  $queryRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;");
+  out.push("}", "");
+
+  // ─── __delegates factory ────────────────────────────────────────────────
+  // One construction site reused by the constructor (bound to `this.exec`)
+  // and `$transaction` (bound to a session-scoped executor), so both paths
+  // wire delegates identically.
+  out.push(
+    "function __delegates(exec: Executor, realtime: () => RealtimeConnectionManager): TransactionClient {",
+    "  return {",
+  );
+  for (const table of schema.tables) {
+    const d = delegateName(table.name);
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
+    if (table.realtime) {
+      out.push(
+        `    ${d}: new RealtimeModelDelegate${generics}(`,
+        `      __meta[${JSON.stringify(table.name)}],`,
+        `      exec,`,
+        `      realtime,`,
+        `      ${JSON.stringify(table.name)},`,
+        `    ),`,
+      );
+    } else {
+      out.push(
+        `    ${d}: new ModelDelegate${generics}(`,
+        `      __meta[${JSON.stringify(table.name)}],`,
+        `      exec,`,
+        `    ),`,
+      );
+    }
+  }
+  out.push(
+    "    $queryRaw: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> =>",
+    "      (await exec(sql, params)) as T[],",
+    "  };",
+    "}",
+    "",
+  );
+
   // ─── Client class ───────────────────────────────────────────────────────
   out.push("export class IndigoClient extends IndigoClientBase {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
     const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
-    // @@realtime models get the delegate with `subscribe()`; on the rest the
-    // method simply doesn't exist, so misuse fails at compile time.
-    if (table.realtime) {
-      out.push(
-        `  readonly ${d} = new RealtimeModelDelegate${generics}(`,
-        `    __meta[${JSON.stringify(table.name)}],`,
-        `    this.exec,`,
-        `    this.$realtime,`,
-        `    ${JSON.stringify(table.name)},`,
-        `  );`,
-      );
-    } else {
-      out.push(
-        `  readonly ${d} = new ModelDelegate${generics}(`,
-        `    __meta[${JSON.stringify(table.name)}],`,
-        `    this.exec,`,
-        `  );`,
-      );
-    }
+    const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
+    out.push(`  readonly ${d}: ${delegateType};`);
   }
+  out.push(
+    "  constructor(options?: IndigoClientOptions) {",
+    "    super(options);",
+    "    const d = __delegates(this.exec, this.$realtime);",
+  );
+  for (const table of schema.tables) {
+    const d = delegateName(table.name);
+    out.push(`    this.${d} = d.${d};`);
+  }
+  out.push(
+    "  }",
+    "",
+    "  $transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> {",
+    "    return this.$withSession((exec) => fn(__delegates(exec, this.$realtime)));",
+    "  }",
+  );
   out.push("}", "");
   out.push("export type { IndigoClientOptions };", "");
 
