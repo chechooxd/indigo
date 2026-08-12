@@ -69,13 +69,31 @@ interface RelationInfo {
   optional: boolean;
   from: string;
   to: string;
+  /**
+   * `true` when THIS table physically holds the FK column for the pair
+   * (`!rel.inverse`). Write-planner ordering rule (design.md, Decision
+   * "`list` is insufficient to order writes"): `fkSide` relations must be
+   * written BEFORE the parent row (the parent needs the FK value);
+   * non-`fkSide` relations must be written AFTER (the child needs the
+   * parent's key). `list` alone mis-orders a 1-1 inverse side, which has
+   * `list: false` but the FK lives on the OTHER table.
+   */
+  fkSide: boolean;
+  /**
+   * Nullability of the PHYSICAL FK column backing this pair, wherever it
+   * physically lives (this table when `fkSide`, the target table when
+   * not). Gates whether `disconnect`/`set` can clear the FK to NULL instead
+   * of throwing `REQUIRED_RELATION_DISCONNECT` (design.md Decision #1;
+   * spec Requirement 4).
+   */
+  optionalFk: boolean;
   /** More than one fk/ref column — rejected at codegen time, see below. */
   composite: boolean;
 }
 
-function columnNameByDb(table: ResolvedTable): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const c of table.columns) m.set(c.dbName, c.name);
+function columnMapByDb(table: ResolvedTable): Map<string, ResolvedColumn> {
+  const m = new Map<string, ResolvedColumn>();
+  for (const c of table.columns) m.set(c.dbName, c);
   return m;
 }
 
@@ -85,8 +103,8 @@ function resolveRelationInfo(
   tablesByName: Map<string, ResolvedTable>,
 ): RelationInfo {
   const targetTable = tablesByName.get(rel.targetModel);
-  const localMap = columnNameByDb(table);
-  const targetMap = targetTable ? columnNameByDb(targetTable) : new Map<string, string>();
+  const localCols = columnMapByDb(table);
+  const targetCols = targetTable ? columnMapByDb(targetTable) : new Map<string, ResolvedColumn>();
 
   // Holder side: fkColumns are physical columns on THIS table, refColumns on
   // the target. Inverse side: fkColumns/refColumns are mirrored from the
@@ -95,14 +113,26 @@ function resolveRelationInfo(
   const localPhysical = rel.inverse ? rel.refColumns : rel.fkColumns;
   const targetPhysical = rel.inverse ? rel.fkColumns : rel.refColumns;
 
-  const from = localPhysical.map((c) => localMap.get(c) ?? c);
-  const to = targetPhysical.map((c) => targetMap.get(c) ?? c);
+  const from = localPhysical.map((c) => localCols.get(c)?.name ?? c);
+  const to = targetPhysical.map((c) => targetCols.get(c)?.name ?? c);
+
+  // `rel.fkColumns` are always the PHYSICAL FK column names, but the table
+  // that physically owns them flips with `inverse` (ir.ts's `fkColumns` doc
+  // comment): the local table when this side holds the FK, the target
+  // table when this side is the mirrored inverse.
+  const fkOwnerCols = rel.inverse ? targetCols : localCols;
+  const fkColumn = rel.fkColumns.length === 1 ? fkOwnerCols.get(rel.fkColumns[0]!) : undefined;
 
   return {
     name: rel.name,
     target: rel.targetModel,
     list: rel.list,
     optional: rel.optional,
+    fkSide: !rel.inverse,
+    // Conservative default (nullable) when the FK column can't be resolved
+    // (composite relations, or an unexpectedly missing column) — never
+    // silently treats an unresolvable FK as required.
+    optionalFk: fkColumn?.nullable ?? true,
     from: from[0] ?? "",
     to: to[0] ?? "",
     // Slice-1 only supports single-column relation keys (design.md,
@@ -141,7 +171,8 @@ function relationMetaEntry(r: RelationInfo): string {
   }
   return (
     `${JSON.stringify(r.name)}: { target: ${JSON.stringify(r.target)}, ` +
-    `from: ${JSON.stringify(r.from)}, to: ${JSON.stringify(r.to)}, list: ${r.list} }`
+    `from: ${JSON.stringify(r.from)}, to: ${JSON.stringify(r.to)}, list: ${r.list}, ` +
+    `fkSide: ${r.fkSide}, optional: ${r.optional}, optionalFk: ${r.optionalFk} }`
   );
 }
 
@@ -170,7 +201,18 @@ export function generateClient(schema: ResolvedSchema): string {
     "// ──────────────────────────────────────────────────────────────────────────────",
     "",
     `import { ${runtimeImports.join(", ")} } from "@indigodb/client";`,
-    'import type { IndigoClientOptions, Executor, RealtimeConnectionManager, IncludeInput } from "@indigodb/client";',
+    'import type {',
+    "  IndigoClientOptions,",
+    "  Executor,",
+    "  RealtimeConnectionManager,",
+    "  IncludeInput,",
+    "  WhereInput,",
+    "  ToOneRelationInput,",
+    "  ToOneRelationUpdateInput,",
+    "  ToManyRelationInput,",
+    "  ToManyRelationUpdateInput,",
+    "  RunAtomic,",
+    '} from "@indigodb/client";',
     "",
   );
 
@@ -196,8 +238,8 @@ export function generateClient(schema: ResolvedSchema): string {
   // ─── Row interfaces + input types ───────────────────────────────────────
   for (const table of schema.tables) {
     out.push(...generateRowInterface(table));
-    out.push(...generateCreateInput(table));
-    out.push(...generateUpdateInput(table));
+    out.push(...generateCreateInput(table, relationsByTable.get(table.name)!));
+    out.push(...generateUpdateInput(table, relationsByTable.get(table.name)!));
     out.push(...generateRelationsInterface(table, relationsByTable.get(table.name)!));
     out.push(`export type ${table.name}IncludeInput = IncludeInput<${table.name}Relations>;`, "");
   }
@@ -213,7 +255,7 @@ export function generateClient(schema: ResolvedSchema): string {
       .map(relationMetaEntry)
       .join(", ");
     out.push(
-      `  ${JSON.stringify(table.name)}: { table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} } },`,
+      `  ${JSON.stringify(table.name)}: { name: ${JSON.stringify(table.name)}, table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} } },`,
     );
   }
   out.push("} as const;", "");
@@ -241,8 +283,19 @@ export function generateClient(schema: ResolvedSchema): string {
   // before any entry is filled in, avoiding a construction-order cycle,
   // then `include`'s follow-up query reaches a sibling model's own
   // `findMany` through `siblings()[relation.target]` at call time.
+  //
+  // `runAtomic` (design.md Decision "atomicity via `runAtomic`, a 4th
+  // `__delegates` argument") is OPTIONAL and deliberately omitted by
+  // `$transaction`'s own call below — each `ModelDelegate` then falls back
+  // to its own identity default (calls `fn` with `siblings()`, opening no
+  // new transaction), since a nested write issued via `tx.<model>.create`
+  // is already inside one. The top-level constructor passes the real thunk.
   out.push(
-    "function __delegates(exec: Executor, realtime: () => RealtimeConnectionManager): TransactionClient {",
+    "function __delegates(",
+    "  exec: Executor,",
+    "  realtime: () => RealtimeConnectionManager,",
+    "  runAtomic?: RunAtomic,",
+    "): TransactionClient {",
     "  const reg: Record<string, ModelDelegate<any, any, any, any>> = {};",
     "  const siblings = () => reg;",
     "  const client: TransactionClient = {",
@@ -258,6 +311,7 @@ export function generateClient(schema: ResolvedSchema): string {
         `      realtime,`,
         `      ${JSON.stringify(table.name)},`,
         `      siblings,`,
+        `      runAtomic,`,
         `    ),`,
       );
     } else {
@@ -266,6 +320,7 @@ export function generateClient(schema: ResolvedSchema): string {
         `      __meta[${JSON.stringify(table.name)}],`,
         `      exec,`,
         `      siblings,`,
+        `      runAtomic,`,
         `    ),`,
       );
     }
@@ -292,7 +347,7 @@ export function generateClient(schema: ResolvedSchema): string {
   out.push(
     "  constructor(options?: IndigoClientOptions) {",
     "    super(options);",
-    "    const d = __delegates(this.exec, this.$realtime);",
+    "    const d = __delegates(this.exec, this.$realtime, (fn) => this.$transaction(fn as never));",
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
@@ -322,7 +377,45 @@ function generateRowInterface(table: ResolvedTable): string[] {
   return lines;
 }
 
-function generateCreateInput(table: ResolvedTable): string[] {
+/**
+ * Nested-write relation member type for one relation (tasks.md A2.1/A2.2,
+ * design.md Decision "relation input unions live in
+ * packages/client/src/types.ts"). TYPE PLUMBING ONLY — no planner (PR B/C)
+ * reads these yet; this PR only makes them compile.
+ *
+ *  - `fkSide` (this table holds the FK, always to-one from here): the
+ *    child's own `CreateInput` is referenced unomitted — nothing about the
+ *    child needs hiding.
+ *  - non-`fkSide` (the CHILD holds the FK back to this row, to-one or
+ *    to-many): `Omit<ChildCreateInput, "<to>">` — the planner supplies the
+ *    child's FK field from the parent's own key, never the caller.
+ *
+ * `update` gains `disconnect`/`set` only when the FK can legally become
+ * NULL: always for a to-many (`ToManyRelationUpdateInput`), and for a
+ * to-one only when `optionalFk` (spec Requirement 4) — a required to-one
+ * can be replaced but never disconnected.
+ */
+function relationInputType(r: RelationInfo, mode: "create" | "update"): string {
+  const whereType = `WhereInput<${r.target}>`;
+  if (r.fkSide) {
+    const createType = `${r.target}CreateInput`;
+    return mode === "update" && r.optionalFk
+      ? `ToOneRelationUpdateInput<${createType}, ${whereType}>`
+      : `ToOneRelationInput<${createType}, ${whereType}>`;
+  }
+  const childCreate = `Omit<${r.target}CreateInput, ${JSON.stringify(r.to)}>`;
+  if (r.list) {
+    return mode === "update"
+      ? `ToManyRelationUpdateInput<${childCreate}, ${whereType}>`
+      : `ToManyRelationInput<${childCreate}, ${whereType}>`;
+  }
+  // non-fkSide to-one (1-1 inverse side).
+  return mode === "update" && r.optionalFk
+    ? `ToOneRelationUpdateInput<${childCreate}, ${whereType}>`
+    : `ToOneRelationInput<${childCreate}, ${whereType}>`;
+}
+
+function generateCreateInput(table: ResolvedTable, relations: RelationInfo[]): string[] {
   const lines = [`export interface ${table.name}CreateInput {`];
   for (const col of table.columns) {
     if (col.autoincrement) continue; // DB-generated identity
@@ -331,16 +424,24 @@ function generateCreateInput(table: ResolvedTable): string[] {
     const opt = optionalOnCreate(col) ? "?" : "";
     lines.push(`  ${col.name}${opt}: ${type};`);
   }
+  for (const r of relations) {
+    if (r.composite) continue;
+    lines.push(`  ${r.name}?: ${relationInputType(r, "create")};`);
+  }
   lines.push("}", "");
   return lines;
 }
 
-function generateUpdateInput(table: ResolvedTable): string[] {
+function generateUpdateInput(table: ResolvedTable, relations: RelationInfo[]): string[] {
   const lines = [`export interface ${table.name}UpdateInput {`];
   for (const col of table.columns) {
     const t = baseType(col);
     const type = col.nullable ? `${t} | null` : t;
     lines.push(`  ${col.name}?: ${type};`);
+  }
+  for (const r of relations) {
+    if (r.composite) continue;
+    lines.push(`  ${r.name}?: ${relationInputType(r, "update")};`);
   }
   lines.push("}", "");
   return lines;

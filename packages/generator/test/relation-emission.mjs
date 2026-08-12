@@ -60,7 +60,9 @@ console.log("generator regression: relation emission");
 check("holder side (Post.author): from/to are FIELD names, not physical", () => {
   const metaBlock = block('"Post": {');
   deepStrictEqual(
-    metaBlock.includes('"author": { target: "User", from: "authorId", to: "id", list: false }'),
+    metaBlock.includes(
+      '"author": { target: "User", from: "authorId", to: "id", list: false, fkSide: true, optional: false, optionalFk: false }',
+    ),
     true,
   );
 });
@@ -68,7 +70,9 @@ check("holder side (Post.author): from/to are FIELD names, not physical", () => 
 check("inverse side (User.posts): from/to normalized to the same direction-agnostic shape", () => {
   const metaBlock = block('"User": {');
   deepStrictEqual(
-    metaBlock.includes('"posts": { target: "Post", from: "id", to: "authorId", list: true }'),
+    metaBlock.includes(
+      '"posts": { target: "Post", from: "id", to: "authorId", list: true, fkSide: false, optional: false, optionalFk: false }',
+    ),
     true,
   );
 });
@@ -82,7 +86,9 @@ check("@map'd fk column: `from` uses the FIELD name (authorId), never the physic
 check("nullable N-1 (Post.editor): still emits from/to/list, list is false", () => {
   const metaBlock = block('"Post": {');
   deepStrictEqual(
-    metaBlock.includes('"editor": { target: "User", from: "editorId", to: "id", list: false }'),
+    metaBlock.includes(
+      '"editor": { target: "User", from: "editorId", to: "id", list: false, fkSide: true, optional: true, optionalFk: true }',
+    ),
     true,
   );
 });
@@ -90,12 +96,16 @@ check("nullable N-1 (Post.editor): still emits from/to/list, list is false", () 
 check("1-1 pair (Profile.user / User.profile) resolves symmetric from/to", () => {
   const profileMeta = block('"Profile": {');
   deepStrictEqual(
-    profileMeta.includes('"user": { target: "User", from: "userId", to: "id", list: false }'),
+    profileMeta.includes(
+      '"user": { target: "User", from: "userId", to: "id", list: false, fkSide: true, optional: false, optionalFk: false }',
+    ),
     true,
   );
   const userMeta = block('"User": {');
   deepStrictEqual(
-    userMeta.includes('"profile": { target: "Profile", from: "id", to: "userId", list: false }'),
+    userMeta.includes(
+      '"profile": { target: "Profile", from: "id", to: "userId", list: false, fkSide: false, optional: true, optionalFk: false }',
+    ),
     true,
   );
 });

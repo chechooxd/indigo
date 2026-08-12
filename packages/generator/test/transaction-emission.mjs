@@ -36,10 +36,14 @@ function check(name, fn) {
 
 console.log("generator regression: transaction emission");
 
-check("emits a __delegates(exec, realtime) factory function", () => {
+check("emits a __delegates(exec, realtime, runAtomic?) factory function", () => {
   deepStrictEqual(
     output.includes(
-      "function __delegates(exec: Executor, realtime: () => RealtimeConnectionManager): TransactionClient {",
+      "function __delegates(\n" +
+        "  exec: Executor,\n" +
+        "  realtime: () => RealtimeConnectionManager,\n" +
+        "  runAtomic?: RunAtomic,\n" +
+        "): TransactionClient {",
     ),
     true,
   );
@@ -93,18 +97,26 @@ check("IndigoClient declares readonly delegate fields without initializers", () 
   );
 });
 
-check("generated constructor calls __delegates(this.exec, this.$realtime) once and assigns fields", () => {
-  const ctorStart = output.indexOf("constructor(options?: IndigoClientOptions) {");
-  deepStrictEqual(ctorStart >= 0, true);
-  const ctorEnd = output.indexOf("\n  }", ctorStart);
-  const ctorBlock = output.slice(ctorStart, ctorEnd);
-  deepStrictEqual(ctorBlock.includes("__delegates(this.exec, this.$realtime)"), true);
-  deepStrictEqual(ctorBlock.includes("this.user = "), true);
-  deepStrictEqual(ctorBlock.includes("this.message = "), true);
-  // exactly one factory call in the constructor
-  const matches = ctorBlock.match(/__delegates\(/g) ?? [];
-  deepStrictEqual(matches.length, 1);
-});
+check(
+  "generated constructor calls __delegates(this.exec, this.$realtime, runAtomic) once, wiring the REAL top-level thunk, and assigns fields",
+  () => {
+    const ctorStart = output.indexOf("constructor(options?: IndigoClientOptions) {");
+    deepStrictEqual(ctorStart >= 0, true);
+    const ctorEnd = output.indexOf("\n  }", ctorStart);
+    const ctorBlock = output.slice(ctorStart, ctorEnd);
+    deepStrictEqual(
+      ctorBlock.includes(
+        "__delegates(this.exec, this.$realtime, (fn) => this.$transaction(fn as never))",
+      ),
+      true,
+    );
+    deepStrictEqual(ctorBlock.includes("this.user = "), true);
+    deepStrictEqual(ctorBlock.includes("this.message = "), true);
+    // exactly one factory call in the constructor
+    const matches = ctorBlock.match(/__delegates\(/g) ?? [];
+    deepStrictEqual(matches.length, 1);
+  },
+);
 
 check("emits $transaction<T>(fn) delegating to $withSession and __delegates", () => {
   deepStrictEqual(

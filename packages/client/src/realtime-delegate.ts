@@ -8,7 +8,7 @@
 
 import type { RealtimeEvent } from "@indigodb/realtime";
 import { ModelDelegate } from "./delegate.js";
-import type { SiblingRegistry } from "./delegate.js";
+import type { SiblingRegistry, RunAtomic } from "./delegate.js";
 import type { ModelMeta, Executor, WhereInput } from "./types.js";
 import type { RealtimeConnectionManager, Unsubscribe } from "./realtime.js";
 
@@ -37,8 +37,9 @@ export class RealtimeModelDelegate<
     /** Model name on the wire (`RealtimeEvent.table`), e.g. "User". */
     private readonly model: string,
     siblings?: () => SiblingRegistry,
+    runAtomic?: RunAtomic,
   ) {
-    super(meta, exec, siblings);
+    super(meta, exec, siblings, runAtomic);
   }
 
   subscribe(handlers: SubscribeHandlers<Row>): Unsubscribe {

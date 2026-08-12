@@ -9,7 +9,7 @@
 export { IndigoClientBase } from "./client.js";
 export type { IndigoClientOptions, RealtimeOptions } from "./client.js";
 export { ModelDelegate, IndigoRelationError } from "./delegate.js";
-export type { SiblingRegistry } from "./delegate.js";
+export type { SiblingRegistry, RunAtomic } from "./delegate.js";
 export { RealtimeModelDelegate } from "./realtime-delegate.js";
 export type { SubscribeHandlers } from "./realtime-delegate.js";
 export { RealtimeConnectionManager, SseTransport } from "./realtime.js";

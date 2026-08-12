@@ -14,6 +14,12 @@
  */
 
 import { ModelDelegate } from "../../src/delegate.js";
+import type {
+  ToOneRelationInput,
+  ToManyRelationInput,
+  ToManyRelationUpdateInput,
+  WhereInput,
+} from "../../src/types.js";
 
 interface User {
   id: number;
@@ -27,23 +33,36 @@ interface Post {
   authorId: number;
 }
 
+// Mirrors the generator's nested-write relation members (tasks.md A2.1,
+// design.md Decision "relation input unions live in
+// packages/client/src/types.ts"): `Post.author` is `fkSide` (Post holds
+// `authorId`), so the CreateInput member references `UserCreateInput`
+// unomitted. `User.posts` is NOT `fkSide` (the child holds the FK back), so
+// its member `Omit`s the child's own `authorId` — the planner supplies it,
+// not the caller (PR B, not implemented here).
 interface UserCreateInput {
   name: string;
   email: string;
+  posts?: ToManyRelationInput<Omit<PostCreateInput, "authorId">, WhereInput<Post>>;
 }
 
 interface UserUpdateInput {
   name?: string;
   email?: string;
+  posts?: ToManyRelationUpdateInput<Omit<PostCreateInput, "authorId">, WhereInput<Post>>;
 }
 
 interface PostCreateInput {
   title: string;
   authorId: number;
+  author?: ToOneRelationInput<UserCreateInput, WhereInput<User>>;
 }
 
 interface PostUpdateInput {
   title?: string;
+  // `author` is a REQUIRED to-one (Post.author has no `?`) — only
+  // create/connect/connectOrCreate, never disconnect/set (spec Requirement 4).
+  author?: ToOneRelationInput<UserCreateInput, WhereInput<User>>;
 }
 
 /** Mirrors the generator's `export interface UserRelations { posts: Post[] }`. */
@@ -111,6 +130,70 @@ async function scenarios() {
   // ── to-one relation on the other side of the pair ──
   const posts = await postDelegate.findMany({ include: { author: true } });
   posts[0].author.email;
+
+  // ── nested-write relation members (tasks.md A2.1/A2.2) — TYPE ONLY, no
+  //    planner reads these yet (PR B/C). Every supported sub-op shape must
+  //    compile on both Create/UpdateInput. ──
+
+  // to-one (fkSide, Post.author): create / connect / connectOrCreate.
+  const createWithNestedAuthorCreate: PostCreateInput = {
+    title: "t",
+    authorId: 1,
+    author: { create: { name: "Ada", email: "ada@example.com" } },
+  };
+  const createWithNestedAuthorConnect: PostCreateInput = {
+    title: "t",
+    authorId: 1,
+    author: { connect: { id: 1 } },
+  };
+  const createWithNestedAuthorConnectOrCreate: PostCreateInput = {
+    title: "t",
+    authorId: 1,
+    author: {
+      connectOrCreate: { where: { id: 1 }, create: { name: "Ada", email: "ada@example.com" } },
+    },
+  };
+  void createWithNestedAuthorCreate;
+  void createWithNestedAuthorConnect;
+  void createWithNestedAuthorConnectOrCreate;
+
+  // required to-one on UPDATE: disconnect/set are not part of the union.
+  const updateWithNestedAuthorConnect: PostUpdateInput = {
+    author: { connect: { id: 2 } },
+  };
+  void updateWithNestedAuthorConnect;
+  // @ts-expect-error `author` is a REQUIRED to-one — no disconnect on update
+  const updateWithNestedAuthorDisconnect: PostUpdateInput = { author: { disconnect: true } };
+  void updateWithNestedAuthorDisconnect;
+
+  // to-many (non-fkSide, User.posts): the child's own FK field is omitted —
+  // the planner supplies it, not the caller.
+  const createWithNestedPosts: UserCreateInput = {
+    name: "Ada",
+    email: "ada@example.com",
+    posts: { create: [{ title: "Hello" }] },
+  };
+  void createWithNestedPosts;
+  const leakingPostCreate: { title: string } = { title: "Hello" };
+  const createWithNestedPostsLeakingFk: UserCreateInput = {
+    name: "Ada",
+    email: "ada@example.com",
+    posts: {
+      // @ts-expect-error `authorId` is supplied by the planner, not the caller
+      create: [{ ...leakingPostCreate, authorId: 1 }],
+    },
+  };
+  void createWithNestedPostsLeakingFk;
+
+  // to-many on UPDATE: disconnect/set ARE part of the union, including `set: []`.
+  const updateWithNestedPostsSetEmpty: UserUpdateInput = {
+    posts: { set: [] },
+  };
+  const updateWithNestedPostsDisconnect: UserUpdateInput = {
+    posts: { disconnect: [{ id: 1 }] },
+  };
+  void updateWithNestedPostsSetEmpty;
+  void updateWithNestedPostsDisconnect;
 }
 
 void scenarios;

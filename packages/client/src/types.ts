@@ -135,6 +135,23 @@ export interface RelationMeta {
   from: string;
   to: string;
   list: boolean;
+  /**
+   * `true` when this model physically holds the FK column for the pair
+   * (`!ResolvedRelation.inverse`). Nested-write planner ordering (design.md
+   * Decision "`list` is insufficient to order writes", spec Requirement 6):
+   * `fkSide` relations execute BEFORE the parent row write, non-`fkSide`
+   * relations execute AFTER it.
+   */
+  fkSide: boolean;
+  /** Whether the relation FIELD itself is optional (`Type?`). */
+  optional: boolean;
+  /**
+   * Nullability of the PHYSICAL FK column backing this pair, wherever it
+   * physically lives. Gates `disconnect`/`set` (spec Requirement 4): only an
+   * `optionalFk` relation can have its FK cleared to NULL — a required FK
+   * throws a typed error instead of orphaning/cascading.
+   */
+  optionalFk: boolean;
 }
 
 /** Emitted instead of `RelationMeta` for a relation whose key spans more
@@ -148,12 +165,60 @@ export interface CompositeRelationMeta {
 }
 
 export interface ModelMeta {
+  /** The model's own schema name (e.g. "User"). Lets the nested-write
+   * planner find its own session-bound sibling delegate by name. */
+  name: string;
   /** Physical table name. */
   table: string;
   /** Field name → column metadata. */
   fields: Record<string, FieldMeta>;
   /** Relation name → relation metadata (absent when the model has none). */
   relations?: Record<string, RelationMeta | CompositeRelationMeta>;
+}
+
+// ─── Nested-write relation input unions (client-nested-writes spec) ─────────
+//
+// Hand-written here (design.md Decision "relation input unions live in
+// packages/client/src/types.ts"), same reasoning as `Payload` — type-checked
+// once by this package's own `tsc --noEmit` instead of debugged through
+// generated text. The generator only REFERENCES these per relation; it never
+// re-derives the sub-op shapes itself.
+//
+// PR A (this file) ships the TYPES ONLY — no runtime planner reads them yet
+// (that's PR B/C, tasks.md). `ChildCreateInput` is the target model's own
+// `CreateInput`, already narrowed by the generator (e.g.
+// `Omit<PostCreateInput, "authorId">` for a non-fkSide relation whose child
+// FK field is supplied by the planner, not the caller).
+
+/** Sub-operations for a to-one relation on `create` (and on `update` for a
+ * REQUIRED to-one — a required relation can be replaced, never disconnected). */
+export type ToOneRelationInput<ChildCreateInput, ChildWhere> =
+  | { create: ChildCreateInput }
+  | { connect: ChildWhere }
+  | { connectOrCreate: { where: ChildWhere; create: ChildCreateInput } };
+
+/** `ToOneRelationInput` plus `disconnect`/`set` — only valid on an OPTIONAL
+ * to-one relation (`RelationMeta.optionalFk`), which can clear its FK to
+ * NULL instead of orphaning/cascading (spec Requirement 4). */
+export type ToOneRelationUpdateInput<ChildCreateInput, ChildWhere> =
+  | ToOneRelationInput<ChildCreateInput, ChildWhere>
+  | { disconnect: true }
+  | { set: null };
+
+/** Sub-operations for a to-many relation on `create`. */
+export interface ToManyRelationInput<ChildCreateInput, ChildWhere> {
+  create?: ChildCreateInput[];
+  connect?: ChildWhere[];
+  connectOrCreate?: Array<{ where: ChildWhere; create: ChildCreateInput }>;
+}
+
+/** `ToManyRelationInput` plus `disconnect`/`set` on `update`. `set: []`
+ * disconnects the entire currently-linked set without deleting anything
+ * (spec Requirement 3). */
+export interface ToManyRelationUpdateInput<ChildCreateInput, ChildWhere>
+  extends ToManyRelationInput<ChildCreateInput, ChildWhere> {
+  disconnect?: ChildWhere[];
+  set?: ChildWhere[];
 }
 
 /** Executes a parameterized SQL statement, returning result rows. */

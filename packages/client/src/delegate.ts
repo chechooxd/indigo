@@ -44,6 +44,20 @@ export class IndigoRelationError extends Error {
  * before any of them exist yet (design.md Decision #3). */
 export type SiblingRegistry = Record<string, ModelDelegate<any, any, any, any>>;
 
+/**
+ * Atomicity seam for nested writes (design.md Decision "atomicity via
+ * `runAtomic`, a 4th `__delegates` argument"; client-transactions spec).
+ * `fn` receives the SAME sibling registry a nested write's per-op executors
+ * reach through `siblings()` — either a brand-new transaction's registry
+ * (top-level call) or the CURRENT transaction's registry, reused with no new
+ * transaction opened (call issued via `tx.<model>.create/update` inside an
+ * active `$transaction`).
+ *
+ * PR A (this file) only threads the seam through the constructor — no
+ * planner reads it yet (that's PR B/C).
+ */
+export type RunAtomic = <T>(fn: (tx: SiblingRegistry) => Promise<T>) => Promise<T>;
+
 /** Accumulates positional parameters for a statement. */
 class Params {
   readonly values: unknown[] = [];
@@ -73,6 +87,18 @@ function isFilterObject(value: unknown): value is WhereFilter<unknown> {
 }
 
 export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, never>> {
+  /**
+   * Atomicity seam for nested writes (design.md Decision "atomicity via
+   * `runAtomic`, a 4th `__delegates` argument"; see `RunAtomic`'s own doc
+   * comment). Defaults to IDENTITY — calls `fn` with this delegate's own
+   * `siblings()` registry directly, opening no new transaction — the shape
+   * the generated `__delegates(exec, realtime)` factory relies on when
+   * called from inside an already-open `$transaction`. The generated
+   * top-level constructor passes an explicit `(fn) => this.$transaction(fn)`
+   * instead, which opens a real transaction around `fn`.
+   */
+  protected readonly runAtomic: RunAtomic;
+
   constructor(
     protected readonly meta: ModelMeta,
     protected readonly exec: Executor,
@@ -81,7 +107,11 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
      * (design.md Decision #2/#3). Undefined for models with no relations —
      * `__delegates` always passes it when any model has relations. */
     protected readonly siblings?: () => SiblingRegistry,
-  ) {}
+    runAtomic?: RunAtomic,
+  ) {
+    this.runAtomic =
+      runAtomic ?? (async (fn) => fn(this.siblings?.() ?? ({} as SiblingRegistry)));
+  }
 
   private col(field: string): string {
     return this.meta.fields[field]?.db ?? field;
