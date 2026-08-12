@@ -8,6 +8,7 @@
 
 import type { RealtimeEvent } from "@indigodb/realtime";
 import { ModelDelegate } from "./delegate.js";
+import type { SiblingRegistry } from "./delegate.js";
 import type { ModelMeta, Executor, WhereInput } from "./types.js";
 import type { RealtimeConnectionManager, Unsubscribe } from "./realtime.js";
 
@@ -22,11 +23,12 @@ export interface SubscribeHandlers<Row> {
   onError?: (error: Error) => void;
 }
 
-export class RealtimeModelDelegate<Row, CreateInput, UpdateInput> extends ModelDelegate<
+export class RealtimeModelDelegate<
   Row,
   CreateInput,
-  UpdateInput
-> {
+  UpdateInput,
+  Rel = Record<string, never>,
+> extends ModelDelegate<Row, CreateInput, UpdateInput, Rel> {
   constructor(
     meta: ModelMeta,
     exec: Executor,
@@ -34,8 +36,9 @@ export class RealtimeModelDelegate<Row, CreateInput, UpdateInput> extends ModelD
     private readonly realtime: () => RealtimeConnectionManager,
     /** Model name on the wire (`RealtimeEvent.table`), e.g. "User". */
     private readonly model: string,
+    siblings?: () => SiblingRegistry,
   ) {
-    super(meta, exec);
+    super(meta, exec, siblings);
   }
 
   subscribe(handlers: SubscribeHandlers<Row>): Unsubscribe {

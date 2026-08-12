@@ -21,11 +21,28 @@ import type {
   WhereFilter,
   OrderByInput,
   SelectInput,
+  IncludeInput,
+  Payload,
 } from "./types.js";
 
 function quote(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
 }
+
+/** Thrown by `loadRelations` when `include` targets an unusable relation —
+ * unknown name, no sibling delegate registered, or a composite (multi-
+ * column) key (see `types.ts`'s `CompositeRelationMeta`). */
+export class IndigoRelationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IndigoRelationError";
+  }
+}
+
+/** Lazy registry of every model's delegate, keyed by model name — passed as
+ * the ctor's last argument so `__delegates` can construct all delegates
+ * before any of them exist yet (design.md Decision #3). */
+export type SiblingRegistry = Record<string, ModelDelegate<any, any, any, any>>;
 
 /** Accumulates positional parameters for a statement. */
 class Params {
@@ -55,10 +72,15 @@ function isFilterObject(value: unknown): value is WhereFilter<unknown> {
   return Object.keys(value as object).some((k) => OPERATORS.has(k));
 }
 
-export class ModelDelegate<Row, CreateInput, UpdateInput> {
+export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, never>> {
   constructor(
     protected readonly meta: ModelMeta,
     protected readonly exec: Executor,
+    /** Thunk resolving every model's delegate by name, so `include` can
+     * reach a sibling model's own `findMany` for the follow-up query
+     * (design.md Decision #2/#3). Undefined for models with no relations —
+     * `__delegates` always passes it when any model has relations. */
+    protected readonly siblings?: () => SiblingRegistry,
   ) {}
 
   private col(field: string): string {
@@ -123,23 +145,141 @@ export class ModelDelegate<Row, CreateInput, UpdateInput> {
     return parts.length > 0 ? ` ORDER BY ${parts.join(", ")}` : "";
   }
 
-  async findMany(args: FindManyArgs<Row> = {}): Promise<Row[]> {
+  async findMany<A extends FindManyArgs<Row, Rel> = FindManyArgs<Row, Rel>>(
+    args: A = {} as A,
+  ): Promise<Payload<Row, Rel, A>[]> {
+    const include = args.include as IncludeInput<Rel> | undefined;
+
+    // Join-key stripping (design.md Data Flow, tasks.md Phase 4): when a
+    // `select` is combined with `include`, force each included relation's
+    // parent-side stitch key into the query even if it wasn't explicitly
+    // selected, then strip it back off the final rows below.
+    let select = args.select;
+    const forcedParentKeys = new Set<string>();
+    if (include && select) {
+      for (const name of Object.keys(include)) {
+        const spec = (include as Record<string, unknown>)[name];
+        if (spec === undefined || spec === false) continue;
+        const relMeta = this.meta.relations?.[name];
+        if (!relMeta || "composite" in relMeta) continue; // validated in loadRelations
+        if (!(select as Record<string, boolean>)[relMeta.from]) {
+          forcedParentKeys.add(relMeta.from);
+        }
+      }
+      if (forcedParentKeys.size > 0) {
+        select = {
+          ...(select as Record<string, boolean>),
+          ...Object.fromEntries([...forcedParentKeys].map((f) => [f, true])),
+        } as SelectInput<Row>;
+      }
+    }
+
     const params = new Params();
-    let sql = `SELECT ${this.selectList(args.select)} FROM ${quote(this.meta.table)}`;
+    let sql = `SELECT ${this.selectList(select)} FROM ${quote(this.meta.table)}`;
     sql += this.buildWhere(args.where, params);
     sql += this.buildOrderBy(args.orderBy);
     if (args.take !== undefined) sql += ` LIMIT ${params.add(args.take)}`;
     if (args.skip !== undefined) sql += ` OFFSET ${params.add(args.skip)}`;
-    return (await this.exec(sql, params.values)) as Row[];
+    const rows = (await this.exec(sql, params.values)) as Record<string, unknown>[];
+
+    if (include) {
+      await this.loadRelations(rows, include);
+      if (forcedParentKeys.size > 0) {
+        for (const row of rows) {
+          for (const key of forcedParentKeys) delete row[key];
+        }
+      }
+    }
+
+    return rows as unknown as Payload<Row, Rel, A>[];
   }
 
-  async findFirst(args: FindFirstArgs<Row> = {}): Promise<Row | null> {
-    const rows = await this.findMany({ ...args, take: 1 });
+  async findFirst<A extends FindFirstArgs<Row, Rel> = FindFirstArgs<Row, Rel>>(
+    args: A = {} as A,
+  ): Promise<Payload<Row, Rel, A> | null> {
+    const rows = await this.findMany({ ...args, take: 1 } as A);
     return rows[0] ?? null;
   }
 
-  async findUnique(args: FindUniqueArgs<Row>): Promise<Row | null> {
-    return this.findFirst({ where: args.where, select: args.select });
+  async findUnique<A extends FindUniqueArgs<Row, Rel> = FindUniqueArgs<Row, Rel>>(
+    args: A,
+  ): Promise<Payload<Row, Rel, A> | null> {
+    return this.findFirst({ where: args.where, select: args.select, include: args.include } as A);
+  }
+
+  /**
+   * Batched-by-key relation loader (design.md Data Flow). Mutates `rows` in
+   * place, adding one property per included relation: the target's own
+   * rows for a to-many relation (`[]` when none matched), or a single
+   * target row / `null` for a to-one relation. One follow-up query per
+   * included relation, issued through the target model's own sibling
+   * delegate — never a new SQL construction path.
+   */
+  private async loadRelations(
+    rows: Record<string, unknown>[],
+    include: IncludeInput<Rel>,
+  ): Promise<void> {
+    const relations = this.meta.relations ?? {};
+    const registry = this.siblings?.();
+
+    for (const name of Object.keys(include)) {
+      const spec = (include as Record<string, unknown>)[name];
+      if (spec === undefined || spec === false) continue;
+
+      const relMeta = relations[name];
+      if (!relMeta) {
+        throw new IndigoRelationError(
+          `IndigoDB: unknown relation "${name}" in \`include\` — check the generated <Model>Relations type.`,
+        );
+      }
+      if ("composite" in relMeta) {
+        throw new IndigoRelationError(
+          `IndigoDB: relation "${name}" (→ ${relMeta.target}) spans more than one column and cannot be ` +
+            `used with \`include\` — only single-column relation keys are supported.`,
+        );
+      }
+
+      const target = registry?.[relMeta.target];
+      if (!target) {
+        throw new IndigoRelationError(
+          `IndigoDB: no delegate registered for relation target "${relMeta.target}" (relation "${name}"). ` +
+            `This client was likely constructed without the generated sibling registry.`,
+        );
+      }
+
+      const keys = [...new Set(rows.map((r) => r[relMeta.from]).filter((v) => v !== null && v !== undefined))];
+      if (keys.length === 0) {
+        for (const row of rows) row[name] = relMeta.list ? [] : null;
+        continue;
+      }
+
+      const requestedSelect =
+        typeof spec === "object" && spec !== null && "select" in spec
+          ? { ...(spec as { select: Record<string, boolean> }).select }
+          : undefined;
+      const forceChildKey = requestedSelect !== undefined && requestedSelect[relMeta.to] !== true;
+      if (requestedSelect) requestedSelect[relMeta.to] = true;
+
+      const children = (await target.findMany({
+        where: { [relMeta.to]: { in: keys } },
+        select: requestedSelect,
+      } as never)) as unknown as Record<string, unknown>[];
+
+      const bucket = new Map<unknown, Record<string, unknown>[]>();
+      for (const child of children) {
+        const k = child[relMeta.to];
+        const list = bucket.get(k);
+        if (list) list.push(child);
+        else bucket.set(k, [child]);
+        if (forceChildKey) delete child[relMeta.to];
+      }
+
+      for (const row of rows) {
+        const k = row[relMeta.from];
+        const matched = k === null || k === undefined ? undefined : bucket.get(k);
+        row[name] = relMeta.list ? (matched ?? []) : (matched?.[0] ?? null);
+      }
+    }
   }
 
   async create(args: CreateArgs<CreateInput>): Promise<Row> {
