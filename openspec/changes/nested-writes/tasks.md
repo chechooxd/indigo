@@ -37,13 +37,13 @@ Chain strategy: stacked-to-main
 
 ## PR B: Create Planner (Req 1, 2, 5, 6, 7)
 
-- [ ] B1.1 RED: unit tests (stub Executor) for op split — scalars vs. relation ops vs. unknown key -> `UNKNOWN_FIELD`.
-- [ ] B1.2 RED: unit tests for 3-phase ordering (fkSide before parent insert, non-fkSide after).
-- [ ] B1.3 RED: `pglite-harness.mjs` integration tests — to-one/to-many `create`, `connect`, `connectOrCreate`; `connect` miss -> `CONNECT_NOT_FOUND` + rollback; child failure rolls back parent (Req 7).
-- [ ] B1.4 RED: integration test — nested create inside active `$transaction`/`tx.<model>.create` joins the session, no double-open.
-- [ ] B2.1 GREEN: implement planner + `runAtomic` phases in `packages/client/src/delegate.ts` `create()`.
-- [ ] B2.2 GREEN: add `IndigoNestedWriteError` (extends `IndigoRelationError`) with `code` enum; wire `UNKNOWN_FIELD`/`CONNECT_NOT_FOUND`/`COMPOSITE_RELATION`.
-- [ ] B3.1 Verify all B1 RED tests pass GREEN; run full `pnpm --filter @indigodb/client test` + `pnpm lint`.
+- [x] B1.1 RED: unit tests (stub Executor) for op split — scalars vs. relation ops vs. unknown key -> `UNKNOWN_FIELD`.
+- [x] B1.2 RED: unit tests for 3-phase ordering (fkSide before parent insert, non-fkSide after).
+- [x] B1.3 RED: `pglite-harness.mjs` integration tests — to-one/to-many `create`, `connect`, `connectOrCreate`; `connect` miss -> `CONNECT_NOT_FOUND` + rollback; child failure rolls back parent (Req 7).
+- [x] B1.4 RED: integration test — nested create inside active `$transaction`/`tx.<model>.create` joins the session, no double-open.
+- [x] B2.1 GREEN: implement planner + `runAtomic` phases in `packages/client/src/delegate.ts` `create()`.
+- [x] B2.2 GREEN: add `IndigoNestedWriteError` (extends `IndigoRelationError`) with `code` enum; wire `UNKNOWN_FIELD`/`CONNECT_NOT_FOUND`/`COMPOSITE_RELATION`.
+- [x] B3.1 Verify all B1 RED tests pass GREEN; run full `pnpm --filter @indigodb/client test` + `pnpm lint`.
 
 ## PR C: Update Planner (Req 3, 4)
 

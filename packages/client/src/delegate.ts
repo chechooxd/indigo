@@ -9,6 +9,7 @@
 
 import type {
   ModelMeta,
+  RelationMeta,
   Executor,
   FindManyArgs,
   FindFirstArgs,
@@ -36,6 +37,35 @@ export class IndigoRelationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "IndigoRelationError";
+  }
+}
+
+/**
+ * Error codes for the nested-write planner (design.md Decision "reuse
+ * `IndigoRelationError` as the base of a new subclass"; client-nested-writes
+ * spec). `NO_ATOMIC_SEAM` is not in the spec's requirement list — it guards
+ * an internal invariant (a delegate constructed without a sibling registry
+ * cannot route a nested write) rather than a caller-input mistake.
+ */
+export type NestedWriteErrorCode =
+  | "UNKNOWN_FIELD"
+  | "COMPOSITE_RELATION"
+  | "CONNECT_NOT_FOUND"
+  | "REQUIRED_RELATION_DISCONNECT"
+  | "UNKNOWN_RELATION_OP"
+  | "AMBIGUOUS_UPDATE_TARGET"
+  | "NO_ATOMIC_SEAM";
+
+/** Thrown by the nested-write planner (`create`/`update`'s relation
+ * sub-operation handling). Extends `IndigoRelationError` so existing callers
+ * catching that base class keep working; `code` gives programmatic
+ * branching the message string alone cannot (design.md). */
+export class IndigoNestedWriteError extends IndigoRelationError {
+  readonly code: NestedWriteErrorCode;
+  constructor(code: NestedWriteErrorCode, message: string) {
+    super(message);
+    this.name = "IndigoNestedWriteError";
+    this.code = code;
   }
 }
 
@@ -312,9 +342,12 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
     }
   }
 
-  async create(args: CreateArgs<CreateInput>): Promise<Row> {
+  /** Raw scalar-only INSERT — the pre-nested-writes `create()` body, kept
+   * byte-identical (tasks.md A4.2). The planner (`create()`) re-enters this
+   * for the parent row write in phase 2; a scalar-only call skips the
+   * planner entirely and calls this directly. */
+  private async insertRow(data: Record<string, unknown>): Promise<Row> {
     const params = new Params();
-    const data = args.data as Record<string, unknown>;
     const fields = Object.keys(data).filter((f) => data[f] !== undefined);
     const cols = fields.map((f) => quote(this.col(f))).join(", ");
     const vals = fields.map((f) => params.add(data[f])).join(", ");
@@ -324,6 +357,230 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
         : `INSERT INTO ${quote(this.meta.table)} DEFAULT VALUES RETURNING ${this.selectList()}`;
     const rows = await this.exec(sql, params.values);
     return rows[0] as Row;
+  }
+
+  /**
+   * Splits `data` into scalar columns and relation sub-operations (design.md
+   * Data Flow: "split scalars | relOps | unknown"). Any key that is neither
+   * a declared scalar field nor a declared relation throws `UNKNOWN_FIELD`
+   * synchronously, BEFORE any SQL is issued (spec Requirement 5) — a
+   * composite-key relation throws `COMPOSITE_RELATION` for the same reason
+   * `loadRelations` rejects it on the read side.
+   */
+  private splitData(data: Record<string, unknown>): {
+    scalars: Record<string, unknown>;
+    relOps: Record<string, Record<string, unknown>>;
+  } {
+    const scalars: Record<string, unknown> = {};
+    const relOps: Record<string, Record<string, unknown>> = {};
+    for (const key of Object.keys(data)) {
+      if (data[key] === undefined) continue;
+      if (key in this.meta.fields) {
+        scalars[key] = data[key];
+        continue;
+      }
+      const relMeta = this.meta.relations?.[key];
+      if (relMeta) {
+        if ("composite" in relMeta) {
+          throw new IndigoNestedWriteError(
+            "COMPOSITE_RELATION",
+            `IndigoDB: relation "${key}" (→ ${relMeta.target}) spans more than one column and cannot ` +
+              `be used in a nested write — only single-column relation keys are supported.`,
+          );
+        }
+        relOps[key] = data[key] as Record<string, unknown>;
+        continue;
+      }
+      throw new IndigoNestedWriteError(
+        "UNKNOWN_FIELD",
+        `IndigoDB: "${key}" is not a scalar field or a declared relation on "${this.meta.name}".`,
+      );
+    }
+    return { scalars, relOps };
+  }
+
+  /** Looks up a relation's target sibling delegate inside the current
+   * transaction's registry (`tx`, from `runAtomic`'s callback) — never the
+   * outer `this.siblings()`, which may be a different (or no) session. */
+  private requireSibling(
+    tx: SiblingRegistry,
+    relMeta: RelationMeta,
+    relName: string,
+  ): ModelDelegate<any, any, any, any> {
+    const target = tx[relMeta.target];
+    if (!target) {
+      throw new IndigoNestedWriteError(
+        "NO_ATOMIC_SEAM",
+        `IndigoDB: no delegate registered for relation target "${relMeta.target}" (relation "${relName}"). ` +
+          `This client was likely constructed without the generated sibling registry.`,
+      );
+    }
+    return target;
+  }
+
+  /**
+   * Resolves a single-valued (to-one) relation sub-operation: `fkSide`
+   * relations (phase 1, always to-one from the local table's perspective)
+   * and non-`fkSide` to-one relations (1-1 inverse side, phase 3). Returns
+   * the resolved child row — phase 1 reads `childRow[relMeta.to]` off it for
+   * the parent's FK; phase 3 callers ignore the return value.
+   */
+  private async resolveToOneOp(
+    target: ModelDelegate<any, any, any, any>,
+    relName: string,
+    op: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (op.create !== undefined) {
+      return (await target.create({ data: op.create })) as Record<string, unknown>;
+    }
+    if (op.connect !== undefined) {
+      const row = await target.findFirst({ where: op.connect as never });
+      if (!row) {
+        throw new IndigoNestedWriteError(
+          "CONNECT_NOT_FOUND",
+          `IndigoDB: \`connect\` on relation "${relName}" matched no row.`,
+        );
+      }
+      return row as Record<string, unknown>;
+    }
+    if (op.connectOrCreate !== undefined) {
+      const { where, create } = op.connectOrCreate as { where: unknown; create: unknown };
+      const row = await target.findFirst({ where: where as never });
+      if (row) return row as Record<string, unknown>;
+      return (await target.create({ data: create })) as Record<string, unknown>;
+    }
+    throw new IndigoNestedWriteError(
+      "UNKNOWN_RELATION_OP",
+      `IndigoDB: relation "${relName}" received an unrecognized sub-operation — expected one of ` +
+        `create/connect/connectOrCreate.`,
+    );
+  }
+
+  /**
+   * Applies a non-`fkSide` relation sub-operation (phase 3): the CHILD holds
+   * the FK back to the just-inserted/updated parent row, so every op sets
+   * `relMeta.to` to `parentKey`. To-many ops carry arrays and may combine
+   * `create`/`connect`/`connectOrCreate` in the same call; non-list (1-1
+   * inverse) ops are single-valued, mirroring `resolveToOneOp`'s shape.
+   */
+  private async applyNonFkSideOp(
+    target: ModelDelegate<any, any, any, any>,
+    relMeta: RelationMeta,
+    relName: string,
+    op: Record<string, unknown>,
+    parentKey: unknown,
+  ): Promise<void> {
+    const connectByUpdate = async (where: unknown): Promise<boolean> => {
+      const updated = await target.update({ where: where as never, data: { [relMeta.to]: parentKey } });
+      return updated !== undefined;
+    };
+
+    if (relMeta.list) {
+      const creates = (op.create as Record<string, unknown>[] | undefined) ?? [];
+      for (const item of creates) {
+        await target.create({ data: { ...item, [relMeta.to]: parentKey } });
+      }
+      const connects = (op.connect as unknown[] | undefined) ?? [];
+      for (const where of connects) {
+        if (!(await connectByUpdate(where))) {
+          throw new IndigoNestedWriteError(
+            "CONNECT_NOT_FOUND",
+            `IndigoDB: \`connect\` on relation "${relName}" matched no row.`,
+          );
+        }
+      }
+      const connectOrCreates =
+        (op.connectOrCreate as Array<{ where: unknown; create: Record<string, unknown> }> | undefined) ?? [];
+      for (const { where, create } of connectOrCreates) {
+        if (!(await connectByUpdate(where))) {
+          await target.create({ data: { ...create, [relMeta.to]: parentKey } });
+        }
+      }
+      return;
+    }
+
+    if (op.create !== undefined) {
+      await target.create({ data: { ...(op.create as Record<string, unknown>), [relMeta.to]: parentKey } });
+      return;
+    }
+    if (op.connect !== undefined) {
+      if (!(await connectByUpdate(op.connect))) {
+        throw new IndigoNestedWriteError(
+          "CONNECT_NOT_FOUND",
+          `IndigoDB: \`connect\` on relation "${relName}" matched no row.`,
+        );
+      }
+      return;
+    }
+    if (op.connectOrCreate !== undefined) {
+      const { where, create } = op.connectOrCreate as { where: unknown; create: Record<string, unknown> };
+      if (!(await connectByUpdate(where))) {
+        await target.create({ data: { ...create, [relMeta.to]: parentKey } });
+      }
+      return;
+    }
+    throw new IndigoNestedWriteError(
+      "UNKNOWN_RELATION_OP",
+      `IndigoDB: relation "${relName}" received an unrecognized sub-operation — expected one of ` +
+        `create/connect/connectOrCreate.`,
+    );
+  }
+
+  /**
+   * `data` splits into scalars and relation ops (`splitData`); an unknown
+   * key throws `UNKNOWN_FIELD` before any SQL is issued (spec Requirement
+   * 5). No relation ops present ⇒ the planner is skipped entirely and
+   * `insertRow` runs directly — byte-identical SQL to the pre-nested-writes
+   * `create()` (tasks.md A4.2, design.md Data Flow).
+   *
+   * Otherwise the whole call runs inside one `runAtomic` session, ordered by
+   * FK direction (design.md Data Flow, spec Requirement 6): phase 1 resolves
+   * every `fkSide` relation op and folds its child's key into the parent's
+   * own scalars (the parent needs their key); phase 2 inserts the parent row
+   * itself; phase 3 applies every non-`fkSide` relation op, now that the
+   * parent's key exists for the child's FK (spec Requirement 1).
+   */
+  async create(args: CreateArgs<CreateInput>): Promise<Row> {
+    const { scalars, relOps } = this.splitData(args.data as Record<string, unknown>);
+    if (Object.keys(relOps).length === 0) {
+      return this.insertRow(scalars);
+    }
+
+    return this.runAtomic(async (tx) => {
+      const self = tx[this.meta.name] as ModelDelegate<Row, CreateInput, UpdateInput, Rel> | undefined;
+      if (!self) {
+        throw new IndigoNestedWriteError(
+          "NO_ATOMIC_SEAM",
+          `IndigoDB: nested write on "${this.meta.name}" requires the generated sibling registry — ` +
+            `this delegate was constructed without one.`,
+        );
+      }
+
+      const finalScalars: Record<string, unknown> = { ...scalars };
+
+      // Phase 1: fkSide ops resolve BEFORE the parent insert — the parent
+      // row needs their key.
+      for (const [name, op] of Object.entries(relOps)) {
+        const relMeta = this.meta.relations![name] as RelationMeta;
+        if (!relMeta.fkSide) continue;
+        const target = this.requireSibling(tx, relMeta, name);
+        const childRow = await this.resolveToOneOp(target, name, op);
+        finalScalars[relMeta.from] = childRow[relMeta.to];
+      }
+
+      const parentRow = (await self.insertRow(finalScalars)) as unknown as Record<string, unknown>;
+
+      // Phase 3: non-fkSide ops run AFTER the parent insert — the children
+      // need the parent's key.
+      for (const [name, op] of Object.entries(relOps)) {
+        const relMeta = this.meta.relations![name] as RelationMeta;
+        if (relMeta.fkSide) continue;
+        const target = this.requireSibling(tx, relMeta, name);
+        await this.applyNonFkSideOp(target, relMeta, name, op, parentRow[relMeta.from]);
+      }
+
+      return parentRow as unknown as Row;
+    });
   }
 
   async update(args: UpdateArgs<Row, UpdateInput>): Promise<Row> {
