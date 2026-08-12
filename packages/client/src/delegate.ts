@@ -460,8 +460,14 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
    * Applies a non-`fkSide` relation sub-operation (phase 3): the CHILD holds
    * the FK back to the just-inserted/updated parent row, so every op sets
    * `relMeta.to` to `parentKey`. To-many ops carry arrays and may combine
-   * `create`/`connect`/`connectOrCreate` in the same call; non-list (1-1
-   * inverse) ops are single-valued, mirroring `resolveToOneOp`'s shape.
+   * `create`/`connect`/`connectOrCreate` (plus, on `update`, `disconnect`/
+   * `set` — spec Requirement 3) in the same call; non-list (1-1 inverse) ops
+   * are single-valued, mirroring `resolveToOneOp`'s shape. `disconnect`/`set`
+   * clear the child's FK to `NULL` and are gated by `relMeta.optionalFk`
+   * (spec Requirement 4): a required FK throws `REQUIRED_RELATION_DISCONNECT`
+   * instead of orphaning/cascading. `create()` callers never populate
+   * `disconnect`/`set` (not part of `ToOneRelationInput`/`ToManyRelationInput`
+   * at the type level), so this branch is inert for `create()`.
    */
   private async applyNonFkSideOp(
     target: ModelDelegate<any, any, any, any>,
@@ -473,6 +479,15 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
     const connectByUpdate = async (where: unknown): Promise<boolean> => {
       const updated = await target.update({ where: where as never, data: { [relMeta.to]: parentKey } });
       return updated !== undefined;
+    };
+    const requireOptionalFk = (): void => {
+      if (!relMeta.optionalFk) {
+        throw new IndigoNestedWriteError(
+          "REQUIRED_RELATION_DISCONNECT",
+          `IndigoDB: relation "${relName}" is required (its FK column is NOT NULL) — it cannot be ` +
+            `disconnected or set to null.`,
+        );
+      }
     };
 
     if (relMeta.list) {
@@ -494,6 +509,32 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
       for (const { where, create } of connectOrCreates) {
         if (!(await connectByUpdate(where))) {
           await target.create({ data: { ...create, [relMeta.to]: parentKey } });
+        }
+      }
+
+      const disconnects = (op.disconnect as unknown[] | undefined) ?? [];
+      if (disconnects.length > 0) {
+        requireOptionalFk();
+        for (const where of disconnects) {
+          await target.update({ where: where as never, data: { [relMeta.to]: null } });
+        }
+      }
+
+      // `set` REPLACES the entire linked set (spec Requirement 3): disconnect
+      // everything currently linked to `parentKey`, then re-connect each
+      // provided `where`. `set: []` disconnects everything and connects
+      // nothing (design.md's confirmed product decision — reuses the
+      // existing unbounded `update()`, not a scoped `updateMany`).
+      if (op.set !== undefined) {
+        requireOptionalFk();
+        await target.update({ where: { [relMeta.to]: parentKey } as never, data: { [relMeta.to]: null } });
+        for (const where of op.set as unknown[]) {
+          if (!(await connectByUpdate(where))) {
+            throw new IndigoNestedWriteError(
+              "CONNECT_NOT_FOUND",
+              `IndigoDB: \`set\` on relation "${relName}" matched no row for one of its entries.`,
+            );
+          }
         }
       }
       return;
@@ -519,10 +560,15 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
       }
       return;
     }
+    if (op.disconnect === true || (Object.prototype.hasOwnProperty.call(op, "set") && op.set === null)) {
+      requireOptionalFk();
+      await target.update({ where: { [relMeta.to]: parentKey } as never, data: { [relMeta.to]: null } });
+      return;
+    }
     throw new IndigoNestedWriteError(
       "UNKNOWN_RELATION_OP",
       `IndigoDB: relation "${relName}" received an unrecognized sub-operation — expected one of ` +
-        `create/connect/connectOrCreate.`,
+        `create/connect/connectOrCreate/disconnect/set.`,
     );
   }
 
@@ -583,18 +629,129 @@ export class ModelDelegate<Row, CreateInput, UpdateInput, Rel = Record<string, n
     });
   }
 
-  async update(args: UpdateArgs<Row, UpdateInput>): Promise<Row> {
+  /** Raw scalar-only UPDATE — the pre-nested-writes `update()` body, kept
+   * byte-identical (tasks.md A4.2/C2.1). The planner (`update()`) re-enters
+   * this for the parent row write (phases 1-2) and reuses it verbatim for
+   * to-many/child FK writes (`disconnect`/`set`/`connect` in
+   * `applyNonFkSideOp`); a scalar-only call skips the planner entirely and
+   * calls this directly. */
+  private async rawUpdate(where: WhereInput<Row> | undefined, data: Record<string, unknown>): Promise<Row> {
     const params = new Params();
-    const data = args.data as Record<string, unknown>;
     const fields = Object.keys(data).filter((f) => data[f] !== undefined);
     const assignments = fields
       .map((f) => `${quote(this.col(f))} = ${params.add(data[f])}`)
       .join(", ");
     let sql = `UPDATE ${quote(this.meta.table)} SET ${assignments}`;
-    sql += this.buildWhere(args.where, params);
+    sql += this.buildWhere(where, params);
     sql += ` RETURNING ${this.selectList()}`;
     const rows = await this.exec(sql, params.values);
     return rows[0] as Row;
+  }
+
+  /**
+   * `data` splits into scalars and relation ops (`splitData`), mirroring
+   * `create()`. No relation ops ⇒ the planner is skipped entirely and
+   * `rawUpdate` runs directly — byte-identical SQL to the pre-nested-writes
+   * `update()` (tasks.md A4.2, design.md Data Flow).
+   *
+   * Otherwise the whole call runs inside one `runAtomic` session. Because an
+   * `UPDATE ... WHERE ...` is not guaranteed to target a single row, and
+   * relation ops (fkSide FK writes, non-fkSide child FK writes) MUST apply to
+   * exactly one parent, `args.where` is first resolved via `findMany`: more
+   * than one match with relation ops present throws `AMBIGUOUS_UPDATE_TARGET`
+   * (design.md Data Flow, spec Requirement 3/4). Phase 1 resolves every
+   * `fkSide` relation op — `create`/`connect`/`connectOrCreate` fold the
+   * child's key into `finalScalars[relMeta.from]`; `disconnect`/`set: null`
+   * clear it to `NULL`, gated by `relMeta.optionalFk`
+   * (`REQUIRED_RELATION_DISCONNECT` otherwise). Phase 2 runs the parent's own
+   * `rawUpdate`. Phase 3 applies every non-`fkSide` relation op — including
+   * `disconnect`/`set` on to-many relations, which reuse the existing
+   * unbounded `update()` (design.md's confirmed product decision: `set: []`
+   * disconnects the entire currently-linked set, deletes nothing).
+   */
+  async update(args: UpdateArgs<Row, UpdateInput>): Promise<Row> {
+    const data = args.data as Record<string, unknown>;
+    const { scalars, relOps } = this.splitData(data);
+    if (Object.keys(relOps).length === 0) {
+      return this.rawUpdate(args.where, scalars);
+    }
+
+    return this.runAtomic(async (tx) => {
+      const self = tx[this.meta.name] as ModelDelegate<Row, CreateInput, UpdateInput, Rel> | undefined;
+      if (!self) {
+        throw new IndigoNestedWriteError(
+          "NO_ATOMIC_SEAM",
+          `IndigoDB: nested write on "${this.meta.name}" requires the generated sibling registry — ` +
+            `this delegate was constructed without one.`,
+        );
+      }
+
+      // Relation ops need a single, unambiguous target row (design.md Data
+      // Flow, spec Requirement 3/4) — resolve `where` up front instead of
+      // trusting the UPDATE's own (possibly multi-row) WHERE clause.
+      const matches = (await self.findMany({ where: args.where } as never)) as unknown as Record<
+        string,
+        unknown
+      >[];
+      if (matches.length > 1) {
+        throw new IndigoNestedWriteError(
+          "AMBIGUOUS_UPDATE_TARGET",
+          `IndigoDB: \`update\` on "${this.meta.name}" matched ${matches.length} rows, but \`data\` ` +
+            `includes relation sub-operations — relation ops require a single, unambiguous target row.`,
+        );
+      }
+
+      const finalScalars: Record<string, unknown> = { ...scalars };
+
+      // Phase 1: fkSide ops resolve BEFORE the parent update — the parent
+      // row's own FK column needs their key (or NULL, for disconnect/set).
+      for (const [name, op] of Object.entries(relOps)) {
+        const relMeta = this.meta.relations![name] as RelationMeta;
+        if (!relMeta.fkSide) continue;
+        const target = this.requireSibling(tx, relMeta, name);
+
+        if (op.disconnect === true || (Object.prototype.hasOwnProperty.call(op, "set") && op.set === null)) {
+          if (!relMeta.optionalFk) {
+            throw new IndigoNestedWriteError(
+              "REQUIRED_RELATION_DISCONNECT",
+              `IndigoDB: relation "${name}" is required (its FK column is NOT NULL) — it cannot be ` +
+                `disconnected or set to null.`,
+            );
+          }
+          finalScalars[relMeta.from] = null;
+          continue;
+        }
+
+        const childRow = await this.resolveToOneOp(target, name, op);
+        finalScalars[relMeta.from] = childRow[relMeta.to];
+      }
+
+      // Relation-ops-only `data` (no scalars, and no fkSide op resolved to a
+      // scalar FK write) skips the UPDATE entirely — an empty `SET` would be
+      // malformed SQL, and the already-fetched `matches[0]` IS the parent row
+      // (design.md Data Flow: "reads the target via findMany instead of
+      // emitting an empty SET").
+      const updatedRow: Record<string, unknown> | undefined =
+        Object.keys(finalScalars).length === 0
+          ? (matches[0] as Record<string, unknown> | undefined)
+          : ((await self.rawUpdate(args.where, finalScalars)) as unknown as Record<string, unknown> | undefined);
+      if (!updatedRow) {
+        // No row matched `where` (e.g. concurrently deleted) — nothing to
+        // attach non-fkSide ops to.
+        return updatedRow as unknown as Row;
+      }
+
+      // Phase 3: non-fkSide ops run AFTER the parent update — they need the
+      // parent's (possibly just-confirmed) key.
+      for (const [name, op] of Object.entries(relOps)) {
+        const relMeta = this.meta.relations![name] as RelationMeta;
+        if (relMeta.fkSide) continue;
+        const target = this.requireSibling(tx, relMeta, name);
+        await this.applyNonFkSideOp(target, relMeta, name, op, updatedRow[relMeta.from]);
+      }
+
+      return updatedRow as unknown as Row;
+    });
   }
 
   async delete(args: DeleteArgs<Row>): Promise<Row> {

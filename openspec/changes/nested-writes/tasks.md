@@ -47,10 +47,10 @@ Chain strategy: stacked-to-main
 
 ## PR C: Update Planner (Req 3, 4)
 
-- [ ] C1.1 RED: unit/integration tests for `disconnect`/`set` on to-many via existing `update` (FK = NULL, requires `optionalFk`).
-- [ ] C1.2 RED: test — required to-one `disconnect`/`set` throws `REQUIRED_RELATION_DISCONNECT`.
-- [ ] C1.3 RED: test — `set: []` disconnects entire linked set, deletes nothing.
-- [ ] C1.4 RED: test — relation-ops-only `data` resolves target via `findMany`; >1 match -> `AMBIGUOUS_UPDATE_TARGET`.
-- [ ] C2.1 GREEN: implement update planner (phase 2 = `tx[self].update`, phase 3 reads parent key from RETURNING) in `delegate.ts` `update()`.
-- [ ] C2.2 GREEN: wire `REQUIRED_RELATION_DISCONNECT`/`AMBIGUOUS_UPDATE_TARGET` error codes.
-- [ ] C3.1 Verify all C1 RED tests pass GREEN; run full test suite + `pnpm lint`; update `openspec/changes/nested-writes/design.md` Open Question with chosen `set`-via-`update` behavior confirmation.
+- [x] C1.1 RED: unit/integration tests for `disconnect`/`set` on to-many via existing `update` (FK = NULL, requires `optionalFk`).
+- [x] C1.2 RED: test — required to-one `disconnect`/`set` throws `REQUIRED_RELATION_DISCONNECT`.
+- [x] C1.3 RED: test — `set: []` disconnects entire linked set, deletes nothing.
+- [x] C1.4 RED: test — relation-ops-only `data` resolves target via `findMany`; >1 match -> `AMBIGUOUS_UPDATE_TARGET`.
+- [x] C2.1 GREEN: implement update planner (phase 2 = `tx[self].update`, phase 3 reads parent key from RETURNING) in `delegate.ts` `update()`.
+- [x] C2.2 GREEN: wire `REQUIRED_RELATION_DISCONNECT`/`AMBIGUOUS_UPDATE_TARGET` error codes.
+- [x] C3.1 Verify all C1 RED tests pass GREEN; run full test suite + `pnpm lint`; update `openspec/changes/nested-writes/design.md` Open Question with chosen `set`-via-`update` behavior confirmation.

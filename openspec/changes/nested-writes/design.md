@@ -84,4 +84,4 @@ No migration. Additive and chained A→B→C; each PR is independently revertabl
 
 ## Open Questions
 
-- [ ] `set` on a to-many uses `update` with a non-unique `where` (it updates every match) — acceptable, or add an explicit `updateMany` seam first?
+- [x] `set` on a to-many uses `update` with a non-unique `where` (it updates every match) — acceptable, or add an explicit `updateMany` seam first? **Resolved (PR C)**: confirmed acceptable — `set`/`disconnect` reuse the existing unbounded `update()` (e.g. `set: []` runs `update({ where: { [to]: parentKey }, data: { [to]: null } })`, disconnecting the whole current set before reconnecting any provided entries). No `updateMany` seam introduced.
