@@ -1,0 +1,104 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Membership",
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "b",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "id",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "b"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Membership",
+        "dbName": "Membership",
+        "columns": [
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "b",
+            "dbName": "b",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Unknown model attribute \"@@id\" on model \"Membership\".",
+      "model": "Membership"
+    },
+    {
+      "message": "Model \"Membership\" has no @id primary key.",
+      "model": "Membership"
+    }
+  ]
+}

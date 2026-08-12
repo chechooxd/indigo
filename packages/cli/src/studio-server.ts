@@ -27,6 +27,12 @@ export interface StudioOptions {
   source: string;
   connectionString: string;
   port: number;
+  /**
+   * Bind address. Defaults to `127.0.0.1` (loopback only). Passing anything
+   * else is an explicit opt-in to non-loopback exposure — see the startup
+   * warning printed in that case and `validateHeaders`'s relaxed Host check.
+   */
+  host?: string;
   /** Open the browser automatically once the server is listening. */
   open?: boolean;
   /** Injectable database port. Defaults to `createPgDb(connectionString)`. Tests inject a PGlite-backed adapter. */
@@ -148,6 +154,126 @@ function isReadOnlyQuery(sql: string): boolean {
   return true;
 }
 
+/**
+ * Strips the `datasource` block from a resolved schema before it is served
+ * over `/api/schema`. Shallow copy: the rest of the JSON is served as-is.
+ */
+function redactSchema(resolved: ResolvedSchema): ResolvedSchema {
+  const copy: ResolvedSchema & { datasource?: unknown } = { ...resolved };
+  delete copy.datasource;
+  return copy;
+}
+
+/**
+ * Strips the raw `datasource { ... }` block from `.indigo` source text
+ * before it is served over `/api/schema/source`, replacing it with a short
+ * placeholder comment. A connection string (literal or `env()`) can only
+ * ever appear inside this block, and the block can span multiple lines and
+ * nest braces (e.g. a future `env(...)` call with its own parens/braces), so
+ * this is a brace-depth line scan rather than a regex — a regex cannot
+ * reliably match a nested, multi-line block.
+ *
+ * Forward-looking constraint: this redaction is safe only because no
+ * save-back/schema-editor-write endpoint exists yet in this server. If one
+ * is ever added (Studio schema write-back is on the roadmap), it MUST NOT
+ * round-trip this redacted text back into the real schema file — it must
+ * read the original, unredacted source instead.
+ */
+export function redactSource(source: string): string {
+  const lines = source.split("\n");
+  const out: string[] = [];
+  let depth = 0;
+  let inBlock = false;
+
+  for (const line of lines) {
+    if (!inBlock) {
+      if (/^\s*datasource\b/.test(line)) {
+        inBlock = true;
+        depth = 0;
+        for (const ch of line) {
+          if (ch === "{") depth++;
+          else if (ch === "}") depth--;
+        }
+        out.push("// datasource redacted by Studio");
+        if (depth <= 0) inBlock = false;
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+
+    for (const ch of line) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    if (depth <= 0) inBlock = false;
+    // Lines inside the datasource block are dropped entirely.
+  }
+
+  return out.join("\n");
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host);
+}
+
+/**
+ * Rejects a request whose `Host` header (checked on EVERY request,
+ * including static assets) or `Origin` header (checked only when present)
+ * does not match this server's own bind address — defends the loopback
+ * bind against DNS-rebinding and cross-origin page access. Runs before any
+ * routing.
+ *
+ * Under an explicit non-loopback `--host` bind, `Host` validation is
+ * deliberately relaxed to a port-only match: the actual hostname or IP a
+ * client will use to reach a non-loopback bind is not knowable in advance
+ * (LAN IP, DNS name, etc.), so a strict allowlist would either reject
+ * legitimate traffic or require guessing every possible value. This is a
+ * tradeoff the operator opts into by choosing a non-loopback host — the
+ * same tradeoff is spelled out in the startup warning printed for that
+ * case (see `startStudio`).
+ */
+function validateHeaders(
+  req: import("node:http").IncomingMessage,
+  port: number,
+  host: string,
+): { ok: true } | { ok: false; error: string } {
+  const loopback = isLoopbackHost(host);
+  const allowedHostValues = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+    `${host}:${port}`,
+  ]);
+
+  function hostAllowed(value: string | undefined): boolean {
+    if (!value) return false;
+    if (loopback) return allowedHostValues.has(value);
+    return value.endsWith(`:${port}`); // relaxed: port-match only, see doc comment above.
+  }
+
+  if (!hostAllowed(req.headers.host)) {
+    return { ok: false, error: "Host not allowed" };
+  }
+
+  const originHeader = req.headers.origin;
+  if (originHeader) {
+    let originHost: string | undefined;
+    try {
+      originHost = new URL(originHeader).host;
+    } catch {
+      return { ok: false, error: "Origin not allowed" };
+    }
+    if (!hostAllowed(originHost)) {
+      return { ok: false, error: "Origin not allowed" };
+    }
+  }
+
+  return { ok: true };
+}
+
 function sendJson(res: import("node:http").ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -156,10 +282,20 @@ function sendJson(res: import("node:http").ServerResponse, status: number, body:
 
 export async function startStudio(
   options: StudioOptions,
-): Promise<{ port: number; close(): Promise<void> }> {
+): Promise<{ port: number; host: string; close(): Promise<void> }> {
   const { resolved, source, connectionString, port, open = true } = options;
+  const host = options.host ?? "127.0.0.1";
   const db = options.db ?? createPgDb(connectionString);
   const distDir = resolveStudioDist();
+  const publicSchema = redactSchema(resolved);
+  const publicSource = redactSource(source);
+
+  // `boundPort` starts as the requested port and is updated once `listen`
+  // resolves the actual bound port — needed for `port: 0` (ephemeral, used
+  // by tests). Captured by reference, so the request handler below always
+  // sees the final value even though requests only arrive after `listen`'s
+  // callback has already fired.
+  let boundPort = port;
 
   // Embedded realtime engine: with @@realtime tables the Studio gets live
   // change events on the same port, no separate `indigodb realtime` needed.
@@ -169,19 +305,25 @@ export async function startStudio(
   if (engine) await engine.start();
 
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+    const url = new URL(req.url ?? "/", `http://localhost:${boundPort}`);
     const path = url.pathname;
+
+    const headerCheck = validateHeaders(req, boundPort, host);
+    if (!headerCheck.ok) {
+      sendJson(res, 403, { error: headerCheck.error });
+      return;
+    }
 
     try {
       // ─── API ───────────────────────────────────────────────────────────
       if (path === "/api/schema") {
-        sendJson(res, 200, resolved);
+        sendJson(res, 200, publicSchema);
         return;
       }
 
       if (path === "/api/schema/source") {
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-        res.end(source);
+        res.end(publicSource);
         return;
       }
 
@@ -242,10 +384,11 @@ export async function startStudio(
     }
   });
 
-  const actualPort = await new Promise<number>((resolve) => {
-    server.listen(port, () => {
+  const actualHost = await new Promise<string>((resolve) => {
+    server.listen(port, host, () => {
       const addr = server.address();
-      resolve(typeof addr === "object" && addr !== null ? addr.port : port);
+      boundPort = typeof addr === "object" && addr !== null ? addr.port : port;
+      resolve(typeof addr === "object" && addr !== null ? addr.address : host);
     });
   });
 
@@ -253,17 +396,26 @@ export async function startStudio(
   console.log("  🎨 IndigoDB Studio");
   console.log("  ─────────────────────────────");
   console.log(`  Tables: ${resolved.tables.length}`);
-  console.log(`  URL:    http://localhost:${actualPort}`);
+  console.log(`  URL:    http://${actualHost}:${boundPort}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
+  }
+  if (!isLoopbackHost(host)) {
+    console.log(
+      `  ⚠  Binding to ${host}: the Studio server (including the SQL query console) is` +
+        ` reachable from other hosts on the network. This also relaxes Host-header` +
+        ` validation to a port-only match (see validateHeaders in studio-server.ts) —` +
+        ` only do this on a trusted network you control.`,
+    );
   }
   console.log();
   console.log("  Press Ctrl+C to stop.");
 
-  if (open) openBrowser(`http://localhost:${actualPort}`);
+  if (open) openBrowser(`http://${actualHost}:${boundPort}`);
 
   return {
-    port: actualPort,
+    port: boundPort,
+    host: actualHost,
     async close() {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));

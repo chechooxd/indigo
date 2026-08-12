@@ -1,0 +1,24 @@
+// Chain replay fixture, hop 4: add a new table whose default consumes the
+// enum value added in hop 3 — a different transaction, as PostgreSQL
+// requires (a newly added enum value cannot be used in the same transaction
+// that added it).
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+Table User {
+  id     Int     @id @default(autoincrement())
+  email  String  @unique
+  status Status  @default(ACTIVE)
+  name   String?
+}
+
+Table Post {
+  id       Int    @id @default(autoincrement())
+  authorId Int
+  author   User   @relation(fields: [authorId], references: [id])
+  status   Status @default(PENDING)
+}

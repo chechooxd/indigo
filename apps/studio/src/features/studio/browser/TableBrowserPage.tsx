@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect } from 'react';
-import { RefreshCw, Filter, ArrowUpDown, Search, Plus, Check, Circle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
 import { useCreateTableForm } from './hooks/useCreateTableForm';
@@ -12,8 +12,18 @@ import { useRecordEditor } from './hooks/useRecordEditor';
 import { TableList } from './components/TableList';
 import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
+import { SampleDataBanner } from './components/SampleDataBanner';
 import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
+
+const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
+const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
 import { useDataStore } from '../../../store/useDataStore';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+} from '../../../components/ui/dropdown-menu';
 
 export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
@@ -26,15 +36,22 @@ export default function TableBrowserPage() {
     tableFilterQuery,
     recordSearchQuery,
     isStructureView,
+    hiddenColumns,
+    visibleColumns,
+    sort,
     setActiveTableIndex,
     setTableFilterQuery,
     setRecordSearchQuery,
     setIsStructureView,
+    toggleColumnVisibility,
+    cycleSort,
   } = useTableData();
 
   const createForm = useCreateTableForm();
 
-  const editor = useRecordEditor(activeTableIndex);
+  const editor = useRecordEditor();
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Under the studio backend, load real rows for the active table on demand.
   useEffect(() => {
@@ -49,6 +66,20 @@ export default function TableBrowserPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTable?.name]);
+
+  // Manual refresh: re-fetch the active table's rows when a backend is
+  // connected. With no backend there is nothing to refetch from, so the
+  // control is disabled outright instead of being a silent no-op.
+  const refreshActiveTable = async () => {
+    if (!isBackendAvailable() || !activeTable) return;
+    setIsRefreshing(true);
+    try {
+      const result = await fetchTableRows(activeTable.name);
+      if (result) updateTableRecords(activeTable.name, result.rows);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Sync edit buffers whenever the active row or active table changes
   useEffect(() => {
@@ -81,6 +112,7 @@ export default function TableBrowserPage() {
 
       {/* Main Workspace Area */}
       <section className="flex-1 flex flex-col bg-[#09090b] overflow-hidden">
+        <SampleDataBanner />
         {/* Contextual Toolbar */}
         <div className="h-[48px] bg-[#09090b] border-b border-zinc-800/80 flex items-center justify-between px-4 shrink-0">
           <div className="flex items-center gap-4">
@@ -91,8 +123,13 @@ export default function TableBrowserPage() {
               </span>
             </div>
             <div className="h-4 w-px bg-zinc-800" />
-            <button onClick={() => alert('Table browser refreshed.')} className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs">
-              <RefreshCw className="w-3.5 h-3.5" /><span>Refresh</span>
+            <button
+              onClick={() => { void refreshActiveTable(); }}
+              disabled={!isBackendAvailable() || isRefreshing}
+              title={!isBackendAvailable() ? REFRESH_DISABLED_TITLE : undefined}
+              className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /><span>Refresh</span>
             </button>
           </div>
           <div className="flex items-center gap-3">
@@ -100,7 +137,11 @@ export default function TableBrowserPage() {
               <button onClick={() => setIsStructureView(false)} className={`px-3 py-1 rounded-lg cursor-pointer transition-all ${!isStructureView ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Data Grid</button>
               <button onClick={() => setIsStructureView(true)} className={`px-3 py-1 rounded-lg cursor-pointer transition-all ${isStructureView ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Structure Specs</button>
             </div>
-            <button onClick={() => editor.handleAddRecord(activeTable)} className="bg-white hover:bg-zinc-200 text-black px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-white/5">
+            <button
+              disabled
+              title={READ_ONLY_TITLE}
+              className="bg-white text-black px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <Plus className="w-3.5 h-3.5" /><span>Add Record</span>
             </button>
           </div>
@@ -108,14 +149,27 @@ export default function TableBrowserPage() {
 
         {/* Grid Navigation / Controls */}
         <div className="h-10 bg-zinc-950/40 border-b border-zinc-800/60 flex items-center px-4 gap-6 shrink-0">
-          <div className="flex items-center gap-3 text-xs font-semibold text-zinc-400">
-            <button onClick={() => alert('Simulating database filtration builder...')} className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors hover:bg-zinc-900 px-2.5 py-1 rounded-xl">
-              <Filter className="w-3.5 h-3.5 text-zinc-500" /><span>Filter Columns</span>
-            </button>
-            <button onClick={() => alert('Simulating sorting rules...')} className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors hover:bg-zinc-900 px-2.5 py-1 rounded-xl">
-              <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" /><span>Sort Grid</span>
-            </button>
-          </div>
+          {!isStructureView && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Filter columns"
+                className="flex items-center gap-1.5 text-zinc-400 hover:text-white cursor-pointer transition-colors px-2.5 py-1 hover:bg-zinc-900 rounded-xl text-xs"
+              >
+                <Filter className="w-3.5 h-3.5" /><span>Filter Columns</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {activeTable?.columns.map((col) => (
+                  <DropdownMenuCheckboxItem
+                    key={col.name}
+                    checked={!hiddenColumns.has(col.name)}
+                    onCheckedChange={() => toggleColumnVisibility(col.name)}
+                  >
+                    {col.name}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <div className="ml-auto">
             <div className="w-48 h-7 bg-[#09090b] border border-zinc-805 rounded-xl flex items-center px-2.5">
               <Search className="w-3 h-3 text-zinc-500" />
@@ -154,26 +208,37 @@ export default function TableBrowserPage() {
               <thead className="sticky top-0 z-20 bg-zinc-950 border-b border-zinc-800">
                 <tr>
                   <th className="w-10 px-3 py-2 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 focus:ring-0 text-white" type="checkbox" readOnly checked /></th>
-                  {activeTable?.columns.map((col) => (
-                    <th key={col.name} className="px-4 py-3 border-r border-zinc-800 min-w-[120px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-500 uppercase tracking-wider">{col.name}</span>
-                        {col.isPK && <span className="text-[9px] text-zinc-400 font-semibold border border-zinc-800 px-1.5 py-0.2 rounded">PK</span>}
-                      </div>
-                    </th>
-                  ))}
+                  {visibleColumns.map((col) => {
+                    const isSorted = sort?.column === col.name;
+                    const SortIcon = isSorted ? (sort?.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+                    return (
+                      <th
+                        key={col.name}
+                        onClick={() => cycleSort(col.name)}
+                        className="px-4 py-3 border-r border-zinc-800 min-w-[120px] cursor-pointer select-none hover:bg-zinc-900/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-zinc-500 uppercase tracking-wider">{col.name}</span>
+                          <div className="flex items-center gap-1">
+                            {col.isPK && <span className="text-[9px] text-zinc-400 font-semibold border border-zinc-800 px-1.5 py-0.2 rounded">PK</span>}
+                            <SortIcon className={`w-3 h-3 ${isSorted ? 'text-white' : 'text-zinc-600'}`} />
+                          </div>
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
                 {filteredRecords.length === 0 ? (
-                  <tr><td colSpan={(activeTable?.columns.length ?? 0) + 1} className="p-12 text-center text-zinc-500 italic font-sans text-xs">No matching records found. Clear filters or add new rows.</td></tr>
+                  <tr><td colSpan={visibleColumns.length + 1} className="p-12 text-center text-zinc-500 italic font-sans text-xs">No matching records found. Clear filters or add new rows.</td></tr>
                 ) : (
                   filteredRecords.map((row, idx) => {
                     const isSelected = editor.selectedRowIndex === idx;
                     return (
                       <tr key={row.id || idx} onClick={() => editor.setSelectedRowIndex(idx)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-zinc-900/30 border-y border-zinc-800 font-semibold' : 'hover:bg-zinc-900/10'}`}>
                         <td className="px-3 py-2.5 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 text-white focus:ring-0" type="checkbox" checked={isSelected} onChange={() => editor.setSelectedRowIndex(idx)} /></td>
-                        {activeTable?.columns.map((col) => {
+                        {visibleColumns.map((col) => {
                           const rawValue = row[col.name];
                           return (
                             <td key={col.name} className="px-4 py-2.5 border-r border-zinc-800/60 text-zinc-300 max-w-xs truncate">
@@ -195,12 +260,7 @@ export default function TableBrowserPage() {
 
         {/* Footer */}
         <div className="h-10 bg-[#09090b] border-t border-zinc-800/80 flex items-center justify-between px-4 shrink-0 text-xs text-zinc-500 font-sans font-medium">
-          <span>Showing {filteredRecords.length} of {activeTable?.records?.length ?? 0} rows (simulated client memory cache)</span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px]">Jump page</span>
-            <button className="px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-lg text-white font-bold" onClick={() => alert('Simulation handles client-side filtering and mutations directly.')}>1</button>
-            <button className="px-2 py-0.5 hover:bg-zinc-900 rounded-lg text-zinc-500" onClick={() => alert('All results loaded directly into memory for optimal speed.')}>2</button>
-          </div>
+          <span>Showing {filteredRecords.length} of {activeTable?.records?.length ?? 0} rows</span>
         </div>
       </section>
 
@@ -213,11 +273,6 @@ export default function TableBrowserPage() {
           editRole={editor.editRole}
           editMetadata={editor.editMetadata}
           onClose={() => editor.setDetailsPanelOpen(false)}
-          onEmailChange={editor.setEditEmail}
-          onRoleChange={editor.setEditRole}
-          onMetadataChange={editor.setEditMetadata}
-          onSave={() => editor.handleSaveChanges(activeTable)}
-          onDiscard={() => editor.handleDiscardChanges(activeTable)}
         />
       )}
 
@@ -227,7 +282,6 @@ export default function TableBrowserPage() {
         newTableName={createForm.newTableName}
         newTableSchema={createForm.newTableSchema}
         newTableColumns={createForm.newTableColumns}
-        allTables={tables}
         onClose={createForm.handleCloseCreateModal}
         onTableNameChange={createForm.setNewTableName}
         onTableSchemaChange={createForm.setNewTableSchema}
@@ -235,7 +289,6 @@ export default function TableBrowserPage() {
         onRemoveColumn={createForm.handleRemoveColumn}
         onUpdateColumn={createForm.handleUpdateColumn}
         onSubmit={createForm.handleCreateTableSubmit}
-        onSuccess={(newIndex) => { setActiveTableIndex(newIndex); editor.setSelectedRowIndex(0); }}
       />
     </div>
   );

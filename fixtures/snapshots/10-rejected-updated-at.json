@@ -1,0 +1,91 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Widget",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "updatedAt",
+            "type": {
+              "name": "DateTime",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "updatedAt",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Widget",
+        "dbName": "Widget",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "updatedAt",
+            "dbName": "updatedAt",
+            "type": "DateTime",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Unknown field attribute \"@updatedAt\" on field \"Widget.updatedAt\".",
+      "model": "Widget",
+      "field": "updatedAt"
+    }
+  ]
+}

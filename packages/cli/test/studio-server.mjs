@@ -12,8 +12,30 @@
  * `WITH x AS (DELETE ...) SELECT * FROM x` payload trivially defeats.
  */
 
+import { request as httpRequest } from "node:http";
 import { parse, resolve } from "@indigodb/core";
 import { withDatabase, withStudio } from "./studio-harness.mjs";
+import { redactSource } from "../dist/studio-server.js";
+
+/**
+ * `fetch()` refuses to send a caller-supplied `Host` header — it's a
+ * forbidden header per the Fetch spec, silently dropped even if set. Sending
+ * a mismatched `Host` for real (not just `Origin`) needs the raw HTTP client.
+ */
+function rawGet(port, path, headers) {
+  return new Promise((resolvePromise, reject) => {
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path, method: "GET", headers },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolvePromise({ status: res.statusCode, body }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 let failures = 0;
 
@@ -164,6 +186,185 @@ await check("multi-statement query body is rejected before opening a connection"
         `unexpected error message: ${body.error}`,
       );
     });
+  });
+});
+
+// ─── Bind address: loopback by default, explicit opt-in honored ───────────
+await check("default bind (no host option) resolves to a loopback address", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ host }) => {
+      assert(
+        host === "127.0.0.1" || host === "::1",
+        `expected a loopback bind address, got ${host}`,
+      );
+    });
+  });
+});
+
+await check("explicit host option is threaded through to listen()", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(
+      db,
+      fixture,
+      async ({ host }) => {
+        assert(host === "0.0.0.0", `expected the explicit host to be honored, got ${host}`);
+      },
+      { host: "0.0.0.0" },
+    );
+  });
+});
+
+// ─── Datasource redaction ───────────────────────────────────────────────────
+const CREDENTIAL_URL = "postgres://user:pass@host/db";
+const SCHEMA_WITH_CREDENTIAL = `
+datasource db {
+  provider = "postgresql"
+  url = "${CREDENTIAL_URL}"
+}
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String @unique
+}
+`;
+
+await check("/api/schema omits the datasource key from the JSON response", async () => {
+  await withDatabase(async (db) => {
+    const ast = parse(SCHEMA_WITH_CREDENTIAL);
+    const resolved = resolve(ast);
+    await withStudio(db, { resolved, source: SCHEMA_WITH_CREDENTIAL }, async ({ baseUrl }) => {
+      const res = await fetch(`${baseUrl}/api/schema`);
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+      const body = await res.json();
+      assert(!("datasource" in body), "expected no datasource key in /api/schema response");
+      assert(
+        !JSON.stringify(body).includes(CREDENTIAL_URL),
+        "credential string must not appear anywhere in the /api/schema response",
+      );
+    });
+  });
+});
+
+await check(
+  "/api/schema/source omits the datasource block and its credential from raw source",
+  async () => {
+    await withDatabase(async (db) => {
+      const ast = parse(SCHEMA_WITH_CREDENTIAL);
+      const resolved = resolve(ast);
+      await withStudio(db, { resolved, source: SCHEMA_WITH_CREDENTIAL }, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/api/schema/source`);
+        assert(res.status === 200, `expected 200, got ${res.status}`);
+        const text = await res.text();
+        assert(!text.includes(CREDENTIAL_URL), "credential string must not appear in raw source");
+        assert(!text.includes('provider = "postgresql"'), "the datasource block body must be stripped");
+        assert(text.includes("// datasource redacted"), "expected the redaction placeholder comment");
+        assert(text.includes("Table User"), "the rest of the schema must survive redaction");
+      });
+    });
+  },
+);
+
+await check(
+  "redactSource strips a multi-line, nested datasource block (unit test, brace-depth scan)",
+  () => {
+    const source = [
+      "datasource db {",
+      '  provider = "postgresql"',
+      "  url = env(\"DATABASE_URL\")",
+      "}",
+      "",
+      "Table User {",
+      "  id Int @id",
+      "}",
+    ].join("\n");
+    const redacted = redactSource(source);
+    assert(!redacted.includes("DATABASE_URL"), "env() reference must be stripped");
+    assert(!redacted.includes('provider = "postgresql"'), "the datasource block body must be stripped");
+    assert(redacted.includes("// datasource redacted"), "expected the redaction placeholder comment");
+    assert(redacted.includes("Table User"), "content after the block must survive");
+  },
+);
+
+// ─── Origin/Host allowlist ──────────────────────────────────────────────────
+await check("mismatched Origin header is rejected with 403", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await fetch(`${baseUrl}/api/schema`, {
+        headers: { origin: "http://evil.example.com" },
+      });
+      assert(res.status === 403, `expected 403, got ${res.status}`);
+      const body = await res.json();
+      assert(typeof body.error === "string" && body.error.length > 0, "expected an error message");
+    });
+  });
+});
+
+await check("request with no Origin header at all still succeeds", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await fetch(`${baseUrl}/api/schema`);
+      assert(res.status === 200, `expected 200 for a request without an Origin header, got ${res.status}`);
+    });
+  });
+});
+
+await check("matching Origin header succeeds", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl, host, port }) => {
+      const res = await fetch(`${baseUrl}/api/schema`, {
+        headers: { origin: `http://${host}:${port}` },
+      });
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+    });
+  });
+});
+
+await check("mismatched Host header is rejected with 403", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ port }) => {
+      const res = await rawGet(port, "/api/schema", {
+        Host: "evil.example.com:9999",
+      });
+      assert(res.status === 403, `expected 403, got ${res.status}`);
+      const body = JSON.parse(res.body);
+      assert(typeof body.error === "string" && body.error.length > 0, "expected an error message");
+    });
+  });
+});
+
+await check("matching Host header succeeds", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ host, port }) => {
+      const res = await rawGet(port, "/api/schema", { Host: `${host}:${port}` });
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+    });
+  });
+});
+
+// ─── Non-loopback startup warning ──────────────────────────────────────────
+await check("binding to a non-loopback host prints a risk warning", async () => {
+  await withDatabase(async (db) => {
+    const fixture = loadFixture();
+    const originalLog = console.log;
+    const lines = [];
+    console.log = (...args) => lines.push(args.join(" "));
+    try {
+      await withStudio(db, fixture, async () => {}, { host: "0.0.0.0" });
+    } finally {
+      console.log = originalLog;
+    }
+    const printed = lines.join("\n");
+    assert(
+      /0\.0\.0\.0/.test(printed) && /reachable|risk|warn/i.test(printed),
+      `expected a startup warning naming the non-loopback host, got:\n${printed}`,
+    );
   });
 });
 

@@ -14,13 +14,16 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node test/typecheck.mjs && node test/client.mjs && node test/relations.mjs && node test/transactions.mjs && node test/transactions-pg.mjs && node test/atomicity.mjs && node test/nested-writes-create.mjs && node test/nested-writes-update.mjs"
   },
   "dependencies": {
     "@indigodb/realtime": "workspace:*",
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-socket": "^0.2.7",
     "@types/pg": "^8.11.0",
     "typescript": "^5.8.0"
   }

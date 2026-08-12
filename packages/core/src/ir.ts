@@ -91,7 +91,11 @@ export interface ResolvedIndex {
 
 /** A relation field on a model (not a physical column). */
 export interface ResolvedRelation {
-  /** Relation field name (e.g. "author", "posts"). */
+  /**
+   * Relation field name as written in the schema (e.g. "author", "posts") —
+   * distinct from `relationName`, the optional `@relation("Name", ...)`
+   * label used to pair this field with its inverse side.
+   */
   name: string;
   /** Target model name. */
   targetModel: string;
@@ -101,10 +105,28 @@ export interface ResolvedRelation {
   list: boolean;
   /** Whether the relation field is optional (`User?`). */
   optional: boolean;
-  /** Local FK columns, when this side holds the foreign key. */
+  /**
+   * Local FK columns, when this side holds the foreign key. On an inverse
+   * side (`inverse: true`) these are populated from the paired counterpart's
+   * FK columns, which live on the OTHER model's table — not on this
+   * relation's own owning table.
+   */
   fkColumns: string[];
-  /** Referenced columns on the target model. */
+  /**
+   * Referenced columns on the target model. Same inverse-side caveat as
+   * `fkColumns`: on an inverse side these mirror the counterpart's
+   * `refColumns`, not a reference declared by this field itself.
+   */
   refColumns: string[];
+  /** The positional `@relation("Name", ...)` literal, when declared. */
+  relationName?: string;
+  /**
+   * `true` when this relation is the paired inverse side of another
+   * relation field (its FK/reference columns were populated by the
+   * cross-model pairing pass, not declared directly on this field).
+   * Absent (never `false`) on FK-holding / unpaired sides.
+   */
+  inverse?: true;
 }
 
 // ─── Tables ──────────────────────────────────────────────────────────────────

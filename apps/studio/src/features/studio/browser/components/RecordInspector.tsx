@@ -7,6 +7,8 @@ import React from 'react';
 import { X, Save, RotateCcw } from 'lucide-react';
 import { Table } from '../../../../types';
 
+const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
+
 interface RecordInspectorProps {
   activeTable: Table;
   selectedRowIndex: number;
@@ -15,11 +17,6 @@ interface RecordInspectorProps {
   editMetadata: string;
 
   onClose: () => void;
-  onEmailChange: (value: string) => void;
-  onRoleChange: (value: string) => void;
-  onMetadataChange: (value: string) => void;
-  onSave: () => void;
-  onDiscard: () => void;
 }
 
 export function RecordInspector({
@@ -29,11 +26,6 @@ export function RecordInspector({
   editRole,
   editMetadata,
   onClose,
-  onEmailChange,
-  onRoleChange,
-  onMetadataChange,
-  onSave,
-  onDiscard,
 }: RecordInspectorProps) {
   const record = activeTable?.records?.[selectedRowIndex];
   if (!record) return null;
@@ -72,9 +64,9 @@ export function RecordInspector({
               </label>
               <input
                 value={editEmail}
-                onChange={(e) => onEmailChange(e.target.value)}
+                readOnly
                 type="text"
-                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-white outline-none focus:border-zinc-700 font-mono"
+                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-white outline-none focus:border-zinc-700 font-mono cursor-not-allowed opacity-70"
               />
             </div>
           )}
@@ -87,8 +79,8 @@ export function RecordInspector({
               </label>
               <select
                 value={editRole}
-                onChange={(e) => onRoleChange(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-white outline-none focus:border-zinc-700"
+                disabled
+                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-white outline-none focus:border-zinc-700 cursor-not-allowed opacity-70"
               >
                 <option value="ADMIN">ADMIN</option>
                 <option value="USER">USER</option>
@@ -105,8 +97,8 @@ export function RecordInspector({
               </label>
               <textarea
                 value={editMetadata}
-                onChange={(e) => onMetadataChange(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-zinc-300 font-mono leading-relaxed h-44 outline-none focus:border-zinc-700 resize-none"
+                readOnly
+                className="w-full bg-zinc-950 border border-zinc-805 rounded-xl p-2.5 text-xs text-zinc-300 font-mono leading-relaxed h-44 outline-none focus:border-zinc-700 resize-none cursor-not-allowed opacity-70"
                 spellCheck={false}
               />
             </div>
@@ -116,15 +108,17 @@ export function RecordInspector({
 
       <div className="p-4 border-t border-zinc-800/80 bg-[#09090b] flex gap-2">
         <button
-          onClick={onDiscard}
-          className="flex-1 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          disabled
+          title={READ_ONLY_TITLE}
+          className="flex-1 bg-zinc-900 text-zinc-400 border border-zinc-800 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Discard</span>
         </button>
         <button
-          onClick={onSave}
-          className="flex-1 bg-white hover:bg-zinc-200 text-black py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-white/5"
+          disabled
+          title={READ_ONLY_TITLE}
+          className="flex-1 bg-white text-black py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Save className="w-3.5 h-3.5" />
           <span>Save Row</span>

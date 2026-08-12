@@ -9,7 +9,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'users',
     schema: 'public',
-    recordCount: 1200000,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: 'gen_random_uuid()', isPK: true, isNN: true, isUQ: true, description: 'Unique identifier for the user entity.' },
       { name: 'email', type: 'VARCHAR(255)', defaultValue: undefined, isPK: false, isNN: true, isUQ: true, description: 'Verified email address for login.' },
@@ -27,7 +26,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'organizations',
     schema: 'public',
-    recordCount: 24,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: 'gen_random_uuid()', isPK: true, isNN: true, isUQ: true, description: 'Unique identifier for the organization.' },
       { name: 'name', type: 'VARCHAR(100)', defaultValue: undefined, isPK: false, isNN: true, isUQ: false, description: 'Legal name of the workspace client.' },
@@ -43,7 +41,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'subscriptions',
     schema: 'billing',
-    recordCount: 120,
     columns: [
       { name: 'id', type: 'SERIAL', defaultValue: undefined, isPK: true, isNN: true, isUQ: true, description: 'Auto-incrementing primary key.' },
       { name: 'user_id', type: 'UUID', defaultValue: undefined, isPK: false, isNN: true, isUQ: false, description: 'Foreign Key: users.id references.' },
@@ -59,7 +56,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'projects',
     schema: 'public',
-    recordCount: 412,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: 'gen_random_uuid()', isPK: true, isNN: true, isUQ: true, description: 'Unique project identifier.' },
       { name: 'owner_id', type: 'UUID', defaultValue: undefined, isPK: false, isNN: true, isUQ: false, description: 'Reference to creator.' },
@@ -73,7 +69,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'deployments',
     schema: 'public',
-    recordCount: 2314,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'project_id', type: 'UUID', defaultValue: undefined, isPK: false, isNN: true, isUQ: false },
@@ -89,7 +84,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'api_keys',
     schema: 'public',
-    recordCount: 45,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'key_value', type: 'VARCHAR(100)', defaultValue: undefined, isPK: false, isNN: true, isUQ: true },
@@ -103,7 +97,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'usage_logs',
     schema: 'analytics',
-    recordCount: 4500000,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: 'gen_random_uuid()', isPK: true, isNN: true, isUQ: true },
       { name: 'ip', type: 'VARCHAR(45)', defaultValue: undefined, isPK: false, isNN: false, isUQ: false },
@@ -117,7 +110,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'error_events',
     schema: 'analytics',
-    recordCount: 14500,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'code', type: 'VARCHAR(10)', defaultValue: undefined, isPK: false, isNN: true, isUQ: false },
@@ -131,7 +123,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'comments',
     schema: 'public',
-    recordCount: 9400,
     columns: [
       { name: 'id', type: 'SERIAL', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'post_id', type: 'INTEGER', defaultValue: undefined, isPK: false, isNN: true, isUQ: false },
@@ -145,7 +136,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'categories',
     schema: 'public',
-    recordCount: 30,
     columns: [
       { name: 'id', type: 'SERIAL', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'title', type: 'VARCHAR(50)', defaultValue: undefined, isPK: false, isNN: true, isUQ: true }
@@ -158,7 +148,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'profiles',
     schema: 'public',
-    recordCount: 1200000,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'avatar_url', type: 'TEXT', defaultValue: undefined, isPK: false, isNN: false, isUQ: false },
@@ -171,7 +160,6 @@ export const INITIAL_TABLES: Table[] = [
   {
     name: 'sessions',
     schema: 'public',
-    recordCount: 88000,
     columns: [
       { name: 'id', type: 'UUID', defaultValue: undefined, isPK: true, isNN: true, isUQ: true },
       { name: 'user_id', type: 'UUID', defaultValue: undefined, isPK: false, isNN: true, isUQ: false },

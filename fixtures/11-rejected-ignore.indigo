@@ -1,0 +1,8 @@
+// @@ignore is not recognized: parses cleanly but is rejected as an unknown
+// model attribute. The model keeps a valid field-level @id.
+
+Table Widget {
+  id Int @id
+
+  @@ignore
+}

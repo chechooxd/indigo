@@ -4,7 +4,7 @@
  * from both entry points so importing it never re-runs either script.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse, resolve } from "@indigodb/core";
 import { planMigration, renderMigrationSql, renderPushSql } from "../dist/index.js";
@@ -28,6 +28,35 @@ export function loadFixture(dir) {
   const next = resolveFixture(dir, "next.indigo");
   if (!next) throw new Error(`${dir}: next.indigo is required`);
   return { prev, next };
+}
+
+/**
+ * Loads an ORDERED chain of `schema-NN.indigo` files from `dir` — used by
+ * the replay-from-zero suite (`replay.mjs`) instead of the `prev`/`next`
+ * pair `loadFixture` reads. Files are sorted lexically (`schema-01`,
+ * `schema-02`, ...), so the numeric suffix must stay zero-padded and
+ * contiguous starting at 1: a gap or an empty directory is a fixture
+ * authoring bug, not a runtime condition to tolerate silently, so both
+ * throw loudly instead of returning a partial chain.
+ */
+export function loadChainFixture(dir) {
+  const files = readdirSync(dir)
+    .filter((f) => /^schema-\d+\.indigo$/.test(f))
+    .sort();
+  if (files.length === 0) {
+    throw new Error(`${dir}: no schema-NN.indigo files found`);
+  }
+  files.forEach((file, index) => {
+    const expectedHop = index + 1;
+    const match = file.match(/^schema-(\d+)\.indigo$/);
+    const hop = Number.parseInt(match[1], 10);
+    if (hop !== expectedHop) {
+      throw new Error(
+        `${dir}: expected contiguous hops starting at 1, found gap at "${file}" (expected schema-${String(expectedHop).padStart(2, "0")}.indigo)`,
+      );
+    }
+  });
+  return files.map((file) => resolve(parse(readFileSync(join(dir, file), "utf8"))));
 }
 
 /** Computes the golden-comparable output for one fixture directory. */

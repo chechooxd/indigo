@@ -1,0 +1,870 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Widget",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetCascade",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "Cascade"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetRestrict",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "Restrict"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetSetNull",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "SetNull"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetSetDefault",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "SetDefault"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetNoAction",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onDelete",
+                    "value": {
+                      "kind": "reference",
+                      "value": "NoAction"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      },
+      {
+        "name": "GadgetQuoted",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "widgetId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "widget",
+            "type": {
+              "name": "Widget",
+              "scalar": false,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "relation",
+                "args": [
+                  {
+                    "name": "fields",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "widgetId"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "references",
+                    "value": {
+                      "kind": "array",
+                      "values": [
+                        {
+                          "kind": "reference",
+                          "value": "id"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "onUpdate",
+                    "value": {
+                      "kind": "string",
+                      "value": "Cascade"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Widget",
+        "dbName": "Widget",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "GadgetCascade",
+        "dbName": "GadgetCascade",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onDelete": "CASCADE"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "GadgetRestrict",
+        "dbName": "GadgetRestrict",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onDelete": "RESTRICT"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "GadgetSetNull",
+        "dbName": "GadgetSetNull",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onDelete": "SET NULL"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "GadgetSetDefault",
+        "dbName": "GadgetSetDefault",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onDelete": "SET DEFAULT"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "GadgetNoAction",
+        "dbName": "GadgetNoAction",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onDelete": "NO ACTION"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "GadgetQuoted",
+        "dbName": "GadgetQuoted",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "widgetId",
+            "dbName": "widgetId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [
+          {
+            "columns": [
+              "widgetId"
+            ],
+            "refTable": "Widget",
+            "refColumns": [
+              "id"
+            ],
+            "onUpdate": "CASCADE"
+          }
+        ],
+        "indexes": [],
+        "relations": [
+          {
+            "name": "widget",
+            "targetModel": "Widget",
+            "type": "OneToMany",
+            "list": false,
+            "optional": false,
+            "fkColumns": [
+              "widgetId"
+            ],
+            "refColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -18,5 +19,14 @@ export default defineConfig({
   },
   server: {
     port: 5555,
+  },
+  // Component tests share this config (not a separate vitest.config.ts) so
+  // the `@` alias and the WASM optimizeDeps.exclude rule stay single-sourced
+  // instead of duplicated and prone to drift between build and test.
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    globals: true,
+    css: false,
   },
 });

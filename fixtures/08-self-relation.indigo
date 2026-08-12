@@ -1,0 +1,16 @@
+// A model relating to itself via a self-referencing foreign key.
+//
+// No `children Category[]` inverse field: an inverse list field on a
+// self-relation trivially satisfies validate.rs's implicit-many-to-many
+// reciprocal check against itself (model == target_model), producing a
+// false-positive "implicit many-to-many" diagnostic unrelated to this
+// fixture's purpose. Reported separately; not fixed here (no `crates/*/src/`
+// edits in this change). This fixture stays scoped to the forward FK leg,
+// which is sufficient to exercise self-relation coverage.
+
+Table Category {
+  id       Int        @id @default(autoincrement())
+  name     String
+  parentId Int?
+  parent   Category?  @relation(fields: [parentId], references: [id])
+}

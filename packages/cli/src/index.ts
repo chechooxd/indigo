@@ -199,8 +199,16 @@ program
   .description("Launch the IndigoDB Studio (ER diagram, data browser, docs, queries).")
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
   .option("-p, --port <port>", "Port", "5555")
+  .option(
+    "--host <host>",
+    "Bind host. SECURITY: defaults to 127.0.0.1 (loopback only); passing anything " +
+      "else (e.g. 0.0.0.0) makes the server — including the SQL query console — " +
+      "reachable from other hosts on the network, and relaxes Host-header " +
+      "validation to a port-only match. Only do this on a trusted network.",
+    process.env.INDIGODB_STUDIO_HOST ?? "127.0.0.1",
+  )
   .option("--no-open", "Do not open the browser automatically")
-  .action(async (options: { schema: string; port: string; open: boolean }) => {
+  .action(async (options: { schema: string; port: string; host: string; open: boolean }) => {
     loadEnv();
     const { resolved, path: schemaPath } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
@@ -209,6 +217,7 @@ program
       source: readFileSync(schemaPath, "utf-8"),
       connectionString,
       port: Number(options.port),
+      host: options.host,
       open: options.open,
     });
   });

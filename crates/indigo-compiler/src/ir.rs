@@ -87,8 +87,18 @@ pub struct ResolvedRelation {
     pub relation_type: RelationType,
     pub list: bool,
     pub optional: bool,
+    /// On an inverse side (`inverse: Some(true)`) these are populated from the
+    /// paired counterpart's FK/reference columns, which live on the OTHER
+    /// table — not on this relation's own owning table.
     pub fk_columns: Vec<String>,
     pub ref_columns: Vec<String>,
+    /// The positional `@relation("Name", ...)` literal, when declared.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub relation_name: Option<String>,
+    /// `true` or absent — never `false` (parity with `realtime`). Set by the
+    /// cross-model pairing pass on the inverse side of a resolved pair.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub inverse: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

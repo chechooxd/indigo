@@ -5,15 +5,13 @@
 
 import React from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
-import { TableColumn, Table } from '../../../../types';
+import { TableColumn } from '../../../../types';
 
 interface CreateTableModalProps {
   isOpen: boolean;
   newTableName: string;
   newTableSchema: string;
   newTableColumns: TableColumn[];
-  /** Needed by the submit handler for duplicate-name validation */
-  allTables: Table[];
 
   onClose: () => void;
   onTableNameChange: (name: string) => void;
@@ -21,9 +19,8 @@ interface CreateTableModalProps {
   onAddColumn: () => void;
   onRemoveColumn: (index: number) => void;
   onUpdateColumn: (index: number, fields: Partial<TableColumn>) => void;
-  onSubmit: (e: React.FormEvent, tables: Table[], onSuccess: (newIndex: number) => void) => void;
-  /** Called after the table is successfully created so the parent can switch the active table */
-  onSuccess: (newIndex: number) => void;
+  /** Guarded no-op: table creation has no write backend yet (submit is disabled). */
+  onSubmit: (e: React.FormEvent) => void;
 }
 
 export function CreateTableModal({
@@ -31,7 +28,6 @@ export function CreateTableModal({
   newTableName,
   newTableSchema,
   newTableColumns,
-  allTables,
   onClose,
   onTableNameChange,
   onTableSchemaChange,
@@ -39,7 +35,6 @@ export function CreateTableModal({
   onRemoveColumn,
   onUpdateColumn,
   onSubmit,
-  onSuccess,
 }: CreateTableModalProps) {
   if (!isOpen) return null;
 
@@ -67,7 +62,7 @@ export function CreateTableModal({
 
         {/* Form */}
         <form
-          onSubmit={(e) => onSubmit(e, allTables, onSuccess)}
+          onSubmit={onSubmit}
           className="flex-1 flex flex-col overflow-hidden"
         >
           <div className="flex-1 p-6 space-y-6 overflow-y-auto custom-scrollbar">
@@ -223,7 +218,9 @@ export function CreateTableModal({
             </button>
             <button
               type="submit"
-              className="bg-white hover:bg-zinc-200 text-black px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-white/5 cursor-pointer"
+              disabled
+              title="Table creation isn't available yet — this build is read-only."
+              className="bg-white text-black px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Create Table
             </button>

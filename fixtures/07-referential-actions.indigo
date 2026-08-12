@@ -1,0 +1,41 @@
+// Exercises every REFERENTIAL_ACTIONS member, one in quoted form.
+
+Table Widget {
+  id Int @id
+}
+
+Table GadgetCascade {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+}
+
+Table GadgetRestrict {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: Restrict)
+}
+
+Table GadgetSetNull {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: SetNull)
+}
+
+Table GadgetSetDefault {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: SetDefault)
+}
+
+Table GadgetNoAction {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onDelete: NoAction)
+}
+
+Table GadgetQuoted {
+  id       Int    @id
+  widgetId Int
+  widget   Widget @relation(fields: [widgetId], references: [id], onUpdate: "Cascade")
+}

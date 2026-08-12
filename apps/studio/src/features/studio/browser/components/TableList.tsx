@@ -66,9 +66,9 @@ export function TableList({
             >
               <Table2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
               <span className="text-xs font-mono">{t.name}</span>
-              {t.recordCount > 0 && (
+              {t.records.length > 0 && (
                 <span className="ml-auto text-[9px] bg-zinc-950 border border-zinc-805/80 px-1.5 py-0.5 rounded-lg font-mono text-zinc-500">
-                  {t.recordCount > 1000 ? `${(t.recordCount / 1000).toFixed(1)}k` : t.recordCount}
+                  {t.records.length > 1000 ? `${(t.records.length / 1000).toFixed(1)}k` : t.records.length}
                 </span>
               )}
             </div>
