@@ -46,12 +46,12 @@ check("emits a __delegates(exec, realtime) factory function", () => {
 });
 
 check("__delegates builds the plain model's ModelDelegate", () => {
-  deepStrictEqual(output.includes("new ModelDelegate<User, UserCreateInput, UserUpdateInput>("), true);
+  deepStrictEqual(output.includes("new ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations>("), true);
 });
 
 check("__delegates builds the @@realtime model's RealtimeModelDelegate", () => {
   deepStrictEqual(
-    output.includes("new RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput>("),
+    output.includes("new RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations>("),
     true,
   );
 });
@@ -64,9 +64,9 @@ check("TransactionClient exposes one readonly delegate field per model", () => {
   const start = output.indexOf("export interface TransactionClient {");
   const end = output.indexOf("}", start);
   const block = output.slice(start, end + 1);
-  deepStrictEqual(block.includes("readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput>;"), true);
+  deepStrictEqual(block.includes("readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations>;"), true);
   deepStrictEqual(
-    block.includes("readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput>;"),
+    block.includes("readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations>;"),
     true,
   );
 });
@@ -86,9 +86,9 @@ check("TransactionClient never exposes $transaction", () => {
 });
 
 check("IndigoClient declares readonly delegate fields without initializers", () => {
-  deepStrictEqual(output.includes("readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput>;"), true);
+  deepStrictEqual(output.includes("readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations>;"), true);
   deepStrictEqual(
-    output.includes("readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput>;"),
+    output.includes("readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations>;"),
     true,
   );
 });

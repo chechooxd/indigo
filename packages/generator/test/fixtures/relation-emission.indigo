@@ -1,0 +1,32 @@
+Table User {
+  id      Int      @id @default(autoincrement())
+  posts   Post[]
+  profile Profile?
+}
+
+Table Post {
+  id       Int   @id @default(autoincrement())
+  authorId Int   @map("author_id")
+  author   User  @relation(fields: [authorId], references: [id])
+  editorId Int?
+  editor   User? @relation("PostEditor", fields: [editorId], references: [id])
+}
+
+Table Profile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+}
+
+Table Order {
+  id Int @id @default(autoincrement())
+  a  Int
+  b  Int
+}
+
+Table LineItem {
+  id     Int   @id @default(autoincrement())
+  orderA Int
+  orderB Int
+  order  Order @relation(fields: [orderA, orderB], references: [a, b])
+}
