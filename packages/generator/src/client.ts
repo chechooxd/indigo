@@ -7,7 +7,14 @@
  * the runtime `IndigoClientBase` from `@indigodb/client`.
  */
 
-import type { ResolvedSchema, ResolvedTable, ResolvedColumn, ResolvedEnum, ResolvedEnumMember } from "@indigodb/core";
+import type {
+  ResolvedSchema,
+  ResolvedTable,
+  ResolvedColumn,
+  ResolvedRelation,
+  ResolvedEnum,
+  ResolvedEnumMember,
+} from "@indigodb/core";
 import { ScalarType } from "@indigodb/ast";
 
 /** A member's schema name plus the PostgreSQL label it must round-trip as;
@@ -45,6 +52,111 @@ function optionalOnCreate(col: ResolvedColumn): boolean {
   return col.nullable || col.autoincrement || col.default !== undefined;
 }
 
+// ─── Relation metadata ───────────────────────────────────────────────────────
+//
+// `ResolvedRelation.fkColumns`/`refColumns` are PHYSICAL column names, and
+// swap sides between the FK holder and its paired inverse (see core's
+// ir.ts). Direction is collapsed HERE, once, at codegen time, into a
+// symmetric `{ from, to }` pair of FIELD names so the client runtime has a
+// single direction-agnostic rule: `target WHERE to IN (parent.from values)`
+// (design.md, Decision #1).
+
+/** One relation, translated to field names with the composite-key check applied. */
+interface RelationInfo {
+  name: string;
+  target: string;
+  list: boolean;
+  optional: boolean;
+  from: string;
+  to: string;
+  /** More than one fk/ref column — rejected at codegen time, see below. */
+  composite: boolean;
+}
+
+function columnNameByDb(table: ResolvedTable): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const c of table.columns) m.set(c.dbName, c.name);
+  return m;
+}
+
+function resolveRelationInfo(
+  table: ResolvedTable,
+  rel: ResolvedRelation,
+  tablesByName: Map<string, ResolvedTable>,
+): RelationInfo {
+  const targetTable = tablesByName.get(rel.targetModel);
+  const localMap = columnNameByDb(table);
+  const targetMap = targetTable ? columnNameByDb(targetTable) : new Map<string, string>();
+
+  // Holder side: fkColumns are physical columns on THIS table, refColumns on
+  // the target. Inverse side: fkColumns/refColumns are mirrored from the
+  // paired holder, so they live on the OTHER table — refColumns are physical
+  // columns on THIS table instead (see ir.ts's `inverse` doc comment).
+  const localPhysical = rel.inverse ? rel.refColumns : rel.fkColumns;
+  const targetPhysical = rel.inverse ? rel.fkColumns : rel.refColumns;
+
+  const from = localPhysical.map((c) => localMap.get(c) ?? c);
+  const to = targetPhysical.map((c) => targetMap.get(c) ?? c);
+
+  return {
+    name: rel.name,
+    target: rel.targetModel,
+    list: rel.list,
+    optional: rel.optional,
+    from: from[0] ?? "",
+    to: to[0] ?? "",
+    // Slice-1 only supports single-column relation keys (design.md,
+    // Decision #5) — `{a:{in:[]},b:{in:[]}}` is a cross-product and would
+    // need new SQL, exactly the query-builder growth the proposal rejects.
+    composite: from.length !== 1 || to.length !== 1,
+  };
+}
+
+/**
+ * Composite-key rejection (tasks.md 1.4 decision, resolved here):
+ *
+ * A relation whose stitch key spans more than one column is rejected in
+ * TWO layers, not one:
+ *
+ *  1. COMPILE-TIME OMISSION — it is left out of `<Model>Relations` (and
+ *     therefore out of `<Model>IncludeInput`, since that's keyed off
+ *     `keyof <Model>Relations`). A TypeScript caller cannot even write
+ *     `include: { relName: true }` for it — the strongest guarantee this
+ *     slice can offer.
+ *  2. RUNTIME MARKER — it is still recorded in `__meta.<Model>.relations`
+ *     as `{ target, composite: true }` (no `from`/`to`/`list`), so the
+ *     client runtime (PR 2, `loadRelations`) can detect an attempted
+ *     `include` on it — e.g. via `as any`, a plain-JS caller, or a stale
+ *     compiled client — and throw ONE precise, typed error naming the
+ *     relation and explaining single-column keys only, instead of a
+ *     generic/misleading "unknown relation" failure.
+ *
+ * This keeps codegen-time and runtime rejection consistent (tasks.md 5.3):
+ * both agree a composite-key relation is unusable via `include()`, they
+ * just enforce it at different layers for different caller shapes.
+ */
+function relationMetaEntry(r: RelationInfo): string {
+  if (r.composite) {
+    return `${JSON.stringify(r.name)}: { target: ${JSON.stringify(r.target)}, composite: true }`;
+  }
+  return (
+    `${JSON.stringify(r.name)}: { target: ${JSON.stringify(r.target)}, ` +
+    `from: ${JSON.stringify(r.from)}, to: ${JSON.stringify(r.to)}, list: ${r.list} }`
+  );
+}
+
+/** `export interface <Model>Relations { ... }` — composite-key relations omitted (see `relationMetaEntry`). */
+function generateRelationsInterface(table: ResolvedTable, relations: RelationInfo[]): string[] {
+  const lines = [`export interface ${table.name}Relations {`];
+  for (const r of relations) {
+    if (r.composite) continue;
+    const memberType = r.list ? `${r.target}[]` : r.optional ? `${r.target} | null` : r.target;
+    lines.push(`  ${r.name}: ${memberType};`);
+  }
+  lines.push("}", "");
+  return lines;
+}
+
 export function generateClient(schema: ResolvedSchema): string {
   const out: string[] = [];
   const hasRealtime = schema.tables.some((t) => t.realtime);
@@ -58,8 +170,15 @@ export function generateClient(schema: ResolvedSchema): string {
     "// ──────────────────────────────────────────────────────────────────────────────",
     "",
     `import { ${runtimeImports.join(", ")} } from "@indigodb/client";`,
-    'import type { IndigoClientOptions, Executor, RealtimeConnectionManager } from "@indigodb/client";',
+    'import type { IndigoClientOptions, Executor, RealtimeConnectionManager, IncludeInput } from "@indigodb/client";',
     "",
+  );
+
+  // Direction-agnostic relation metadata, computed once per table (see the
+  // "Relation metadata" section above `generateClient`).
+  const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
+  const relationsByTable = new Map<string, RelationInfo[]>(
+    schema.tables.map((t) => [t.name, t.relations.map((r) => resolveRelationInfo(t, r, tablesByName))]),
   );
 
   // ─── Enums ───────────────────────────────────────────────────────────────
@@ -79,6 +198,8 @@ export function generateClient(schema: ResolvedSchema): string {
     out.push(...generateRowInterface(table));
     out.push(...generateCreateInput(table));
     out.push(...generateUpdateInput(table));
+    out.push(...generateRelationsInterface(table, relationsByTable.get(table.name)!));
+    out.push(`export type ${table.name}IncludeInput = IncludeInput<${table.name}Relations>;`, "");
   }
 
   // ─── Model metadata ─────────────────────────────────────────────────────
@@ -87,7 +208,13 @@ export function generateClient(schema: ResolvedSchema): string {
     const fields = table.columns
       .map((c) => `${JSON.stringify(c.name)}: { db: ${JSON.stringify(c.dbName)}${c.isPk ? ", pk: true" : ""} }`)
       .join(", ");
-    out.push(`  ${JSON.stringify(table.name)}: { table: ${JSON.stringify(table.dbName)}, fields: { ${fields} } },`);
+    const relations = relationsByTable
+      .get(table.name)!
+      .map(relationMetaEntry)
+      .join(", ");
+    out.push(
+      `  ${JSON.stringify(table.name)}: { table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} } },`,
+    );
   }
   out.push("} as const;", "");
 
@@ -99,7 +226,7 @@ export function generateClient(schema: ResolvedSchema): string {
   out.push("export interface TransactionClient {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
     const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
@@ -109,14 +236,20 @@ export function generateClient(schema: ResolvedSchema): string {
   // ─── __delegates factory ────────────────────────────────────────────────
   // One construction site reused by the constructor (bound to `this.exec`)
   // and `$transaction` (bound to a session-scoped executor), so both paths
-  // wire delegates identically.
+  // wire delegates identically. `reg`/`siblings` is a lazy registry thunk
+  // (design.md Decision #3): every delegate is constructed with `siblings`
+  // before any entry is filled in, avoiding a construction-order cycle,
+  // then `include`'s follow-up query reaches a sibling model's own
+  // `findMany` through `siblings()[relation.target]` at call time.
   out.push(
     "function __delegates(exec: Executor, realtime: () => RealtimeConnectionManager): TransactionClient {",
-    "  return {",
+    "  const reg: Record<string, ModelDelegate<any, any, any, any>> = {};",
+    "  const siblings = () => reg;",
+    "  const client: TransactionClient = {",
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
     if (table.realtime) {
       out.push(
         `    ${d}: new RealtimeModelDelegate${generics}(`,
@@ -124,6 +257,7 @@ export function generateClient(schema: ResolvedSchema): string {
         `      exec,`,
         `      realtime,`,
         `      ${JSON.stringify(table.name)},`,
+        `      siblings,`,
         `    ),`,
       );
     } else {
@@ -131,6 +265,7 @@ export function generateClient(schema: ResolvedSchema): string {
         `    ${d}: new ModelDelegate${generics}(`,
         `      __meta[${JSON.stringify(table.name)}],`,
         `      exec,`,
+        `      siblings,`,
         `    ),`,
       );
     }
@@ -139,15 +274,18 @@ export function generateClient(schema: ResolvedSchema): string {
     "    $queryRaw: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> =>",
     "      (await exec(sql, params)) as T[],",
     "  };",
-    "}",
-    "",
   );
+  for (const table of schema.tables) {
+    const d = delegateName(table.name);
+    out.push(`  reg[${JSON.stringify(table.name)}] = client.${d};`);
+  }
+  out.push("  return client;", "}", "");
 
   // ─── Client class ───────────────────────────────────────────────────────
   out.push("export class IndigoClient extends IndigoClientBase {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
     const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
