@@ -29,6 +29,73 @@ export interface StudioOptions {
   port: number;
   /** Open the browser automatically once the server is listening. */
   open?: boolean;
+  /** Injectable database port. Defaults to `createPgDb(connectionString)`. Tests inject a PGlite-backed adapter. */
+  db?: StudioDb;
+}
+
+/**
+ * A minimal query result shape, satisfied by both `pg` and PGlite (test
+ * adapter). Only what the API routes actually consume.
+ */
+export interface StudioQueryResult {
+  rows: unknown[];
+  fields: { name: string }[];
+}
+
+/**
+ * Narrow database port `startStudio` depends on, instead of `pg.Pool`
+ * directly. Production uses `createPgDb`; tests inject a PGlite-backed
+ * adapter so the REAL HTTP server can be driven end to end without a real
+ * PostgreSQL connection.
+ */
+export interface StudioDb {
+  /** Runs `sql` on the shared (non-read-only) connection — used for metadata reads. */
+  query(sql: string): Promise<StudioQueryResult>;
+  /**
+   * Runs `fn` inside a dedicated, read-only transaction: `BEGIN; SET
+   * TRANSACTION READ ONLY; ...; ROLLBACK` (always rolled back, never
+   * committed — nothing this path runs is meant to persist). Postgres
+   * itself rejects any write, including one disguised inside a CTE, so
+   * this is the actual enforcement boundary — not a string heuristic.
+   */
+  readOnly<T>(fn: (query: StudioDb["query"]) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+
+/** Production `StudioDb`: `pg.Pool` for metadata reads, plus a small dedicated
+ * pool (`max: 4`) for read-only work. Kept separate from the shared pool so a
+ * hung read-only query never starves `/api/schema` or `/api/tables/:name`. */
+function createPgDb(connectionString: string): StudioDb {
+  const pool = new pg.Pool({ connectionString });
+  const readOnlyPool = new pg.Pool({ connectionString, max: 4 });
+
+  function toResult(result: { rows: unknown[]; fields: { name: string }[] }): StudioQueryResult {
+    return { rows: result.rows, fields: result.fields.map((f) => ({ name: f.name })) };
+  }
+
+  return {
+    async query(sql) {
+      return toResult(await pool.query(sql));
+    },
+    async readOnly(fn) {
+      const client = await readOnlyPool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SET TRANSACTION READ ONLY");
+        return await fn(async (sql) => toResult(await client.query(sql)));
+      } finally {
+        // Always ROLLBACK, never COMMIT: this path exists to run read-only
+        // work, and a failed ROLLBACK here must not surface as the route's
+        // error (the query's own result/error already reflects the outcome).
+        await client.query("ROLLBACK").catch(() => {});
+        client.release();
+      }
+    },
+    async close() {
+      await pool.end();
+      await readOnlyPool.end();
+    },
+  };
 }
 
 /** Opens a URL in the default browser (like `prisma studio`). Best-effort. */
@@ -66,11 +133,19 @@ function resolveStudioDist(): string | null {
   }
 }
 
-/** Rejects anything that is not a single read-only SELECT/WITH statement. */
+/**
+ * Cheap pre-filter, advisory only: rejects empty input and multi-statement
+ * bodies before opening a connection. This is NOT the enforcement boundary —
+ * `db.readOnly` running inside `SET TRANSACTION READ ONLY` is. A previous
+ * `^(select|with)` prefix test was removed here: it wrongly rejected
+ * legitimate read-only forms (`TABLE t`, `VALUES (1)`, `EXPLAIN SELECT`)
+ * while giving false assurance about queries it did let through.
+ */
 function isReadOnlyQuery(sql: string): boolean {
   const trimmed = sql.trim().replace(/;+\s*$/, "");
+  if (trimmed.length === 0) return false;
   if (trimmed.includes(";")) return false; // no multiple statements
-  return /^(select|with)\b/i.test(trimmed);
+  return true;
 }
 
 function sendJson(res: import("node:http").ServerResponse, status: number, body: unknown): void {
@@ -79,9 +154,11 @@ function sendJson(res: import("node:http").ServerResponse, status: number, body:
   res.end(payload);
 }
 
-export async function startStudio(options: StudioOptions): Promise<void> {
+export async function startStudio(
+  options: StudioOptions,
+): Promise<{ port: number; close(): Promise<void> }> {
   const { resolved, source, connectionString, port, open = true } = options;
-  const pool = new pg.Pool({ connectionString });
+  const db = options.db ?? createPgDb(connectionString);
   const distDir = resolveStudioDist();
 
   // Embedded realtime engine: with @@realtime tables the Studio gets live
@@ -125,7 +202,9 @@ export async function startStudio(options: StudioOptions): Promise<void> {
         const selectList = table.columns
           .map((c) => `"${c.dbName}" AS "${c.name}"`)
           .join(", ");
-        const result = await pool.query(`SELECT ${selectList} FROM "${table.dbName}" LIMIT 100`);
+        const result = await db.readOnly((query) =>
+          query(`SELECT ${selectList} FROM "${table.dbName}" LIMIT 100`),
+        );
         sendJson(res, 200, { columns: table.columns.map((c) => c.name), rows: result.rows });
         return;
       }
@@ -138,8 +217,8 @@ export async function startStudio(options: StudioOptions): Promise<void> {
           return;
         }
         try {
-          const result = await pool.query(sql);
-          sendJson(res, 200, { columns: result.fields.map((f: { name: string }) => f.name), rows: result.rows });
+          const result = await db.readOnly((query) => query(sql));
+          sendJson(res, 200, { columns: result.fields.map((f) => f.name), rows: result.rows });
         } catch (error) {
           sendJson(res, 400, { error: (error as Error).message });
         }
@@ -163,20 +242,36 @@ export async function startStudio(options: StudioOptions): Promise<void> {
     }
   });
 
-  await new Promise<void>((resolve) => server.listen(port, resolve));
+  const actualPort = await new Promise<number>((resolve) => {
+    server.listen(port, () => {
+      const addr = server.address();
+      resolve(typeof addr === "object" && addr !== null ? addr.port : port);
+    });
+  });
 
   console.log();
   console.log("  🎨 IndigoDB Studio");
   console.log("  ─────────────────────────────");
   console.log(`  Tables: ${resolved.tables.length}`);
-  console.log(`  URL:    http://localhost:${port}`);
+  console.log(`  URL:    http://localhost:${actualPort}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
   }
   console.log();
   console.log("  Press Ctrl+C to stop.");
 
-  if (open) openBrowser(`http://localhost:${port}`);
+  if (open) openBrowser(`http://localhost:${actualPort}`);
+
+  return {
+    port: actualPort,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+      if (engine) await engine.stop();
+      await db.close();
+    },
+  };
 }
 
 /** Serves a static file from the dist dir, falling back to index.html (SPA). */
