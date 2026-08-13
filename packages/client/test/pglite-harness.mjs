@@ -7,6 +7,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
+import { createPGliteAdapter } from "../dist/adapters/index.js";
 
 /**
  * Runs `fn` against a fresh, isolated PGlite instance, always closing it
@@ -34,17 +35,11 @@ export function createPgliteExecutor(db) {
 /**
  * Adapts a PGlite instance to `@indigodb/client`'s full `options.db` shape
  * (`{ exec, transaction }`), including the `transaction` hook used by
- * `$transaction`/`$withSession`. PGlite owns the session for the duration
- * of `db.transaction(...)` — the inner closure must never touch the outer
- * `db`, only the `tx` handle it receives, or PGlite rejects it
- * (electric-sql/pglite#76).
+ * `$transaction`/`$withSession`. Delegates to the public `createPGliteAdapter`
+ * (`client-driver-adapters` spec) — this harness no longer duplicates that
+ * adapter's logic, so the built-in test path and the public factory cannot
+ * drift.
  */
 export function createPgliteDb(db) {
-  return {
-    exec: async (sql, params) => (await db.query(sql, params)).rows,
-    transaction: (fn) =>
-      db.transaction(async (tx) =>
-        fn(async (sql, params) => (await tx.query(sql, params)).rows),
-      ),
-  };
+  return createPGliteAdapter(db);
 }

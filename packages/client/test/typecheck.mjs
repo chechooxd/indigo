@@ -15,16 +15,40 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const tsc = join(here, "..", "node_modules", ".bin", "tsc");
 const tsconfig = join(here, "tsconfig.typecheck.json");
+const erasableTsconfig = join(here, "tsconfig.erasable.json");
 
 console.log("GetPayload checkpoint: tsc --noEmit over typecheck-fixture.ts");
 
+let failures = 0;
+
 try {
   execFileSync(tsc, ["--noEmit", "-p", tsconfig], { stdio: "pipe" });
-  console.log("  ok   Payload<Row, Rel, A> narrowing holds (real conditional types, no fallback needed)");
-  console.log("\n@indigodb/client typecheck: all checks passed");
+  console.log(
+    "  ok   Payload<Row, Rel, A> narrowing holds (real conditional types, no fallback needed); " +
+      "const-object enum compiles in both value and type position (fixtures/typecheck-fixture.ts)",
+  );
 } catch (err) {
+  failures++;
   console.error("  FAIL Payload<Row, Rel, A> narrowing checkpoint");
   console.error(err.stdout ? err.stdout.toString() : String(err));
-  console.error("\n@indigodb/client typecheck: 1 failure(s)");
+}
+
+// client-query-type-safety spec "Enum-bearing model compiles under
+// erasableSyntaxOnly" — a separate, narrower tsconfig (see tsconfig.erasable.json)
+// so unrelated non-erasable syntax elsewhere in the package (e.g.
+// delegate.ts's constructor parameter properties) never masks this proof.
+try {
+  execFileSync(tsc, ["--noEmit", "-p", erasableTsconfig], { stdio: "pipe" });
+  console.log("  ok   generated const-object enum compiles under erasableSyntaxOnly");
+} catch (err) {
+  failures++;
+  console.error("  FAIL erasableSyntaxOnly enum checkpoint");
+  console.error(err.stdout ? err.stdout.toString() : String(err));
+}
+
+if (failures > 0) {
+  console.error(`\n@indigodb/client typecheck: ${failures} failure(s)`);
   process.exit(1);
+} else {
+  console.log("\n@indigodb/client typecheck: all checks passed");
 }

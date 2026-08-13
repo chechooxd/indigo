@@ -27,6 +27,43 @@ export interface WhereFilter<T> {
 /** A where value is either a direct equality or an operator object. */
 export type WhereValue<T> = T | WhereFilter<T>;
 
+/**
+ * JSON path filter for a `Json`/`jsonb` column (client-where-composition PR
+ * C, design.md "JSON Filter (PR C)"): `path: []` addresses the whole column.
+ * `equals`/`not` compile via jsonb equality (`#>` + `= $v::jsonb`);
+ * `gt`/`gte`/`lt`/`lte` compare the path's TEXT representation (`#>>`), cast
+ * to `::numeric` when the operand is a `number`; `jsonContains` is `@>`
+ * containment. Named `jsonContains`, not `contains` (design.md Decision
+ * "`@>` key name") — `contains` already means string `ILIKE %v%` in
+ * `WhereFilter`, and reusing it here would be a same-key/two-meaning
+ * footgun even inside this disjoint shape. Detected via `FieldMeta.json`,
+ * never inferred structurally from the presence of `path` alone (design.md
+ * Decision "JSON detection").
+ */
+export interface JsonFilter {
+  path: string[];
+  equals?: unknown;
+  not?: unknown;
+  gt?: unknown;
+  gte?: unknown;
+  lt?: unknown;
+  lte?: unknown;
+  jsonContains?: unknown;
+}
+
+/**
+ * Relation filter for a to-many relation (client-where-composition PR B,
+ * design.md "Relation SQL Shapes (PR B)"): `some`/`every`/`none` each accept
+ * a nested `<Target>WhereInput`, compiled to a correlated `EXISTS`/
+ * `NOT EXISTS` subquery against the related table. To-one relation filters
+ * are out of scope (proposal.md "Out of Scope").
+ */
+export interface RelationFilter<W> {
+  some?: W;
+  every?: W;
+  none?: W;
+}
+
 /** Structural where input derived from a row type. */
 export type WhereInput<Row> = {
   [K in keyof Row]?: WhereValue<Row[K]>;
@@ -50,19 +87,58 @@ export type IncludeInput<Rel> = {
   [K in keyof Rel]?: boolean | { select: Record<string, boolean> };
 };
 
-export interface FindManyArgs<Row, Rel = Record<string, never>> {
-  where?: WhereInput<Row>;
+/**
+ * `Where` is a 5th, defaulted generic (client-where-composition PR A,
+ * design.md "ModelDelegate gains a 5th generic `Where`"): the generated
+ * client passes its per-model `<Model>WhereInput` (recursive `AND`/`OR`/
+ * `NOT` composition, emitted by `@indigodb/generator`); hand-authored
+ * `ModelDelegate` usage (tests, ad-hoc callers) keeps the flat structural
+ * `WhereInput<Row>` default unchanged.
+ *
+ * `Cursor` is a 7th, defaulted generic on `ModelDelegate` (client-batch-
+ * aggregate PR B, design.md Decision #7 — originally specced as the "6th"
+ * generic before PR A claimed that slot for `CreateManyInput`, so this
+ * threads through as the 7th): defaults to `never`, so hand-authored
+ * `ModelDelegate` usage cannot pass a `cursor` at all unless it opts in. The
+ * generated client passes `<Model>CursorInput` (a single-field `{ <pk>:
+ * <type> }` shape) for single-column-PK models, and `never` for
+ * composite-PK (or PK-less) models — making `cursor` unwritable in TS for
+ * those, on top of the runtime pk-count guard in `findManyImpl` that catches
+ * `as any`/stale-client bypasses.
+ */
+export interface FindManyArgs<Row, Rel = Record<string, never>, Where = WhereInput<Row>, Cursor = never> {
+  where?: Where;
   orderBy?: OrderByInput<Row> | Array<OrderByInput<Row>>;
+  /**
+   * Keyset pagination anchor (client-cursor-pagination spec): identifies a
+   * single row by its primary-key value. Combined with `skip` (implicit `1`
+   * when a `cursor` is given and `skip` is omitted — Prisma's own default)
+   * to resume immediately AFTER that row, ordered by the primary key (or by
+   * `orderBy` if also supplied, with the primary key appended as a
+   * deterministic tiebreaker). See design.md Decisions #5/#6.
+   */
+  cursor?: Cursor;
   take?: number;
   skip?: number;
+  /**
+   * `SELECT DISTINCT ON (<fields>)` (client-aggregation spec "distinct is a
+   * findMany option, not a standalone method", design.md Decision #8): at
+   * most one row per distinct combination of the named fields. Postgres
+   * requires `DISTINCT ON`'s expressions to be the `ORDER BY`'s leftmost
+   * terms, so `findManyImpl` prepends `distinct`'s fields onto `orderBy`
+   * (skipped when the caller's own `orderBy` already leads with exactly that
+   * sequence) — see `delegate.ts`'s `buildOrderBy`.
+   */
+  distinct?: Array<Extract<keyof Row, string>>;
   select?: SelectInput<Row>;
   include?: IncludeInput<Rel>;
 }
 
-export interface FindFirstArgs<Row, Rel = Record<string, never>> extends FindManyArgs<Row, Rel> {}
+export interface FindFirstArgs<Row, Rel = Record<string, never>, Where = WhereInput<Row>>
+  extends FindManyArgs<Row, Rel, Where> {}
 
-export interface FindUniqueArgs<Row, Rel = Record<string, never>> {
-  where: WhereInput<Row>;
+export interface FindUniqueArgs<Row, Rel = Record<string, never>, Where = WhereInput<Row>> {
+  where: Where;
   select?: SelectInput<Row>;
   include?: IncludeInput<Rel>;
 }
@@ -106,17 +182,138 @@ export interface CreateArgs<CreateInput> {
   data: CreateInput;
 }
 
-export interface UpdateArgs<Row, UpdateInput> {
-  where: WhereInput<Row>;
+export interface UpdateArgs<Row, UpdateInput, Where = WhereInput<Row>> {
+  where: Where;
   data: UpdateInput;
 }
 
-export interface DeleteArgs<Row> {
-  where: WhereInput<Row>;
+export interface DeleteArgs<Row, Where = WhereInput<Row>> {
+  where: Where;
 }
 
-export interface CountArgs<Row> {
-  where?: WhereInput<Row>;
+export interface CountArgs<Row, Where = WhereInput<Row>> {
+  where?: Where;
+}
+
+// ─── Batch mutations (client-batch-mutations spec, PR A) ────────────────────
+//
+// `createMany`/`updateMany`/`deleteMany` — scalar-only, one round trip.
+// `CreateInput` is reused unchanged (design.md File Changes: no `__meta`
+// change for this slice); a compile-time-narrower scalar-only input is
+// deferred to the generator work this slice does not touch.
+
+/** `createMany(data: CreateInput[])` args (spec "createMany inserts all rows
+ * atomically in one statement"). */
+export interface CreateManyArgs<CreateInput> {
+  data: CreateInput[];
+}
+
+/** `updateMany({ where, data })` args — `where` is REQUIRED (spec "updateMany
+ * and deleteMany require a non-empty where"); an absent/empty `where` throws
+ * before any SQL is built, so it is typed as required here even though the
+ * runtime check is what actually enforces "non-empty". */
+export interface UpdateManyArgs<Row, UpdateInput, Where = WhereInput<Row>> {
+  where: Where;
+  data: UpdateInput;
+}
+
+/** `deleteMany({ where })` args — same required-`where` reasoning as
+ * `UpdateManyArgs`. */
+export interface DeleteManyArgs<Row, Where = WhereInput<Row>> {
+  where: Where;
+}
+
+/** Return shape shared by `createMany`/`updateMany`/`deleteMany` (design.md
+ * Interfaces/Contracts) — the number of rows actually affected, derived from
+ * `RETURNING 1` + `rows.length` since `Executor` returns rows only (design.md
+ * Decision "Batch counts"). */
+export interface BatchPayload {
+  count: number;
+}
+
+// ─── Aggregation (client-aggregation spec, PR C) ────────────────────────────
+//
+// `Numeric` is an 8th, defaulted generic on `ModelDelegate` (design.md
+// Decisions #9-11, following the `Where`/`CreateManyInput`/`Cursor` 5th/6th/
+// 7th-generic precedents — appended at the end, not renumbered): the
+// per-model UNION of field names tagged `FieldMeta.numeric: true` in
+// generated `__meta`. Defaults to `never` so hand-authored `ModelDelegate`
+// usage cannot pass any `_sum`/`_avg` field at all unless it opts in; the
+// generated client passes `<Model>NumericFields` (a string-literal union),
+// making a non-numeric field a compile-time excess-property error on top of
+// `delegate.ts`'s runtime `NON_NUMERIC_AGGREGATE` guard for `as any`/
+// stale-client bypasses.
+
+/** `_min`/`_max` accept ANY scalar field (client-aggregation spec — only
+ * `_sum`/`_avg` are numeric-restricted). */
+export type AggregateSelection<Row> = Partial<Record<Extract<keyof Row, string>, true>>;
+
+/** `aggregate({ where?, _count?, _sum?, _avg?, _min?, _max? })` args
+ * (client-aggregation spec "aggregate computes _count/_sum/_avg/_min/_max
+ * over a where"). */
+export interface AggregateArgs<Row, Where = WhereInput<Row>, Numeric extends string = never> {
+  where?: Where;
+  _count?: true;
+  _sum?: Partial<Record<Numeric, true>>;
+  _avg?: Partial<Record<Numeric, true>>;
+  _min?: AggregateSelection<Row>;
+  _max?: AggregateSelection<Row>;
+}
+
+/** `groupBy({ by, where?, _count?, _sum?, _avg?, _min?, _max? })` args
+ * (client-aggregation spec "groupBy groups by fields and returns aggregates
+ * per group"). `having` is deliberately NOT part of this interface — the
+ * spec's "having is not part of the accepted input shape" scenario requires
+ * a compile-time excess-property error, not a runtime-ignored key. */
+export interface GroupByArgs<Row, Where = WhereInput<Row>, Numeric extends string = never> {
+  by: Array<Extract<keyof Row, string>>;
+  where?: Where;
+  _count?: true;
+  _sum?: Partial<Record<Numeric, true>>;
+  _avg?: Partial<Record<Numeric, true>>;
+  _min?: AggregateSelection<Row>;
+  _max?: AggregateSelection<Row>;
+}
+
+/** `aggregate`'s result shape (design.md Interfaces/Contracts) — keyed
+ * identically to the requested aggregate options. `_sum`/`_avg` are cast
+ * `::float8` in SQL (design.md Decision #11): `number | null`, with a known,
+ * accepted precision limitation above 2^53 for `BigInt`/`Decimal` columns in
+ * this slice. `_min`/`_max` return the column's native (uncast) type. */
+export interface AggregateResult {
+  _count?: number;
+  _sum?: Record<string, number | null>;
+  _avg?: Record<string, number | null>;
+  _min?: Record<string, unknown>;
+  _max?: Record<string, unknown>;
+}
+
+/** `groupBy`'s per-group result row: the requested `by` fields plus the
+ * requested aggregates, flattened onto the same object (client-aggregation
+ * spec "one row per distinct combination of the by fields, each carrying the
+ * requested aggregates"). */
+export type GroupByResult<Row> = Partial<Row> & AggregateResult;
+
+// ─── Upsert (client-upsert spec, PR D) ──────────────────────────────────────
+//
+// `UniqueWhere` is a 9th, defaulted generic on `ModelDelegate` (design.md
+// Decisions #12/#13, appended after `Numeric`'s 8th slot — nothing
+// renumbered): the per-model UNION of exact unique-constraint-group shapes
+// sourced from generated `__meta.uniqueGroups`. Defaults to `never` so
+// hand-authored `ModelDelegate` usage cannot call `upsert` at all unless it
+// opts in; the generated client passes `<Model>UpsertWhereInput` — a union
+// of one object shape per declared unique group (PK first, then `@unique`
+// columns, then unique indexes) — making a `where` that doesn't exactly
+// match a declared group a compile-time error, on top of `upsertImpl`'s
+// runtime `NO_MATCHING_UNIQUE_CONSTRAINT` guard for `as any`/stale-client
+// bypasses.
+
+/** `upsert({ where, create, update })` args (client-upsert spec "upsert
+ * issues one ON CONFLICT statement targeting a declared unique group"). */
+export interface UpsertArgs<CreateInput, UpdateInput, UniqueWhere> {
+  where: UniqueWhere;
+  create: CreateInput;
+  update: UpdateInput;
 }
 
 // ─── Model metadata (emitted by the generator) ───────────────────────────────
@@ -126,6 +323,23 @@ export interface FieldMeta {
   db: string;
   /** Whether the field is (part of) the primary key. */
   pk?: boolean;
+  /**
+   * `true` for a `Json`/`jsonb` column (client-where-composition PR C,
+   * design.md Decision "JSON detection"). Drives `whereExpr`'s field-level
+   * dispatch: a `path` key in a `where` filter against a field WITHOUT this
+   * bit throws `IndigoWhereError` instead of silently emitting `#>` on a
+   * non-JSON column.
+   */
+  json?: true;
+  /**
+   * `true` for a numeric scalar column — `Int`/`Float`/`Decimal`/`BigInt`,
+   * never an enum (client-aggregation spec, design.md Decision #10). Drives
+   * `_sum`/`_avg`'s runtime guard in `delegate.ts`: requesting either on a
+   * field WITHOUT this bit throws `IndigoArgumentError` code
+   * `NON_NUMERIC_AGGREGATE` instead of emitting `SUM`/`AVG` against a
+   * non-numeric Postgres column.
+   */
+  numeric?: true;
 }
 
 /** A single-column relation, direction-collapsed at codegen time (design.md
@@ -174,6 +388,17 @@ export interface ModelMeta {
   fields: Record<string, FieldMeta>;
   /** Relation name → relation metadata (absent when the model has none). */
   relations?: Record<string, RelationMeta | CompositeRelationMeta>;
+  /**
+   * Declared unique-constraint groups (client-upsert spec, design.md
+   * Decision #12): PK first, then `@unique` columns, then unique `@@index`/
+   * `@@unique` groups, each entry an array of FIELD names (schema names,
+   * not physical column names). Drives `upsert`'s `ON CONFLICT` target
+   * resolution — a `where` whose key set doesn't exactly match one of these
+   * groups is rejected before any SQL is built. Readonly array typing is
+   * REQUIRED: `__meta` is emitted `as const`, and a mutable array type here
+   * would fail `typecheck.mjs`'s fixture.
+   */
+  uniqueGroups: readonly (readonly string[])[];
 }
 
 // ─── Nested-write relation input unions (client-nested-writes spec) ─────────
@@ -224,6 +449,30 @@ export interface ToManyRelationUpdateInput<ChildCreateInput, ChildWhere>
 /** Executes a parameterized SQL statement, returning result rows. */
 export type Executor = (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>;
 
+// ─── Query extension seam (client-query-extensions spec) ───────────────────
+
+/**
+ * Per-query metadata visible to a `QueryExtension` for a delegate-issued
+ * query (`db.<model>.<method>(...)`). `undefined` for `$queryRaw` and any
+ * other internal statement — see `context.ts`'s `currentQueryContext()`.
+ */
+export interface QueryContext {
+  /** The model's own schema name (`ModelMeta.name`), e.g. "User". */
+  model: string;
+  /** The delegate method name that issued the query, e.g. "findMany". */
+  operation: string;
+}
+
+/**
+ * User-supplied middleware composing around the `Executor` seam — the same
+ * shape `IndigoClientBase`'s private `wrapLog` already uses internally.
+ * An extension MAY call `next` with rewritten `sql`/`params`, MAY skip
+ * calling `next` entirely and return rows itself (short-circuit, e.g. a
+ * cache), and observes rejections from `next` (or throws its own) with no
+ * swallowing — errors propagate unwrapped (client-query-extensions spec).
+ */
+export type QueryExtension = (next: Executor) => Executor;
+
 /**
  * Runs `fn` on a session-scoped `Executor` bound to one exclusive
  * transaction, owned and lifecycle-managed by the host engine (e.g. PGlite's
@@ -231,3 +480,27 @@ export type Executor = (sql: string, params: unknown[]) => Promise<Record<string
  * non-`pg` executors can support `$transaction`.
  */
 export type TransactionHook = <T>(fn: (exec: Executor) => Promise<T>) => Promise<T>;
+
+// ─── Driver adapter seam (client-driver-adapters spec) ──────────────────────
+
+/**
+ * Shape of `IndigoClientOptions.db` (design.md Decision 1): a pre-built
+ * query executor, plus optional teardown and transaction hooks, produced by
+ * a named adapter factory (`createPgAdapter`, `createPGliteAdapter`) or
+ * hand-written by the caller. Defined here — a leaf module — so `client.ts`
+ * can reference it without an import cycle with `src/adapters/`.
+ */
+export interface DriverAdapter {
+  /** Runs a parameterized SQL statement and returns its result rows. */
+  exec: Executor;
+  /** Optional teardown hook invoked by `$disconnect()`. */
+  close?: () => Promise<void>;
+  /**
+   * Optional transaction hook. When present, `$transaction`/`$withSession`
+   * delegates session lifecycle (begin/commit/rollback) to the host engine
+   * instead of issuing raw `BEGIN`/`COMMIT`/`ROLLBACK` itself. Required for
+   * `$transaction` to work; absent it, `$transaction` rejects with an
+   * explicit error.
+   */
+  transaction?: TransactionHook;
+}

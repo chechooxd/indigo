@@ -31,7 +31,12 @@ const SCALAR_TO_TS: Record<string, string> = {
   [ScalarType.Boolean]: "boolean",
   [ScalarType.DateTime]: "Date",
   [ScalarType.Json]: "unknown",
-  [ScalarType.BigInt]: "bigint",
+  // pg's default int8 result parser returns a JS `string` at runtime — no
+  // `setTypeParser` override anywhere in the client (client-query-type-safety
+  // spec "BigInt scalar columns are typed as string"). Do NOT touch
+  // `packages/migrator/src/postgres.ts`'s `"bigint"` — that's the PostgreSQL
+  // DDL type name, unrelated to this TS-facing mapping.
+  [ScalarType.BigInt]: "string",
   [ScalarType.Bytes]: "Buffer",
   [ScalarType.Decimal]: "string",
 };
@@ -50,6 +55,57 @@ function baseType(col: ResolvedColumn): string {
 /** Whether a create input may omit this column. */
 function optionalOnCreate(col: ResolvedColumn): boolean {
   return col.nullable || col.autoincrement || col.default !== undefined;
+}
+
+/**
+ * Whether a column is a `Json`/`jsonb` column (client-where-composition PR
+ * C, design.md Decision "JSON detection"). Drives both the `__meta`
+ * `json: true` bit and `<Model>WhereInput`'s `JsonFilter` typing — never
+ * inferred structurally from the presence of a `path` key at runtime.
+ */
+function isJsonColumn(col: ResolvedColumn): boolean {
+  return !col.isEnum && col.type === ScalarType.Json;
+}
+
+/** Numeric scalar types (client-aggregation PR C, design.md Decision #10):
+ * `Int`/`Float`/`Decimal`/`BigInt`, never an enum — drives both `__meta`'s
+ * `numeric: true` bit and `<Model>NumericFields`'s member set. */
+const NUMERIC_SCALAR_TYPES: ReadonlySet<string> = new Set([
+  ScalarType.Int,
+  ScalarType.Float,
+  ScalarType.Decimal,
+  ScalarType.BigInt,
+]);
+
+function isNumericColumn(col: ResolvedColumn): boolean {
+  return !col.isEnum && NUMERIC_SCALAR_TYPES.has(col.type);
+}
+
+/**
+ * Declared unique-constraint groups (client-upsert PR D, design.md Decision
+ * #12): PK first, then `@unique` columns (each its own single-column
+ * group), then unique `@@index`/`@@unique` groups — every entry an array of
+ * FIELD names (schema names, not physical column names), mirroring the
+ * direction-agnostic translation `resolveRelationInfo` already does for
+ * relation columns. Drives both `__meta.uniqueGroups` and
+ * `<Model>UpsertWhereInput`'s member shapes.
+ */
+function uniqueGroups(table: ResolvedTable): string[][] {
+  const colsByDb = columnMapByDb(table);
+  const groups: string[][] = [];
+
+  if (table.primaryKey.length > 0) {
+    groups.push(table.primaryKey.map((dbName) => colsByDb.get(dbName)?.name ?? dbName));
+  }
+  for (const col of table.columns) {
+    if (col.unique) groups.push([col.name]);
+  }
+  for (const idx of table.indexes) {
+    if (!idx.unique) continue;
+    groups.push(idx.columns.map((dbName) => colsByDb.get(dbName)?.name ?? dbName));
+  }
+
+  return groups;
 }
 
 // ─── Relation metadata ───────────────────────────────────────────────────────
@@ -207,11 +263,23 @@ export function generateClient(schema: ResolvedSchema): string {
     "  RealtimeConnectionManager,",
     "  IncludeInput,",
     "  WhereInput,",
+    "  WhereValue,",
+    "  RelationFilter,",
     "  ToOneRelationInput,",
     "  ToOneRelationUpdateInput,",
     "  ToManyRelationInput,",
     "  ToManyRelationUpdateInput,",
+    "  JsonFilter,",
     "  RunAtomic,",
+    "  CreateManyArgs,",
+    "  UpdateManyArgs,",
+    "  DeleteManyArgs,",
+    "  BatchPayload,",
+    "  AggregateArgs,",
+    "  GroupByArgs,",
+    "  AggregateResult,",
+    "  GroupByResult,",
+    "  UpsertArgs,",
     '} from "@indigodb/client";',
     "",
   );
@@ -224,38 +292,70 @@ export function generateClient(schema: ResolvedSchema): string {
   );
 
   // ─── Enums ───────────────────────────────────────────────────────────────
-  // The TS enum key is the LOGICAL member name; its value is the PHYSICAL
-  // (`@map`) PostgreSQL label, so the runtime sends exactly what
+  // The const-object key is the LOGICAL member name; its value is the
+  // PHYSICAL (`@map`) PostgreSQL label, so the runtime sends exactly what
   // `@indigodb/migrator` created the type with (Prisma models it the same
   // way). Sending the logical name for a `@map`'d member fails at the
   // database with `invalid input value for enum`.
+  //
+  // Emitted as `export const X = {...} as const` + a paired
+  // `export type X = typeof X[keyof typeof X]` (client-query-type-safety
+  // spec "Generated enums emit as a const object with a paired type",
+  // design.md Decision "const-object enums, parenthesized typeof") instead
+  // of a nominal `export enum X {...}` — TS keeps value and type
+  // declaration spaces separate, so `const X` and `type X` coexist legally
+  // under the same identifier, and this form compiles under
+  // `isolatedModules`/`erasableSyntaxOnly` consumers, unlike a nominal enum.
+  // `baseType()` above returns the bare enum name for type position and
+  // needs no change; `__meta` never emits enum members in value position.
   for (const e of schema.enums) {
-    out.push(`export enum ${e.name} {`);
-    for (const m of enumMembers(e)) out.push(`  ${m.name} = "${m.dbName}",`);
-    out.push("}", "");
+    out.push(`export const ${e.name} = {`);
+    for (const m of enumMembers(e)) out.push(`  ${m.name}: "${m.dbName}",`);
+    out.push("} as const;");
+    out.push(`export type ${e.name} = (typeof ${e.name})[keyof typeof ${e.name}];`, "");
   }
 
   // ─── Row interfaces + input types ───────────────────────────────────────
   for (const table of schema.tables) {
     out.push(...generateRowInterface(table));
     out.push(...generateCreateInput(table, relationsByTable.get(table.name)!));
+    out.push(...generateCreateManyInput(table));
+    out.push(...generateCursorInput(table));
+    out.push(...generateNumericFields(table));
+    out.push(...generateUpsertWhereInput(table));
     out.push(...generateUpdateInput(table, relationsByTable.get(table.name)!));
+    out.push(...generateWhereInput(table, relationsByTable.get(table.name)!));
     out.push(...generateRelationsInterface(table, relationsByTable.get(table.name)!));
     out.push(`export type ${table.name}IncludeInput = IncludeInput<${table.name}Relations>;`, "");
+    out.push(
+      `export type ${table.name}CreateManyArgs = CreateManyArgs<${table.name}CreateManyInput>;`,
+      `export type ${table.name}UpdateManyArgs = UpdateManyArgs<${table.name}, ${table.name}UpdateInput, ${table.name}WhereInput>;`,
+      `export type ${table.name}DeleteManyArgs = DeleteManyArgs<${table.name}, ${table.name}WhereInput>;`,
+      `export type ${table.name}AggregateArgs = AggregateArgs<${table.name}, ${table.name}WhereInput, ${table.name}NumericFields>;`,
+      `export type ${table.name}GroupByArgs = GroupByArgs<${table.name}, ${table.name}WhereInput, ${table.name}NumericFields>;`,
+      `export type ${table.name}UpsertArgs = UpsertArgs<${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}UpsertWhereInput>;`,
+      "",
+    );
   }
 
   // ─── Model metadata ─────────────────────────────────────────────────────
   out.push("const __meta = {");
   for (const table of schema.tables) {
     const fields = table.columns
-      .map((c) => `${JSON.stringify(c.name)}: { db: ${JSON.stringify(c.dbName)}${c.isPk ? ", pk: true" : ""} }`)
+      .map(
+        (c) =>
+          `${JSON.stringify(c.name)}: { db: ${JSON.stringify(c.dbName)}${c.isPk ? ", pk: true" : ""}${isJsonColumn(c) ? ", json: true" : ""}${isNumericColumn(c) ? ", numeric: true" : ""} }`,
+      )
       .join(", ");
     const relations = relationsByTable
       .get(table.name)!
       .map(relationMetaEntry)
       .join(", ");
+    const uniqueGroupsLiteral = uniqueGroups(table)
+      .map((g) => `[${g.map((f) => JSON.stringify(f)).join(", ")}]`)
+      .join(", ");
     out.push(
-      `  ${JSON.stringify(table.name)}: { name: ${JSON.stringify(table.name)}, table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} } },`,
+      `  ${JSON.stringify(table.name)}: { name: ${JSON.stringify(table.name)}, table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} }, uniqueGroups: [${uniqueGroupsLiteral}] },`,
     );
   }
   out.push("} as const;", "");
@@ -268,7 +368,7 @@ export function generateClient(schema: ResolvedSchema): string {
   out.push("export interface TransactionClient {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
     const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
@@ -302,7 +402,7 @@ export function generateClient(schema: ResolvedSchema): string {
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
     if (table.realtime) {
       out.push(
         `    ${d}: new RealtimeModelDelegate${generics}(`,
@@ -340,7 +440,7 @@ export function generateClient(schema: ResolvedSchema): string {
   out.push("export class IndigoClient extends IndigoClientBase {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
     const delegateType = table.realtime ? `RealtimeModelDelegate${generics}` : `ModelDelegate${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
@@ -361,7 +461,7 @@ export function generateClient(schema: ResolvedSchema): string {
     "  }",
   );
   out.push("}", "");
-  out.push("export type { IndigoClientOptions };", "");
+  out.push("export type { IndigoClientOptions, BatchPayload, AggregateResult, GroupByResult };", "");
 
   return out.join("\n");
 }
@@ -428,6 +528,143 @@ function generateCreateInput(table: ResolvedTable, relations: RelationInfo[]): s
     if (r.composite) continue;
     lines.push(`  ${r.name}?: ${relationInputType(r, "create")};`);
   }
+  lines.push("}", "");
+  return lines;
+}
+
+/**
+ * `export interface <Model>CreateManyInput { ... }` (client-batch-aggregate
+ * PR A.7, spec "Nested relation writes are not accepted"): the exact scalar
+ * subset of `<Model>CreateInput` — same column set and optionality rules,
+ * autoincrement columns omitted — but with every relation key left out
+ * entirely, so `{ author: { create: {...} } }` inside a `createMany` data
+ * element fails TypeScript's excess-property check instead of compiling.
+ * Passed as `ModelDelegate`'s 6th (`CreateManyInput`) generic, distinct from
+ * the full `CreateInput` the single-row `create()` method still accepts.
+ */
+function generateCreateManyInput(table: ResolvedTable): string[] {
+  const lines = [`export interface ${table.name}CreateManyInput {`];
+  for (const col of table.columns) {
+    if (col.autoincrement) continue; // DB-generated identity
+    const t = baseType(col);
+    const type = col.nullable ? `${t} | null` : t;
+    const opt = optionalOnCreate(col) ? "?" : "";
+    lines.push(`  ${col.name}${opt}: ${type};`);
+  }
+  lines.push("}", "");
+  return lines;
+}
+
+/** The table's declared primary-key columns. Single-column-PK models get a
+ * `<Model>CursorInput` type (see below); every other shape (composite PK,
+ * no PK) does not. */
+function pkColumns(table: ResolvedTable) {
+  return table.columns.filter((c) => c.isPk);
+}
+
+/**
+ * `export interface <Model>CursorInput { <pk>: <type>; }` (client-batch-
+ * aggregate PR B, design.md Decision #7) — emitted ONLY for single-column-PK
+ * models. Passed as `ModelDelegate`'s 7th (`Cursor`) generic; composite-PK
+ * or PK-less models pass `never` directly instead (no interface emitted),
+ * making `cursor` unwritable in TS for those (spec "Composite primary keys
+ * reject cursor").
+ */
+function generateCursorInput(table: ResolvedTable): string[] {
+  const pks = pkColumns(table);
+  if (pks.length !== 1) return [];
+  const pk = pks[0]!;
+  const t = baseType(pk);
+  const type = pk.nullable ? `${t} | null` : t;
+  return [`export interface ${table.name}CursorInput {`, `  ${pk.name}: ${type};`, `}`, ""];
+}
+
+/** The type argument to pass as `ModelDelegate`'s 7th (`Cursor`) generic:
+ * `<Model>CursorInput` for a single-column-PK model, `never` (unwritable)
+ * otherwise. */
+function cursorGenericArg(table: ResolvedTable): string {
+  return pkColumns(table).length === 1 ? `${table.name}CursorInput` : "never";
+}
+
+/**
+ * `export type <Model>NumericFields = "a" | "b" | never;` (client-aggregation
+ * PR C, design.md Decision #10) — the string-literal union of every field
+ * tagged `numeric: true` in `__meta` (`isNumericColumn`). Passed as
+ * `ModelDelegate`'s 8th (`Numeric`) generic, restricting `_sum`/`_avg` to
+ * these fields only; `never` when the model has none, making `_sum`/`_avg`
+ * unwritable in TS for it.
+ */
+function generateNumericFields(table: ResolvedTable): string[] {
+  const fields = table.columns.filter(isNumericColumn).map((c) => c.name);
+  const union = fields.length > 0 ? fields.map((f) => JSON.stringify(f)).join(" | ") : "never";
+  return [`export type ${table.name}NumericFields = ${union};`, ""];
+}
+
+/**
+ * `export type <Model>UpsertWhereInput = { <group0 fields> } | { <group1
+ * fields> } | ...;` (client-upsert PR D, design.md Decisions #12-13) — one
+ * object shape per declared unique group (`uniqueGroups`: PK first, then
+ * `@unique` columns, then unique indexes), each member typed exactly like
+ * `<Model>CreateInput`'s own scalar members. Passed as `ModelDelegate`'s 9th
+ * (`UniqueWhere`) generic; a model with no declared unique group at all
+ * (e.g. no PK, no `@unique`, no unique index) gets `never`, making `upsert`
+ * unwritable in TS for it.
+ */
+function generateUpsertWhereInput(table: ResolvedTable): string[] {
+  const groups = uniqueGroups(table);
+  if (groups.length === 0) {
+    return [`export type ${table.name}UpsertWhereInput = never;`, ""];
+  }
+  const colsByName = new Map(table.columns.map((c) => [c.name, c]));
+  const shapes = groups.map((g) => {
+    const members = g.map((f) => {
+      const col = colsByName.get(f);
+      const t = col ? baseType(col) : "unknown";
+      const type = col?.nullable ? `${t} | null` : t;
+      return `${f}: ${type}`;
+    });
+    return `{ ${members.join("; ")} }`;
+  });
+  return [`export type ${table.name}UpsertWhereInput = ${shapes.join(" | ")};`, ""];
+}
+
+/**
+ * `export interface <Model>WhereInput { ... }` (client-where-composition PR
+ * A, design.md "Types stay per-model and generated, mirroring
+ * CreateInput/UpdateInput"). Every scalar column gets a `WhereValue<T>`
+ * predicate (direct equality or operator object, mirroring the flat
+ * `WhereInput<Row>` this replaces as the concrete `Where` type argument),
+ * plus self-referential `AND?`/`OR?`/`NOT?` — fully inlined per model rather
+ * than composed from a shared generic, matching `CreateInput`/`UpdateInput`'s
+ * own emission style.
+ *
+ * PR B adds one `RelationFilter<<Target>WhereInput>` key per TO-MANY
+ * relation (`r.list`), reusing `resolveRelationInfo`'s existing metadata —
+ * no new runtime metadata needed (design.md "Target metadata"). Composite-key
+ * and to-one relations get no key here (design.md "To-one relation filters
+ * stay out of scope"; composite relations already can't reach `include`
+ * either). PR C types a `Json`/`jsonb` column as `JsonFilter` instead of
+ * `WhereValue<T>` (design.md "JSON Filter (PR C)"), driven by the same
+ * `isJsonColumn` check that sets `__meta`'s `json: true` bit.
+ */
+function generateWhereInput(table: ResolvedTable, relations: RelationInfo[]): string[] {
+  const lines = [`export interface ${table.name}WhereInput {`];
+  for (const col of table.columns) {
+    if (isJsonColumn(col)) {
+      lines.push(`  ${col.name}?: JsonFilter;`);
+      continue;
+    }
+    const t = baseType(col);
+    const type = col.nullable ? `${t} | null` : t;
+    lines.push(`  ${col.name}?: WhereValue<${type}>;`);
+  }
+  for (const r of relations) {
+    if (r.composite || !r.list) continue;
+    lines.push(`  ${r.name}?: RelationFilter<${r.target}WhereInput>;`);
+  }
+  lines.push(`  AND?: ${table.name}WhereInput[];`);
+  lines.push(`  OR?: ${table.name}WhereInput[];`);
+  lines.push(`  NOT?: ${table.name}WhereInput;`);
   lines.push("}", "");
   return lines;
 }
