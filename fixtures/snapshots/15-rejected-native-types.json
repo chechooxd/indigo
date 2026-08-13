@@ -1,0 +1,141 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "weird",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "namespace": "db",
+                "name": "Foo",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "count",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "namespace": "db",
+                "name": "VarChar",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": 255
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "weird",
+            "dbName": "weird",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "nativeType": {
+              "name": "Foo",
+              "args": []
+            }
+          },
+          {
+            "name": "count",
+            "dbName": "count",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "nativeType": {
+              "name": "VarChar",
+              "args": [
+                "255"
+              ]
+            }
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Unknown field attribute \"@db.Foo\" on field \"User.weird\".",
+      "model": "User",
+      "field": "weird"
+    },
+    {
+      "message": "Native type \"VarChar\" on field \"User.count\" is not compatible with scalar type \"Int\".",
+      "model": "User",
+      "field": "count"
+    }
+  ]
+}

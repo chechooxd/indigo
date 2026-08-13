@@ -190,11 +190,90 @@ fn check_shape(
     }
 }
 
+/// Namespace admitted for native-type attributes (`@db.VarChar`, `@db.Uuid`,
+/// ...). PR A admitted any name under this namespace unconditionally; PR B
+/// checks the name/arity/scalar-compatibility matrix (`rules::NATIVE_TYPE_RULES`).
+const NATIVE_TYPE_NAMESPACE: &str = "db";
+
+/// Full `@db.X` diagnostics (PR B): unknown native type name, scalar
+/// compatibility, and arity — checked via `rules::native_type_rule` before
+/// the existing bare-name `attribute_rule` lookup, per design's Data Flow.
+fn validate_native_type(
+    errors: &mut Vec<ValidationError>,
+    model: &Model,
+    field: &Field,
+    attr: &Attribute,
+    location: &str,
+    enum_names: &HashSet<&str>,
+) {
+    let Some((valid_scalars, arity)) = rules::native_type_rule(&attr.name) else {
+        let full_name = format!("{NATIVE_TYPE_NAMESPACE}.{}", attr.name);
+        push_unknown(errors, AttributeTarget::Field, &full_name, location, Some(model.name.clone()), Some(field.name.clone()));
+        return;
+    };
+
+    let type_name = field.field_type.name.as_str();
+    let is_scalar_type = is_scalar(type_name);
+    let is_enum_type = enum_names.contains(type_name);
+    if !is_scalar_type || is_enum_type {
+        // Covers both an enum-typed field and a relation field (relation
+        // field types are never in `SCALAR_TYPES`).
+        errors.push(ValidationError {
+            message: format!(
+                "Native type \"{}\" on {location} is not compatible with type \"{type_name}\".",
+                attr.name
+            ),
+            model: Some(model.name.clone()),
+            field: Some(field.name.clone()),
+        });
+        return;
+    }
+
+    if !valid_scalars.contains(&type_name) {
+        errors.push(ValidationError {
+            message: format!(
+                "Native type \"{}\" on {location} is not compatible with scalar type \"{type_name}\".",
+                attr.name
+            ),
+            model: Some(model.name.clone()),
+            field: Some(field.name.clone()),
+        });
+        return;
+    }
+
+    let arg_count = attr.args.len();
+    let all_integral = attr.args.iter().all(|a| matches!(a.value, AttributeValue::Number { .. }));
+    let arity_ok = match arity {
+        rules::NativeTypeArity::Zero => arg_count == 0,
+        rules::NativeTypeArity::One => arg_count == 1 && all_integral,
+        rules::NativeTypeArity::ZeroOrTwo => (arg_count == 0 || arg_count == 2) && all_integral,
+    };
+    if !arity_ok {
+        errors.push(ValidationError {
+            message: format!(
+                "Native type \"{}\" on {location} has an invalid number of arguments.",
+                attr.name
+            ),
+            model: Some(model.name.clone()),
+            field: Some(field.name.clone()),
+        });
+    }
+}
+
 fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_names: &HashSet<&str>) {
     for model in &schema.models {
         for field in &model.fields {
             let location = loc("field", format!("{}.{}", model.name, field.name));
             for attr in &field.attributes {
+                if let Some(namespace) = &attr.namespace {
+                    if namespace != NATIVE_TYPE_NAMESPACE {
+                        let full_name = format!("{namespace}.{}", attr.name);
+                        push_unknown(errors, AttributeTarget::Field, &full_name, &location, Some(model.name.clone()), Some(field.name.clone()));
+                        continue;
+                    }
+                    validate_native_type(errors, model, field, attr, &location, enum_names);
+                    continue;
+                }
                 match rules::attribute_rule(AttributeTarget::Field, &attr.name) {
                     None => push_unknown(errors, AttributeTarget::Field, &attr.name, &location, Some(model.name.clone()), Some(field.name.clone())),
                     Some(ArgShape::Default) => validate_default(errors, model, field, attr, &location, enum_names),
@@ -476,5 +555,143 @@ fn validate_datasources(errors: &mut Vec<ValidationError>, schema: &Schema) {
                 field: None,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn validate_source(source: &str) -> Vec<ValidationError> {
+        let schema = crate::parse_source(source).expect("source should parse without errors");
+        validate(&schema)
+    }
+
+    #[test]
+    fn db_namespace_recognized_names_on_compatible_scalars_are_admitted() {
+        // PR B checks the full compatibility matrix — every recognized
+        // native type on a compatible scalar, zero-or-required-arity args,
+        // must pass with no diagnostic.
+        let errors = validate_source(
+            r#"
+Table User {
+  id     String  @id
+  bio    String  @db.VarChar(255)
+  code   String  @db.Uuid
+  price  Float   @db.Numeric(10, 2)
+  amount Decimal @db.Numeric
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn db_namespace_unknown_name_is_rejected() {
+        // Spec `attribute-validation`: "Unknown native type name".
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  bio String @db.Foo
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].model.as_deref(), Some("User"));
+        assert_eq!(errors[0].field.as_deref(), Some("bio"));
+        assert!(errors[0].message.contains("db.Foo"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn db_namespace_scalar_mismatch_is_rejected() {
+        // Spec `attribute-validation`: "Native type on an incompatible
+        // scalar" — `count Int @db.VarChar(255)`.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  count Int @db.VarChar(255)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].model.as_deref(), Some("User"));
+        assert_eq!(errors[0].field.as_deref(), Some("count"));
+        assert!(errors[0].message.contains("VarChar"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("Int"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn db_namespace_compatible_scalar_produces_no_diagnostic() {
+        // Spec `attribute-validation`: "Native type on a compatible scalar".
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id @db.Uuid
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn db_namespace_arity_mismatches_are_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  bio String @db.VarChar
+  addr String @db.VarChar(255, 10)
+  code String @db.Uuid(1)
+  price Float @db.Numeric(10)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 4, "{errors:?}");
+        assert!(errors.iter().all(|e| e.model.as_deref() == Some("User")));
+    }
+
+    #[test]
+    fn db_namespace_on_enum_or_relation_field_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id     String @id
+  status Status @db.Uuid
+  posts  Post[]
+}
+
+Table Post {
+  id     String @id
+  author User   @relation(fields: [authorId], references: [id])
+  authorId String
+  owner  User   @db.VarChar(255)
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+"#,
+        );
+        assert!(errors.iter().any(|e| e.field.as_deref() == Some("status")), "{errors:?}");
+        assert!(errors.iter().any(|e| e.field.as_deref() == Some("owner")), "{errors:?}");
+    }
+
+    #[test]
+    fn non_db_namespace_is_rejected_like_an_unknown_attribute() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  bio String @orm.hint
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].model.as_deref(), Some("User"));
+        assert_eq!(errors[0].field.as_deref(), Some("bio"));
+        assert!(errors[0].message.contains("orm.hint"));
     }
 }

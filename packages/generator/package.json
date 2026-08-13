@@ -15,7 +15,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/enum-mapping.mjs && node test/transaction-emission.mjs && node test/relation-emission.mjs && node test/nested-write-emission.mjs"
+    "test": "node test/enum-mapping.mjs && node test/transaction-emission.mjs && node test/relation-emission.mjs && node test/nested-write-emission.mjs && node test/where-emission.mjs"
   },
   "dependencies": {
     "@indigodb/ast": "workspace:*",

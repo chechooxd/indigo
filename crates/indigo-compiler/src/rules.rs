@@ -115,9 +115,57 @@ pub fn default_literal_matches(scalar_type: &str, value: &AttributeValue) -> boo
     )
 }
 
+/// Argument-shape contract for a native type's positional args — every
+/// argument in a `@db.X(...)` call is an integral number (`VarChar(255)`,
+/// `Numeric(10, 2)`); no string/bool/reference args exist in this domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeTypeArity {
+    /// No arguments (`@db.Uuid`).
+    Zero,
+    /// Exactly one integral argument (`@db.VarChar(255)`).
+    One,
+    /// Zero OR exactly two integral arguments (`@db.Numeric` / `@db.Numeric(10, 2)`).
+    ZeroOrTwo,
+}
+
+/// `(native type name, valid scalar types, arity)` — the PR B compatibility
+/// matrix (design.md's "Compatibility Matrix"), checked by `validate.rs`
+/// from `validate_attributes` before the existing bare-name `attribute_rule`
+/// lookup. Lives next to `ATTRIBUTE_RULES`, same shape/lookup pattern.
+pub const NATIVE_TYPE_RULES: &[(&str, &[&str], NativeTypeArity)] = &[
+    ("VarChar", &["String"], NativeTypeArity::One),
+    ("Uuid", &["String"], NativeTypeArity::Zero),
+    ("Numeric", &["Decimal", "Float"], NativeTypeArity::ZeroOrTwo),
+];
+
+/// `None` means `name` is not a recognized native type at all (e.g. `@db.Foo`).
+pub fn native_type_rule(name: &str) -> Option<(&'static [&'static str], NativeTypeArity)> {
+    NATIVE_TYPE_RULES.iter().find(|(n, ..)| *n == name).map(|(_, scalars, arity)| (*scalars, *arity))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_type_rule_matches_the_compatibility_matrix() {
+        let (scalars, arity) = native_type_rule("VarChar").expect("VarChar is a known native type");
+        assert_eq!(scalars, &["String"]);
+        assert_eq!(arity, NativeTypeArity::One);
+
+        let (scalars, arity) = native_type_rule("Uuid").expect("Uuid is a known native type");
+        assert_eq!(scalars, &["String"]);
+        assert_eq!(arity, NativeTypeArity::Zero);
+
+        let (scalars, arity) = native_type_rule("Numeric").expect("Numeric is a known native type");
+        assert_eq!(scalars, &["Decimal", "Float"]);
+        assert_eq!(arity, NativeTypeArity::ZeroOrTwo);
+    }
+
+    #[test]
+    fn native_type_rule_rejects_unknown_names() {
+        assert_eq!(native_type_rule("Foo"), None);
+    }
 
     #[test]
     fn maps_every_domain_value() {

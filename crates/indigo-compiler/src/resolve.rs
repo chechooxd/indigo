@@ -48,6 +48,41 @@ fn resolve_default(field: &Field) -> Option<ResolvedDefault> {
     }
 }
 
+/// Formats a `@db.X(...)` numeric argument for the IR. `AttributeValue::Number`
+/// is `f64`, but every native-type argument in the language (`VarChar(255)`,
+/// `Numeric(10, 2)`) is logically an integer — CRITICAL: bare `f64::to_string()`
+/// would silently corrupt the IR (`"255.0"` instead of `"255"`), producing
+/// invalid DDL downstream. Integral values format via `i64`; anything else
+/// (should not occur post-validation) falls back to the raw `f64` text
+/// (design decision #6).
+fn format_native_type_arg(value: f64) -> String {
+    if value.fract() == 0.0 && value.is_finite() {
+        (value as i64).to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Populates `ResolvedColumn.native_type` from a validated `@db.X` attribute.
+/// Only ever called with an attribute that already passed `validate.rs`'s
+/// compatibility matrix — an unrecognized name or incompatible scalar is a
+/// hard validation error upstream, never silently dropped here.
+fn resolve_native_type(field: &Field) -> Option<ResolvedNativeType> {
+    let attr = field
+        .attributes
+        .iter()
+        .find(|a| a.namespace.as_deref() == Some("db"))?;
+    let args = attr
+        .args
+        .iter()
+        .filter_map(|a| match &a.value {
+            AttributeValue::Number { value } => Some(format_native_type_arg(*value)),
+            _ => None,
+        })
+        .collect();
+    Some(ResolvedNativeType { name: attr.name.clone(), args })
+}
+
 fn resolve_column(field: &Field, is_enum: bool) -> ResolvedColumn {
     let default = resolve_default(field);
     let autoincrement = matches!(
@@ -65,6 +100,7 @@ fn resolve_column(field: &Field, is_enum: bool) -> ResolvedColumn {
         autoincrement,
         default,
         note: first_string(get_attr(&field.attributes, "note")),
+        native_type: resolve_native_type(field),
     }
 }
 
@@ -397,5 +433,85 @@ fn pair_relations(tables: &mut [ResolvedTable]) {
         rel.fk_columns = fk_columns;
         rel.ref_columns = ref_columns;
         rel.inverse = Some(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolve_source(source: &str) -> ResolvedSchema {
+        let schema = crate::parse_source(source).expect("source should parse without errors");
+        resolve(&schema)
+    }
+
+    fn native_type_of<'a>(resolved: &'a ResolvedSchema, table: &str, column: &str) -> Option<&'a ResolvedNativeType> {
+        resolved
+            .tables
+            .iter()
+            .find(|t| t.name == table)
+            .and_then(|t| t.columns.iter().find(|c| c.name == column))
+            .and_then(|c| c.native_type.as_ref())
+    }
+
+    #[test]
+    fn one_arg_native_type_stringifies_integrally_not_as_f64() {
+        // CRITICAL: `AttributeValue::Number(255.0)` must resolve to `"255"`,
+        // never `"255.0"` — bare `f64::to_string()` would silently corrupt
+        // the IR and produce invalid DDL downstream (design decision #6).
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id  String @id
+  bio String @db.VarChar(255)
+}
+"#,
+        );
+        let nt = native_type_of(&resolved, "User", "bio").expect("bio has a native type");
+        assert_eq!(nt.name, "VarChar");
+        assert_eq!(nt.args, vec!["255".to_string()]);
+        assert!(!nt.args.contains(&"255.0".to_string()));
+    }
+
+    #[test]
+    fn two_arg_native_type_resolves_both_args_integrally() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String  @id
+  price Decimal @db.Numeric(10, 2)
+}
+"#,
+        );
+        let nt = native_type_of(&resolved, "User", "price").expect("price has a native type");
+        assert_eq!(nt.name, "Numeric");
+        assert_eq!(nt.args, vec!["10".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn zero_arg_native_type_resolves_to_empty_args() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id @db.Uuid
+}
+"#,
+        );
+        let nt = native_type_of(&resolved, "User", "id").expect("id has a native type");
+        assert_eq!(nt.name, "Uuid");
+        assert!(nt.args.is_empty());
+    }
+
+    #[test]
+    fn column_without_native_type_leaves_it_absent() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id   String @id
+  name String
+}
+"#,
+        );
+        assert!(native_type_of(&resolved, "User", "name").is_none());
     }
 }

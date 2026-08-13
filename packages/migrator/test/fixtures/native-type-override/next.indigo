@@ -1,0 +1,9 @@
+// Native type DDL: adding `bio` with a `@db.VarChar(255)` override must
+// emit `VARCHAR(255)` in both the versioned migration's ADD COLUMN
+// statement and the idempotent `db push` CREATE TABLE statement (spec
+// `migration-ddl-ordering`).
+
+Table User {
+  id  Int     @id @default(autoincrement())
+  bio String? @db.VarChar(255)
+}

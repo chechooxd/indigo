@@ -165,4 +165,136 @@ distinguish a required to-one relation from an optional one.
 - GIVEN `Post.editor` is backed by a nullable FK column
 - WHEN the client is generated
 - THEN `Post.__meta.relations.editor.optional` MUST be `true`
+
+## ADDED Requirements (client-batch-aggregate)
+
+### Requirement: Generated arg interfaces for batch, cursor, aggregation, and upsert operations
+
+Generated client code MUST include one arg interface per new operation —
+`<Model>CreateManyArgs`, `<Model>UpdateManyArgs`, `<Model>DeleteManyArgs`,
+`<Model>AggregateArgs`, `<Model>GroupByArgs`, `<Model>UpsertArgs` — plus a
+`distinct` member on the existing `findMany` args interface. These interfaces
+MUST be additive: existing generated interfaces (`FindManyArgs`,
+`CreateInput`, `UpdateInput`, etc.) MUST remain unchanged in shape for
+callers not using the new options.
+
+#### Scenario: New arg interfaces are emitted per model
+
+- GIVEN a model `Order`
+- WHEN the client is generated
+- THEN `OrderCreateManyArgs`, `OrderUpdateManyArgs`, `OrderDeleteManyArgs`,
+  `OrderAggregateArgs`, `OrderGroupByArgs`, and `OrderUpsertArgs` MUST all be
+  emitted
+- AND existing `OrderFindManyArgs` MUST additionally accept `cursor`,
+  `distinct` members without breaking any existing caller's compile
+
+#### Scenario: Existing generated clients keep compiling unchanged
+
+- GIVEN a client generated before this capability existed, calling only
+  pre-existing methods (`findMany`, `create`, `update`, `delete`, `count`)
+- WHEN the client is regenerated with this capability's generator changes
+- THEN the pre-existing call sites MUST continue to type-check with no
+  changes required
+
+### Requirement: `__meta` gains a numeric-scalar tag and unique-constraint groups
+
+Generated `__meta.fields[<name>]` MUST include a `numeric: boolean` field
+tagging columns whose scalar type is numeric, sourced from `core`'s resolved
+IR type information. Generated `__meta` MUST also include a
+`uniqueGroups: string[][]` entry listing each declared unique constraint
+(single-column or composite) as an array of its field names. Both additions
+MUST be purely additive to the existing `__meta` shape.
+
+#### Scenario: Numeric field is tagged
+
+- GIVEN model `Order` with a numeric field `total` and a text field `status`
+- WHEN the client is generated
+- THEN `Order.__meta.fields.total.numeric` MUST be `true`
+- AND `Order.__meta.fields.status.numeric` MUST be `false`
+
+#### Scenario: Unique groups are listed, including composites
+
+- GIVEN model `Membership` with a composite unique constraint on
+  `(userId, orgId)` and model `User` with a single-column unique constraint
+  on `email`
+- WHEN the client is generated
+- THEN `Membership.__meta.uniqueGroups` MUST include `["userId", "orgId"]`
+- AND `User.__meta.uniqueGroups` MUST include `["email"]`
+
+#### Scenario: __meta additions do not break existing generated fixture compile
+
+- GIVEN a previously generated client fixture used by
+  `packages/client/test/typecheck.mjs`
+- WHEN the fixture is regenerated with the new `__meta` fields present
+- THEN the fixture MUST still type-check successfully
+
+## ADDED Requirements (client-type-honesty)
+
+### Requirement: BigInt scalar columns are typed as `string`
+
+Generated Row/Create/Update interfaces MUST map `ScalarType.BigInt` columns
+to TypeScript `string`, not `bigint`, because pg's default int8 result
+parser returns a JS `string` at runtime with no `setTypeParser` override
+present anywhere in the client. This is a type-only correction; no runtime
+behavior changes.
+
+#### Scenario: Generated Row type maps BigInt to string
+
+- GIVEN a model with a field of scalar type `BigInt`
+- WHEN the client is generated
+- THEN the field's type in the generated `Row` interface MUST be `string`
+- AND MUST NOT be `bigint`
+
+#### Scenario: No runtime change accompanies the type fix
+
+- GIVEN a query returns a BigInt-typed column value
+- WHEN the value is read at runtime
+- THEN the returned JS value MUST remain a `string`, unchanged from
+  pre-existing runtime behavior
+
+### Requirement: Generated enums emit as a const object with a paired type
+
+Generated enum types MUST be emitted as `export const X = {...} as const`
+paired with `export type X = typeof X[keyof typeof X]`, sharing the name
+`X` for both the value-position const and the type-position alias, instead
+of a nominal `export enum X {...}`. This MUST compile under
+`isolatedModules`/`erasableSyntaxOnly` consumers of the generated client.
+
+#### Scenario: Value-position usage compiles
+
+- GIVEN a generated enum `Status` with member `Active`
+- WHEN calling code writes `Status.Active`
+- THEN this MUST type-check and resolve to the correct literal value
+
+#### Scenario: Type-position usage compiles in function signatures
+
+- GIVEN a generated enum `Status`
+- WHEN a generated or hand-written function signature declares a parameter
+  or return type as `Status` (e.g. `function setStatus(s: Status): void`)
+- THEN this MUST type-check as a valid type reference
+- AND MUST NOT require importing a separately-named type (no `StatusValue`
+  or similar split name)
+
+#### Scenario: Enum-bearing model compiles under erasableSyntaxOnly
+
+- GIVEN a generated client containing at least one enum column
+- WHEN the generated file is type-checked with `erasableSyntaxOnly` enabled
+- THEN compilation MUST succeed with no errors attributable to the enum
+  emission
+
+### Requirement: `select` scalar narrowing remains correct (regression guard)
+
+`SelectedScalars` MUST continue to narrow via TypeScript's `Pick` utility
+type so that a `select`-scoped read method's inferred return type contains
+exactly the requested scalar fields. This requirement records verification
+of pre-existing, already-correct behavior — no code change accompanies it —
+and exists so the guarantee stays covered by an automated regression check
+going forward.
+
+#### Scenario: select narrowing remains verified by the typecheck fixture
+
+- GIVEN `packages/client/test/typecheck.mjs`'s `tsc --noEmit` fixture
+- WHEN the fixture is run against a `select`-scoped `findMany` call
+- THEN excluded scalar fields MUST remain compile errors to access
+- AND this MUST hold with no change to `SelectedScalars`'s implementation
 </content>

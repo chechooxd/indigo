@@ -15,6 +15,7 @@
  */
 
 import { IndigoClientBase } from "../dist/client.js";
+import { IndigoDatabaseError } from "../dist/errors.js";
 import { withRealPostgres } from "./pglite-socket-harness.mjs";
 
 let failures = 0;
@@ -226,6 +227,70 @@ await check(
           rows.length === 1 && rows[0].title === "AfterRollback",
           "expected only the post-rollback write to be committed",
         );
+      } finally {
+        await client.$disconnect();
+      }
+    });
+  },
+);
+
+// ─── Typed database errors over the real pg.Pool path (client-database-errors spec) ─
+
+const CREATE_USER_TABLE = `
+  CREATE TABLE "User" (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE
+  );
+`;
+
+await check(
+  "pg.Pool: a real unique-constraint violation as a direct statement failure surfaces as IndigoDatabaseError",
+  async () => {
+    await withRealPostgres(async ({ connectionString }) => {
+      const client = new IndigoClientBase({ connectionString });
+      try {
+        await client.$queryRaw(CREATE_USER_TABLE);
+        await client.$queryRaw('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+
+        let caught;
+        try {
+          await client.$queryRaw('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+        } catch (err) {
+          caught = err;
+        }
+        assert(caught instanceof IndigoDatabaseError, "expected an IndigoDatabaseError to be thrown");
+        assert(caught.code === "UNIQUE_VIOLATION", `expected code UNIQUE_VIOLATION, got: ${caught?.code}`);
+        assert(caught.sqlstate === "23505", `expected sqlstate 23505, got: ${caught?.sqlstate}`);
+        assert(caught.cause !== undefined, "expected the original pg DatabaseError to be preserved on .cause");
+      } finally {
+        await client.$disconnect();
+      }
+    });
+  },
+);
+
+await check(
+  "pg.Pool: a real unique-constraint violation inside $transaction/$withSession surfaces as IndigoDatabaseError, rolled back",
+  async () => {
+    await withRealPostgres(async ({ connectionString }) => {
+      const client = new IndigoClientBase({ connectionString });
+      try {
+        await client.$queryRaw(CREATE_USER_TABLE);
+        await client.$queryRaw('INSERT INTO "User" (email) VALUES ($1)', ["b@x.com"]);
+
+        let caught;
+        try {
+          await client.$transaction(async (tx) => {
+            await tx('INSERT INTO "User" (email) VALUES ($1)', ["b@x.com"]);
+          });
+        } catch (err) {
+          caught = err;
+        }
+        assert(caught instanceof IndigoDatabaseError, "expected an IndigoDatabaseError inside $transaction");
+        assert(caught.code === "UNIQUE_VIOLATION", `expected code UNIQUE_VIOLATION, got: ${caught?.code}`);
+
+        const rows = await client.$queryRaw('SELECT * FROM "User"');
+        assert(rows.length === 1, "expected the failed transaction to have rolled back with no extra row");
       } finally {
         await client.$disconnect();
       }

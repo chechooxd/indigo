@@ -1,0 +1,157 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "namespace": "db",
+                "name": "Uuid",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "bio",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "namespace": "db",
+                "name": "VarChar",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": 255
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "price",
+            "type": {
+              "name": "Float",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "namespace": "db",
+                "name": "Numeric",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": 10
+                    }
+                  },
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "number",
+                      "value": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false,
+            "nativeType": {
+              "name": "Uuid",
+              "args": []
+            }
+          },
+          {
+            "name": "bio",
+            "dbName": "bio",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "nativeType": {
+              "name": "VarChar",
+              "args": [
+                "255"
+              ]
+            }
+          },
+          {
+            "name": "price",
+            "dbName": "price",
+            "type": "Float",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false,
+            "nativeType": {
+              "name": "Numeric",
+              "args": [
+                "10",
+                "2"
+              ]
+            }
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

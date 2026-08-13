@@ -28,7 +28,26 @@ export class RealtimeModelDelegate<
   CreateInput,
   UpdateInput,
   Rel = Record<string, never>,
-> extends ModelDelegate<Row, CreateInput, UpdateInput, Rel> {
+  Where = WhereInput<Row>,
+  /** Forwarded to `ModelDelegate`'s own 6th generic — see its doc comment. */
+  CreateManyInput = CreateInput,
+  /** Forwarded to `ModelDelegate`'s own 7th generic (`Cursor`) — see its doc comment. */
+  Cursor = never,
+  /** Forwarded to `ModelDelegate`'s own 8th generic (`Numeric`) — see its doc comment. */
+  Numeric extends string = never,
+  /** Forwarded to `ModelDelegate`'s own 9th generic (`UniqueWhere`) — see its doc comment. */
+  UniqueWhere = never,
+> extends ModelDelegate<
+  Row,
+  CreateInput,
+  UpdateInput,
+  Rel,
+  Where,
+  CreateManyInput,
+  Cursor,
+  Numeric,
+  UniqueWhere
+> {
   constructor(
     meta: ModelMeta,
     exec: Executor,
@@ -62,7 +81,7 @@ export class RealtimeModelDelegate<
     // op handlers always see full data. A deleted row has nothing to refetch.
     if (event.partial && event.op !== "DELETE") {
       try {
-        const row = await this.findFirst({ where: event.pk as WhereInput<Row> });
+        const row = await this.findFirst({ where: event.pk as Where });
         if (row) event = { ...event, new: row, partial: undefined };
       } catch (err) {
         handlers.onError?.(err instanceof Error ? err : new Error(String(err)));

@@ -19,18 +19,42 @@ import type {
   ToManyRelationInput,
   ToManyRelationUpdateInput,
   WhereInput,
+  WhereValue,
+  RelationFilter,
+  JsonFilter,
+  GroupByArgs,
+  UpsertArgs,
 } from "../../src/types.js";
+
+// Mirrors the generator's const-object enum emission (client-query-type-
+// safety spec "Generated enums emit as a const object with a paired type",
+// design.md Decision "const-object enums, parenthesized typeof"): one
+// identifier `Status` used both in value position (`Status.Active`) and
+// type position (`status: Status`), proving both positions compile under
+// `erasableSyntaxOnly` — the same shape the generator now emits instead of
+// a nominal `export enum Status {...}`.
+export const Status = {
+  Active: "active",
+  Inactive: "inactive",
+} as const;
+export type Status = (typeof Status)[keyof typeof Status];
 
 interface User {
   id: number;
   name: string;
   email: string;
+  status: Status;
 }
 
 interface Post {
   id: number;
   title: string;
   authorId: number;
+  /** `Json`/`jsonb` column (client-where-composition PR C). */
+  metadata?: unknown;
+  /** Numeric field (client-aggregation PR C) — tagged `numeric: true` in
+   * the generated `__meta`, mirrored here as `PostNumericFields`. */
+  viewCount: number;
 }
 
 // Mirrors the generator's nested-write relation members (tasks.md A2.1,
@@ -74,8 +98,98 @@ interface PostRelations {
   author: User;
 }
 
-declare const userDelegate: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations>;
-declare const postDelegate: ModelDelegate<Post, PostCreateInput, PostUpdateInput, PostRelations>;
+// Mirrors the generator's `export interface <Model>WhereInput { ... }`
+// (client-where-composition PR A, design.md "Types stay per-model and
+// generated, mirroring CreateInput/UpdateInput"): scalar predicates via
+// `WhereValue<T>` plus self-referential `AND?`/`OR?`/`NOT?`. PR B adds
+// `RelationFilter<W>` keys for to-many relations only — `User.posts` is
+// to-many, so `UserWhereInput` gets a `posts` key; `Post.author` is to-one,
+// so `PostWhereInput` gets NO `author` key (design.md "To-one relation
+// filters stay out of scope").
+interface UserWhereInput {
+  id?: WhereValue<number>;
+  name?: WhereValue<string>;
+  email?: WhereValue<string>;
+  posts?: RelationFilter<PostWhereInput>;
+  AND?: UserWhereInput[];
+  OR?: UserWhereInput[];
+  NOT?: UserWhereInput;
+}
+
+// PR C adds a `JsonFilter` key for a `Json`/`jsonb` column (`metadata`),
+// typed via `FieldMeta.json?: true` metadata (design.md "JSON detection"),
+// never inferred structurally from the `path` key alone. Non-JSON fields
+// keep their `WhereValue<T>` typing.
+interface PostWhereInput {
+  id?: WhereValue<number>;
+  title?: WhereValue<string>;
+  authorId?: WhereValue<number>;
+  metadata?: JsonFilter;
+  AND?: PostWhereInput[];
+  OR?: PostWhereInput[];
+  NOT?: PostWhereInput;
+}
+
+declare const userDelegate: ModelDelegate<
+  User,
+  UserCreateInput,
+  UserUpdateInput,
+  UserRelations,
+  UserWhereInput
+>;
+declare const postDelegate: ModelDelegate<
+  Post,
+  PostCreateInput,
+  PostUpdateInput,
+  PostRelations,
+  PostWhereInput
+>;
+
+// ── numeric-gated aggregate narrowing (client-aggregation PR C) — mirrors
+//    the generator's `<Model>NumericFields` union: every field tagged
+//    `numeric: true` (Int/Float/Decimal/BigInt, never an enum). `title` is
+//    NOT numeric, so `_sum`/`_avg` on it must fail to type-check. ──
+type PostNumericFields = "id" | "authorId" | "viewCount";
+
+declare const postAggDelegate: ModelDelegate<
+  Post,
+  PostCreateInput,
+  PostUpdateInput,
+  PostRelations,
+  PostWhereInput,
+  PostCreateInput,
+  never,
+  PostNumericFields
+>;
+
+// ── uniqueGroups-gated upsert `where` narrowing (client-upsert PR D) —
+//    mirrors the generator's `<Model>UpsertWhereInput`: a union of one
+//    object shape per declared unique group. `User` has PK `id` and a
+//    unique `email` column, so its upsert `where` accepts either shape, but
+//    NOT `name` (not declared unique) and NOT a partial/extra-field shape. ──
+type UserUpsertWhereInput = { id: number } | { email: string };
+
+declare const userUpsertDelegate: ModelDelegate<
+  User,
+  UserCreateInput,
+  UserUpdateInput,
+  UserRelations,
+  UserWhereInput,
+  UserCreateInput,
+  never,
+  never,
+  UserUpsertWhereInput
+>;
+
+// ── const-object enum: value position + type position (client-query-type-
+//    safety spec "Value-position usage compiles" / "Type-position usage
+//    compiles in function signatures") ──
+function setStatus(s: Status): void {
+  void s;
+}
+setStatus(Status.Active);
+const enumValuePosition: Status = Status.Inactive;
+void enumValuePosition;
 
 async function scenarios() {
   // ── No select / no include → identical shape to Row (backward compat) ──
@@ -194,6 +308,129 @@ async function scenarios() {
   };
   void updateWithNestedPostsSetEmpty;
   void updateWithNestedPostsDisconnect;
+
+  // ── WhereInput composition (client-where-composition PR A) — recursive
+  //    AND/OR/NOT self-references typed on the per-model WhereInput. ──
+  const orQuery = await userDelegate.findMany({
+    where: { OR: [{ name: "Ada" }, { email: "ada@example.com" }] },
+  });
+  void orQuery;
+
+  const nestedQuery = await userDelegate.findMany({
+    where: {
+      AND: [{ name: "Ada" }, { OR: [{ email: "a@x.com" }, { NOT: { id: 1 } }] }],
+    },
+  });
+  void nestedQuery;
+
+  // `NOT` accepts a single where object only, never an array.
+  // @ts-expect-error `NOT` rejects an array — only a single `PostWhereInput` is accepted
+  const notArrayRejected: PostWhereInput = { NOT: [{ id: 1 }] };
+  void notArrayRejected;
+
+  // ── Relation filters (client-where-composition PR B) — `some`/`every`/
+  //    `none` on a to-many relation, typed against the TARGET's own
+  //    WhereInput. To-one relations expose no such keys. ──
+  const relSome: UserWhereInput = { posts: { some: { title: "Hello" } } };
+  const relEvery: UserWhereInput = { posts: { every: { title: "Hello" } } };
+  const relNone: UserWhereInput = { posts: { none: { title: "Hello" } } };
+  void relSome;
+  void relEvery;
+  void relNone;
+
+  // @ts-expect-error `author` is a to-one relation — no `some`/`every`/`none` keys
+  const toOneRelationFilterRejected: PostWhereInput = { author: { some: {} } };
+  void toOneRelationFilterRejected;
+
+  // ── JSON path filters (client-where-composition PR C) — a `Json`/`jsonb`
+  //    field is typed `JsonFilter`; a non-JSON field is not. ──
+  const jsonEquals: PostWhereInput = { metadata: { path: ["status"], equals: "active" } };
+  const jsonGt: PostWhereInput = { metadata: { path: ["score"], gt: 10 } };
+  const jsonContains: PostWhereInput = { metadata: { path: [], jsonContains: { a: 1 } } };
+  void jsonEquals;
+  void jsonGt;
+  void jsonContains;
+
+  // @ts-expect-error `title` is not a Json column — the `JsonFilter` shape
+  // (`path`) isn't assignable to `WhereValue<string>`
+  const jsonFilterOnNonJsonField: PostWhereInput = { title: { path: ["x"], equals: "y" } };
+  void jsonFilterOnNonJsonField;
+
+  // ── aggregate/groupBy numeric narrowing (client-aggregation PR C) —
+  //    `_sum`/`_avg` accept only `PostNumericFields` keys; `_min`/`_max`
+  //    accept any scalar field. ──
+  const agg = await postAggDelegate.aggregate({
+    _count: true,
+    _sum: { viewCount: true },
+    _avg: { authorId: true },
+    _min: { title: true },
+    _max: { id: true },
+  });
+  agg._count;
+  agg._sum?.viewCount;
+  void agg;
+
+  // @ts-expect-error `title` is not numeric-tagged — not a valid `_sum` key
+  const aggNonNumericSum = await postAggDelegate.aggregate({ _sum: { title: true } });
+  void aggNonNumericSum;
+
+  // @ts-expect-error `title` is not numeric-tagged — not a valid `_avg` key
+  const aggNonNumericAvg = await postAggDelegate.aggregate({ _avg: { title: true } });
+  void aggNonNumericAvg;
+
+  const groups = await postAggDelegate.groupBy({
+    by: ["authorId"],
+    _count: true,
+    _sum: { viewCount: true },
+  });
+  groups[0]?.authorId;
+  groups[0]?._count;
+  void groups;
+
+  // Excess-property checking against a generic-inferred call argument is
+  // suppressed by TypeScript itself (a known limitation, not specific to
+  // this codebase) — so `having`'s rejection is proven against the
+  // GENERATED arg type directly, exactly as `<Model>GroupByArgs` shapes it.
+  const groupByArgsWithHaving: GroupByArgs<Post, PostWhereInput, PostNumericFields> = {
+    by: ["authorId"],
+    // @ts-expect-error `having` is not part of the generated groupBy arg shape
+    having: { authorId: { gt: 1 } },
+  };
+  void groupByArgsWithHaving;
+
+  // ── distinct is a findMany option (client-aggregation PR C) ──
+  const distinctPosts = await postDelegate.findMany({ distinct: ["authorId"] });
+  void distinctPosts;
+
+  // ── upsert (client-upsert PR D) — `where` only accepts a declared
+  //    unique-constraint group shape (`UserUpsertWhereInput`). ──
+  const upsertByEmail = await userUpsertDelegate.upsert({
+    where: { email: "a@x.com" },
+    create: { name: "Ada", email: "a@x.com" },
+    update: { name: "Ada 2" },
+  });
+  upsertByEmail.id;
+  void upsertByEmail;
+
+  const upsertById = await userUpsertDelegate.upsert({
+    where: { id: 1 },
+    create: { name: "Ada", email: "a@x.com" },
+    update: { name: "Ada 2" },
+  });
+  void upsertById;
+
+  // Excess-property checking against a generic-inferred call argument is
+  // suppressed by TypeScript itself (the same known limitation the
+  // `groupBy`/`having` proof above documents) — so the rejection is proven
+  // against the GENERATED arg type directly, exactly as `<Model>UpsertArgs`
+  // shapes it.
+  const upsertArgsWithNonUniqueWhere: UpsertArgs<UserCreateInput, UserUpdateInput, UserUpsertWhereInput> = {
+    // @ts-expect-error `name` is not a declared unique-constraint group on User
+    where: { name: "A" },
+    create: { name: "A", email: "a@x.com" },
+    update: { name: "A" },
+  };
+  void upsertArgsWithNonUniqueWhere;
 }
 
 void scenarios;

@@ -44,6 +44,15 @@ export interface ResolvedColumn {
   default?: ResolvedDefault;
   /** Documentation note (`@note("...")`). */
   note?: string;
+  /**
+   * Physical type override from a `@db.X(...)` attribute (e.g.
+   * `{ name: "VarChar", args: ["255"] }`), populated only when the field
+   * carries a native-type attribute that passed validation. Absent (not
+   * `null`) when no override applies — the migrator falls back to
+   * `mapScalarToPg`. SQL-dialect rendering lives in `@indigodb/migrator`,
+   * not here.
+   */
+  nativeType?: { name: string; args: string[] };
 }
 
 // ─── Constraints ─────────────────────────────────────────────────────────────

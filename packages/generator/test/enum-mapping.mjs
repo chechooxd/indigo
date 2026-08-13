@@ -38,20 +38,30 @@ function check(name, fn) {
 console.log("generator regression: enum mapping");
 
 check("mapped member: logical name as key, @map dbName as value", () => {
-  deepStrictEqual(output.includes('ACTIVE = "active",'), true);
+  deepStrictEqual(output.includes('ACTIVE: "active",'), true);
 });
 
 check("unmapped member: logical name as both key and value", () => {
-  deepStrictEqual(output.includes('INACTIVE = "INACTIVE",'), true);
+  deepStrictEqual(output.includes('INACTIVE: "INACTIVE",'), true);
 });
 
-check("enum block is well-formed", () => {
-  const start = output.indexOf("export enum Status {");
-  const end = output.indexOf("}", start);
+check("enum block is well-formed: const object plus paired type, not a nominal enum", () => {
+  const start = output.indexOf("export const Status = {");
+  const end = output.indexOf("as const;", start) + "as const;".length;
   deepStrictEqual(
-    output.slice(start, end + 1),
-    'export enum Status {\n  ACTIVE = "active",\n  INACTIVE = "INACTIVE",\n}',
+    output.slice(start, end),
+    'export const Status = {\n  ACTIVE: "active",\n  INACTIVE: "INACTIVE",\n} as const;',
   );
+  deepStrictEqual(
+    output.includes("export type Status = (typeof Status)[keyof typeof Status];"),
+    true,
+  );
+  deepStrictEqual(output.includes("export enum Status"), false);
+});
+
+check("BigInt scalar column emits `string`, not `bigint`, in the generated Row interface", () => {
+  deepStrictEqual(output.includes("views: string;"), true);
+  deepStrictEqual(output.includes("views: bigint;"), false);
 });
 
 if (failures > 0) {
