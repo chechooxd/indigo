@@ -1,0 +1,7 @@
+// Native type DDL: prior schema has no override — the added column in
+// next.indigo carries a `@db.VarChar(255)` override, exercising both the
+// ADD COLUMN path (migrationSql) and the CREATE TABLE path (pushSql).
+
+Table User {
+  id Int @id @default(autoincrement())
+}

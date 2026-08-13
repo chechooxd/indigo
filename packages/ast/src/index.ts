@@ -56,6 +56,11 @@ export interface AttributeArg {
  * Examples: @id, @unique, @default(autoincrement()), @@index([email])
  */
 export interface Attribute {
+  /**
+   * Namespace prefix for `@ns.Name` syntax (e.g. `"db"` in `@db.VarChar`).
+   * Absent for ordinary attributes (`@unique`, `@map`).
+   */
+  namespace?: string;
   /** Attribute name without the @ prefix (e.g., "id", "unique", "default"). */
   name: string;
   /** Arguments passed to the attribute. Empty array if none. */

@@ -45,6 +45,12 @@ pub struct AttributeArg {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Attribute {
+    /// Namespace prefix for `@ns.Name` syntax (e.g. `"db"` in `@db.VarChar`).
+    /// `None` for ordinary attributes (`@unique`, `@map`). `default` is
+    /// required because `resolve.rs`/`validate.rs` deserialize AST JSON
+    /// back into Rust and must tolerate a payload with no `namespace` key.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub namespace: Option<String>,
     pub name: String,
     pub args: Vec<AttributeArg>,
 }
@@ -120,11 +126,11 @@ pub struct Schema {
 // ─── Attribute helpers (port of core/attributes.ts, internal) ────────────────
 
 pub fn get_attr<'a>(attributes: &'a [Attribute], name: &str) -> Option<&'a Attribute> {
-    attributes.iter().find(|a| a.name == name)
+    attributes.iter().find(|a| a.namespace.is_none() && a.name == name)
 }
 
 pub fn has_attr(attributes: &[Attribute], name: &str) -> bool {
-    attributes.iter().any(|a| a.name == name)
+    attributes.iter().any(|a| a.namespace.is_none() && a.name == name)
 }
 
 pub fn positional_arg(attr: Option<&Attribute>, index: usize) -> Option<&AttributeArg> {
@@ -158,4 +164,44 @@ pub fn as_reference_list(value: Option<&AttributeValue>) -> Vec<String> {
 /// First positional string of an attribute (`@note("hi")` → `"hi"`).
 pub fn first_string(attr: Option<&Attribute>) -> Option<String> {
     as_string(positional_arg(attr, 0).map(|a| &a.value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attribute_without_namespace_serializes_with_no_namespace_key() {
+        let attr = Attribute { namespace: None, name: "unique".into(), args: vec![] };
+        let json = serde_json::to_string(&attr).unwrap();
+        assert!(!json.contains("namespace"));
+    }
+
+    #[test]
+    fn attribute_with_namespace_serializes_namespace_as_first_key() {
+        let attr = Attribute { namespace: Some("db".into()), name: "VarChar".into(), args: vec![] };
+        let json = serde_json::to_string(&attr).unwrap();
+        assert!(json.starts_with(r#"{"namespace":"db","name":"VarChar""#));
+    }
+
+    #[test]
+    fn attribute_deserializes_when_namespace_key_is_absent() {
+        let attr: Attribute = serde_json::from_str(r#"{"name":"unique","args":[]}"#).unwrap();
+        assert_eq!(attr.namespace, None);
+        assert_eq!(attr.name, "unique");
+    }
+
+    #[test]
+    fn has_attr_ignores_namespaced_attribute_of_the_same_name() {
+        let attrs = vec![Attribute { namespace: Some("db".into()), name: "map".into(), args: vec![] }];
+        assert!(!has_attr(&attrs, "map"));
+        assert!(get_attr(&attrs, "map").is_none());
+    }
+
+    #[test]
+    fn has_attr_finds_bare_attribute_of_the_same_name() {
+        let attrs = vec![Attribute { namespace: None, name: "map".into(), args: vec![] }];
+        assert!(has_attr(&attrs, "map"));
+        assert!(get_attr(&attrs, "map").is_some());
+    }
 }

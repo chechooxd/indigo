@@ -15,8 +15,9 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/migrator.mjs && node test/appliability.mjs && node test/replay.mjs",
+    "test": "node test/migrator.mjs && node test/native-type.mjs && node test/appliability.mjs && node test/replay.mjs",
     "test:goldens": "node test/migrator.mjs",
+    "test:native-type": "node test/native-type.mjs",
     "test:appliability": "node test/appliability.mjs",
     "test:replay": "node test/replay.mjs"
   },

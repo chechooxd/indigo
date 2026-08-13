@@ -1,0 +1,11 @@
+// Native type attributes (`@db.X`): namespaced syntax parses cleanly.
+// PR A is parse-only — the compiler does not yet check native-type name,
+// arity, or scalar compatibility (that lands in PR B), so this fixture's
+// golden `validation` array must be empty and `resolved` must show NO
+// `nativeType` key anywhere (PR A does not populate the IR).
+
+Table User {
+  id    String @id @db.Uuid
+  bio   String @db.VarChar(255)
+  price Float  @db.Numeric(10, 2)
+}

@@ -33,6 +33,8 @@ enum RawToken {
     RBracket,
     #[token(",")]
     Comma,
+    #[token(".")]
+    Dot,
     #[token(":")]
     Colon,
     #[token("?")]
@@ -58,6 +60,7 @@ pub enum TokenKind {
     LBracket,
     RBracket,
     Comma,
+    Dot,
     Colon,
     QuestionMark,
     Equals,
@@ -86,6 +89,7 @@ impl TokenKind {
             TokenKind::LBracket => "'['",
             TokenKind::RBracket => "']'",
             TokenKind::Comma => "','",
+            TokenKind::Dot => "'.'",
             TokenKind::Colon => "':'",
             TokenKind::QuestionMark => "'?'",
             TokenKind::Equals => "'='",
@@ -241,6 +245,7 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                     RawToken::LBracket => TokenKind::LBracket,
                     RawToken::RBracket => TokenKind::RBracket,
                     RawToken::Comma => TokenKind::Comma,
+                    RawToken::Dot => TokenKind::Dot,
                     RawToken::Colon => TokenKind::Colon,
                     RawToken::QuestionMark => TokenKind::QuestionMark,
                     RawToken::Equals => TokenKind::Equals,
@@ -282,4 +287,22 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
     });
 
     (tokens, errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dot_lexes_to_a_dot_token() {
+        let (tokens, errors) = tokenize(".");
+        assert!(errors.is_empty());
+        assert_eq!(tokens[0].kind, TokenKind::Dot);
+        assert_eq!(tokens[0].text, ".");
+    }
+
+    #[test]
+    fn dot_token_describe_is_quoted_dot() {
+        assert_eq!(TokenKind::Dot.describe(), "'.'");
+    }
 }

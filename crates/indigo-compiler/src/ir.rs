@@ -26,6 +26,16 @@ pub enum ResolvedDefault {
     Function { name: String },
 }
 
+/// A `@db.X(args)` override of the physical column type, structured so the
+/// migrator (not the compiler) owns SQL-dialect rendering (design decision
+/// #5). `args` are already stringified — see `resolve.rs::resolve_column`'s
+/// integral-formatting fix for `AttributeValue::Number` (design decision #6).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ResolvedNativeType {
+    pub name: String,
+    pub args: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedColumn {
@@ -42,6 +52,10 @@ pub struct ResolvedColumn {
     pub default: Option<ResolvedDefault>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub note: Option<String>,
+    /// Present only when the field carried a validated `@db.X` attribute.
+    /// Appended AFTER `note` so pre-existing snapshot key order is untouched.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub native_type: Option<ResolvedNativeType>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -169,4 +183,42 @@ pub struct ValidationError {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub field: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn column(native_type: Option<ResolvedNativeType>) -> ResolvedColumn {
+        ResolvedColumn {
+            name: "bio".into(),
+            db_name: "bio".into(),
+            column_type: "String".into(),
+            is_enum: false,
+            nullable: false,
+            is_pk: false,
+            unique: false,
+            autoincrement: false,
+            default: None,
+            note: None,
+            native_type,
+        }
+    }
+
+    #[test]
+    fn native_type_serializes_after_note_when_present() {
+        let c = column(Some(ResolvedNativeType { name: "VarChar".into(), args: vec!["255".into()] }));
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains(r#""nativeType":{"name":"VarChar","args":["255"]}"#));
+        // `note` (absent here) is skipped, but `nativeType` must be the LAST
+        // key present, per the struct's field order (appended after `note`).
+        assert!(json.ends_with(r#""nativeType":{"name":"VarChar","args":["255"]}}"#));
+    }
+
+    #[test]
+    fn native_type_is_omitted_not_null_when_absent() {
+        let c = column(None);
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("nativeType"));
+    }
 }

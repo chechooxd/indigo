@@ -1,0 +1,10 @@
+// Native type attributes: rejected cases. `@db.Foo` is not a recognized
+// native type name; `@db.VarChar` on an `Int` field is a scalar mismatch.
+// An ordinary fixture (not under `fixtures/errors/`), since both diagnostics
+// come from validation, not a parse failure.
+
+Table User {
+  id     String @id
+  weird  String @db.Foo
+  count  Int    @db.VarChar(255)
+}

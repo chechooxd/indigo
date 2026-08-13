@@ -260,7 +260,13 @@ impl<'a> Parser<'a> {
     fn parse_attribute(&mut self, marker: TokenKind) -> Option<Attribute> {
         debug_assert!(self.at(marker));
         self.advance(); // @ or @@
-        let name = self.expect_identifier("an attribute name")?;
+        let first = self.expect_identifier("an attribute name")?;
+        let (namespace, name) = if self.at(TokenKind::Dot) {
+            self.advance();
+            (Some(first), self.expect_identifier("an attribute name after '.'")?)
+        } else {
+            (None, first)
+        };
         let mut args = Vec::new();
         if self.at(TokenKind::LParen) {
             self.advance();
@@ -269,7 +275,7 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::RParen)?;
         }
-        Some(Attribute { name, args })
+        Some(Attribute { namespace, name, args })
     }
 
     fn parse_attribute_arg_list(&mut self) -> Option<Vec<AttributeArg>> {
@@ -476,6 +482,87 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
             self.advance();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::AttributeValue;
+
+    fn field_attrs(source: &str, model: &str, field: &str) -> Vec<crate::ast::Attribute> {
+        let schema = crate::parse_source(source).expect("source should parse without errors");
+        let m = schema.models.iter().find(|m| m.name == model).expect("model not found");
+        let f = m.fields.iter().find(|f| f.name == field).expect("field not found");
+        f.attributes.clone()
+    }
+
+    #[test]
+    fn namespaced_attribute_with_arguments_yields_namespace_and_name() {
+        let source = r#"
+Table User {
+  bio String @db.VarChar(255)
+}
+"#;
+        let attrs = field_attrs(source, "User", "bio");
+        assert_eq!(attrs.len(), 1);
+        let attr = &attrs[0];
+        assert_eq!(attr.namespace.as_deref(), Some("db"));
+        assert_eq!(attr.name, "VarChar");
+        assert_eq!(attr.args.len(), 1);
+        assert!(matches!(attr.args[0].value, AttributeValue::Number { value } if value == 255.0));
+    }
+
+    #[test]
+    fn namespaced_attribute_without_arguments_yields_namespace_and_name() {
+        let source = r#"
+Table User {
+  id String @db.Uuid
+}
+"#;
+        let attrs = field_attrs(source, "User", "id");
+        assert_eq!(attrs.len(), 1);
+        let attr = &attrs[0];
+        assert_eq!(attr.namespace.as_deref(), Some("db"));
+        assert_eq!(attr.name, "Uuid");
+        assert!(attr.args.is_empty());
+    }
+
+    #[test]
+    fn non_namespaced_attribute_has_no_namespace() {
+        let source = r#"
+Table User {
+  email String @unique
+}
+"#;
+        let attrs = field_attrs(source, "User", "email");
+        assert_eq!(attrs.len(), 1);
+        let attr = &attrs[0];
+        assert_eq!(attr.namespace, None);
+        assert_eq!(attr.name, "unique");
+        assert!(attr.args.is_empty());
+    }
+
+    #[test]
+    fn stray_trailing_dot_recovers_without_panicking() {
+        let source = r#"
+Table User {
+  bio String @db.
+  name String
+}
+"#;
+        // Recovery path: `parse_attribute` returns `None` on the missing
+        // identifier after `.`; the declaration-level sync must still find
+        // the next field (`name`) without panicking or hanging.
+        let result = crate::parse_source(source);
+        match result {
+            Ok(schema) => {
+                let m = schema.models.iter().find(|m| m.name == "User").expect("model");
+                assert!(m.fields.iter().any(|f| f.name == "name"));
+            }
+            Err(errors) => {
+                assert!(!errors.is_empty());
+            }
         }
     }
 }
