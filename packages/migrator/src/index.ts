@@ -28,6 +28,11 @@ export { planMigration, renderMigrationSql } from "./migrate.js";
 export { introspectResolvedSchema } from "./introspect.js";
 export type { IntrospectionQuery, IntrospectOptions } from "./introspect.js";
 
+// Shadow replay (migrate-runner's diff source): replays recorded migration
+// files into an isolated database, then introspects it.
+export { buildShadowSchema, ShadowReplayError } from "./shadow.js";
+export type { MigrationSource, ShadowDb, BuildShadowSchemaOptions } from "./shadow.js";
+
 // Migration plan contract: phase-tagged statements plus blocking diagnostics.
 export {
   splitMigrationSql,
