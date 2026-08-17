@@ -1,0 +1,78 @@
+// Named and typed indexes: rejected cases. Each table below is isolated so
+// its diagnostic can be pinned independently by the golden snapshot; see
+// design.md's "Diagnostics" section for the exact pinned message text.
+
+// Unknown index method.
+Table UnknownType {
+  id String @id
+  a  String
+  @@index([a], type: brin)
+}
+
+// Unknown named argument.
+Table UnknownArg {
+  id String @id
+  a  String
+  @@index([a], method: "gin")
+}
+
+// `type` is not an index-method identifier (wrong value kind).
+Table TypeWrongKind {
+  id String @id
+  a  String
+  @@index([a], type: 1)
+}
+
+// `name` is not a string literal (wrong value kind).
+Table NameWrongKind {
+  id String @id
+  a  String
+  @@index([a], name: gin)
+}
+
+// Empty name literal.
+Table EmptyName {
+  id String @id
+  a  String
+  @@index([a], name: "")
+}
+
+// Duplicate explicit name on the same table.
+Table DuplicateName {
+  id String @id
+  a  String
+  b  String
+  @@index([a], name: "dup_idx")
+  @@index([b], name: "dup_idx")
+}
+
+// Explicit name collides with another index's derived name.
+Table CollidesWithDerived {
+  id String @id
+  a  String
+  b  String
+  @@index([a])
+  @@index([b], name: "CollidesWithDerived_a_idx")
+}
+
+// Explicit name collides with a derived single-column `@unique` field name.
+Table CollidesWithUniqueField {
+  id    String @id
+  email String @unique
+  a     String
+  @@index([a], name: "CollidesWithUniqueField_email_key")
+}
+
+// Name literal exceeds NAMEDATALEN (63 bytes).
+Table NameTooLong {
+  id String @id
+  a  String
+  @@index([a], name: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+}
+
+// `@@unique` rejects a non-btree method.
+Table UniqueNonBtree {
+  id String @id
+  a  String
+  @@unique([a], type: gin)
+}

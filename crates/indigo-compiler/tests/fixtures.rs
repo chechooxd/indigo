@@ -570,6 +570,64 @@ fn fixture_08_self_relation_is_unaffected() {
     assert!(errors.is_empty(), "08-self-relation.indigo must stay unaffected by relation pairing, got: {errors:?}");
 }
 
+// ─── Named/typed indexes (PR A): dedicated fixtures ──────────────────────────
+
+#[test]
+fn fixture_16_named_typed_indexes_has_zero_validation_errors() {
+    let source = fs::read_to_string(fixtures_dir().join("16-named-typed-indexes.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    assert!(errors.is_empty(), "expected zero validation errors, got: {errors:?}");
+}
+
+#[test]
+fn fixture_16_ir_stays_unpopulated_until_pr_b() {
+    // PR A deliberately leaves `resolve.rs`/`ResolvedIndex` untouched — the
+    // grammar and validation accept `name:`/`type:`, but the IR does not yet
+    // carry them. Populating `ResolvedIndex.name`/`.type` is PR B's job.
+    let source = fs::read_to_string(fixtures_dir().join("16-named-typed-indexes.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let user_table = resolved.tables.iter().find(|t| t.name == "User").expect("User table");
+    assert_eq!(user_table.indexes.len(), 5, "{:?}", user_table.indexes);
+    for index in &user_table.indexes {
+        assert_eq!(index.name, None, "PR A must not populate ResolvedIndex.name yet: {index:?}");
+    }
+}
+
+#[test]
+fn fixture_17_rejected_index_args_reports_every_diagnostic_class() {
+    let source = fs::read_to_string(fixtures_dir().join("17-rejected-index-args.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    let has = |model: &str, needle: &str| errors.iter().any(|e| e.model.as_deref() == Some(model) && e.message.contains(needle));
+
+    assert!(has("UnknownType", "Allowed: btree, gin, gist, hash"), "{errors:?}");
+    assert!(has("UnknownArg", "Known arguments: name, type"), "{errors:?}");
+    assert!(has("TypeWrongKind", "index method identifier"), "{errors:?}");
+    assert!(has("NameWrongKind", "string literal"), "{errors:?}");
+    assert!(has("EmptyName", "1-63 characters"), "{errors:?}");
+    assert!(has("DuplicateName", "Duplicate index name \"dup_idx\""), "{errors:?}");
+    assert!(has("CollidesWithDerived", "collides with the name derived for another index"), "{errors:?}");
+    assert!(has("CollidesWithUniqueField", "collides with the name derived for another index"), "{errors:?}");
+    assert!(has("NameTooLong", "1-63 characters"), "{errors:?}");
+    assert!(has("UniqueNonBtree", "require btree"), "{errors:?}");
+
+    // Exactly one diagnostic per isolated table (no unexpected extras).
+    for model in [
+        "UnknownType",
+        "UnknownArg",
+        "TypeWrongKind",
+        "NameWrongKind",
+        "EmptyName",
+        "NameTooLong",
+        "UniqueNonBtree",
+    ] {
+        let count = errors.iter().filter(|e| e.model.as_deref() == Some(model)).count();
+        assert_eq!(count, 1, "expected exactly one diagnostic for {model}, got: {errors:?}");
+    }
+}
+
 #[test]
 fn enum_value_map_is_subject_to_attribute_validation() {
     // `@map` on an enum value goes through the same arity and argument-type

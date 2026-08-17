@@ -1,0 +1,284 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "tags",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "bio",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "user_email_idx"
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "tags"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "gin"
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "bio"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "user_bio_gist_idx"
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "gist"
+                }
+              }
+            ]
+          },
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "tags"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "user_email_tags_key"
+                }
+              }
+            ]
+          },
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "bio"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "btree"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "User",
+        "dbName": "User",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "tags",
+            "dbName": "tags",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "bio",
+            "dbName": "bio",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "tags"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "bio"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "email",
+              "tags"
+            ],
+            "unique": true
+          },
+          {
+            "columns": [
+              "bio"
+            ],
+            "unique": true
+          }
+        ],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

@@ -15,11 +15,15 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::ir::*;
 
-fn table_db_name(model: &Model) -> String {
+/// `pub(crate)`: `validate.rs::validate_index_args` also needs the physical
+/// table name to replicate `migrate.ts::indexName`'s derived-name formula
+/// for collision detection (design decision #6).
+pub(crate) fn table_db_name(model: &Model) -> String {
     first_string(get_attr(&model.attributes, "map")).unwrap_or_else(|| model.name.clone())
 }
 
-fn field_db_name(field: &Field) -> String {
+/// `pub(crate)`: see `table_db_name`.
+pub(crate) fn field_db_name(field: &Field) -> String {
     first_string(get_attr(&field.attributes, "map")).unwrap_or_else(|| field.name.clone())
 }
 

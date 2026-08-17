@@ -1,0 +1,1126 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "UnknownType",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "brin"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnknownArg",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "method",
+                "value": {
+                  "kind": "string",
+                  "value": "gin"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "TypeWrongKind",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "number",
+                  "value": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "NameWrongKind",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "reference",
+                  "value": "gin"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "EmptyName",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "DuplicateName",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "b",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "dup_idx"
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "b"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "dup_idx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "CollidesWithDerived",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "b",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "b"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "CollidesWithDerived_a_idx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "CollidesWithUniqueField",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "unique",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "CollidesWithUniqueField_email_key"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "NameTooLong",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UniqueNonBtree",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "gin"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "UnknownType",
+        "dbName": "UnknownType",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "UnknownArg",
+        "dbName": "UnknownArg",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "TypeWrongKind",
+        "dbName": "TypeWrongKind",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "NameWrongKind",
+        "dbName": "NameWrongKind",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "EmptyName",
+        "dbName": "EmptyName",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "DuplicateName",
+        "dbName": "DuplicateName",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "b",
+            "dbName": "b",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "b"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "CollidesWithDerived",
+        "dbName": "CollidesWithDerived",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "b",
+            "dbName": "b",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "b"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "CollidesWithUniqueField",
+        "dbName": "CollidesWithUniqueField",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": true,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "NameTooLong",
+        "dbName": "NameTooLong",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "UniqueNonBtree",
+        "dbName": "UniqueNonBtree",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": true
+          }
+        ],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Invalid @@index type \"brin\" on model \"UnknownType\". Allowed: btree, gin, gist, hash.",
+      "model": "UnknownType"
+    },
+    {
+      "message": "Unknown @@index argument \"method\" on model \"UnknownArg\". Known arguments: name, type.",
+      "model": "UnknownArg"
+    },
+    {
+      "message": "Attribute \"@@index\" on model \"TypeWrongKind\" requires \"type\" to be an index method identifier.",
+      "model": "TypeWrongKind"
+    },
+    {
+      "message": "Attribute \"@@index\" on model \"NameWrongKind\" requires \"name\" to be a string literal.",
+      "model": "NameWrongKind"
+    },
+    {
+      "message": "Invalid index name \"\" on model \"EmptyName\". Index names must be 1-63 characters and must not contain quotes or control characters.",
+      "model": "EmptyName"
+    },
+    {
+      "message": "Duplicate index name \"dup_idx\" on model \"DuplicateName\".",
+      "model": "DuplicateName"
+    },
+    {
+      "message": "Index name \"CollidesWithDerived_a_idx\" on model \"CollidesWithDerived\" collides with the name derived for another index on the same table.",
+      "model": "CollidesWithDerived"
+    },
+    {
+      "message": "Index name \"CollidesWithUniqueField_email_key\" on model \"CollidesWithUniqueField\" collides with the name derived for another index on the same table.",
+      "model": "CollidesWithUniqueField"
+    },
+    {
+      "message": "Invalid index name \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" on model \"NameTooLong\". Index names must be 1-63 characters and must not contain quotes or control characters.",
+      "model": "NameTooLong"
+    },
+    {
+      "message": "Attribute \"@@unique\" on model \"UniqueNonBtree\" does not support index type \"gin\"; unique indexes require btree.",
+      "model": "UniqueNonBtree"
+    }
+  ]
+}
