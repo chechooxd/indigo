@@ -16,7 +16,9 @@ Recognized enum-value attributes (`@`): `map`.
 
 The compiler MUST additionally recognize the `db` namespace on field attributes, restricted to the closed set `VarChar`, `Uuid`, `Numeric` (e.g. `@db.VarChar`, `@db.Uuid`, `@db.Numeric`). Any other namespaced name — including any other namespace besides `db`, or any `db.X` outside this set — MUST be rejected with a diagnostic naming the model, the field, and the unrecognized attribute, exactly as an unnamespaced unknown attribute is rejected today.
 
-(Previously: the whitelist recognized only unnamespaced attribute names and had no notion of a namespace; any namespaced form would have been rejected as unknown by construction once the parser accepts namespace syntax.)
+The compiler MUST additionally recognize two optional named arguments, `name` and `type`, on the model attributes `@@index` and `@@unique`. No other model or field attribute may accept these named arguments; supplying either on any other attribute MUST be rejected exactly as an unrecognized/misplaced argument is today.
+
+(Previously: the whitelist recognized only unnamespaced attribute names and had no notion of a namespace; any namespaced form would have been rejected as unknown by construction once the parser accepts namespace syntax. `@@index`/`@@unique` accepted exactly one positional field-array argument and no named arguments.)
 
 #### Scenario: Unknown field attribute
 
@@ -47,6 +49,18 @@ The compiler MUST additionally recognize the `db` namespace on field attributes,
 - GIVEN a field `bio String @orm.hint`
 - WHEN the schema is validated
 - THEN a diagnostic is produced naming the model, the field, and the unrecognized namespaced attribute
+
+#### Scenario: Named args accepted on @@index and @@unique
+
+- GIVEN a model with `@@index([a, b], name: "custom_idx", type: gin)`
+- WHEN the schema is validated
+- THEN no unrecognized-argument diagnostic is produced for `name` or `type`
+
+#### Scenario: Named args rejected on an unrelated attribute
+
+- GIVEN a field with `@map("col", type: gin)`
+- WHEN the schema is validated
+- THEN a diagnostic is produced naming the model, the field, and the unsupported `type` argument on `@map`
 
 ### Requirement: Attribute arity is checked
 
@@ -108,7 +122,7 @@ the model, the field, the native type, and the declared scalar type.
 
 ### Requirement: The existing fixture corpus remains valid under namespaced attributes
 
-Every fixture that existed in `fixtures/*.indigo` prior to this change (excluding `fixtures/errors/`) MUST continue to compile with zero attribute-validation diagnostics and MUST produce a byte-identical golden snapshot to its pre-change snapshot. Only newly added fixtures introduced by this change (one accepted `@db.X` usage, one rejected case) MAY produce new or different diagnostics/snapshots.
+Every fixture that existed in `fixtures/*.indigo` prior to this change (excluding `fixtures/errors/`) MUST continue to compile with zero attribute-validation diagnostics and MUST produce a byte-identical golden snapshot to its pre-change snapshot. Only newly added fixtures introduced by this change (one accepted `@db.X` usage, one rejected case, plus new named-index-argument fixtures) MAY produce new or different diagnostics/snapshots.
 
 #### Scenario: Pre-existing corpus is unaffected
 
@@ -127,3 +141,46 @@ Every fixture that existed in `fixtures/*.indigo` prior to this change (excludin
 - GIVEN a new fixture using an unknown `@db.X` or a scalar-incompatible `@db.X`
 - WHEN it is validated
 - THEN it produces the expected diagnostic(s) and is placed under the rejected-fixture convention
+
+### Requirement: Index `type` argument is restricted to a closed method enum
+
+The compiler MUST reject a `type` argument on `@@index`/`@@unique` whose
+value is not one of the closed set `btree`, `gin`, `gist`, `hash`, with a
+diagnostic naming the model, the index, and the unrecognized method.
+
+#### Scenario: Unknown index method
+
+- GIVEN `@@index([a], type: bloom)`
+- WHEN the schema is validated
+- THEN a diagnostic is produced naming the model, the index, and `"bloom"` as an unrecognized index method
+
+### Requirement: Explicit index names are unique per table
+
+The compiler MUST reject an explicit `name` on `@@index`/`@@unique` that
+collides with another explicit `name` on the same table, or with the
+auto-derived name of another index on that table, with a diagnostic naming
+the model/table and the conflicting name.
+
+#### Scenario: Duplicate explicit name
+
+- GIVEN a model with `@@index([a], name: "shared_idx")` and `@@unique([b], name: "shared_idx")`
+- WHEN the schema is validated
+- THEN a diagnostic is produced naming the table and `"shared_idx"` as a duplicate index name
+
+#### Scenario: Explicit name collides with an auto-derived name
+
+- GIVEN a model with `@@index([a])` (auto-derives `Model_a_idx`) and `@@index([b], name: "Model_a_idx")`
+- WHEN the schema is validated
+- THEN a diagnostic is produced naming the table and the colliding name
+
+### Requirement: Explicit index name literal is well-formed
+
+The compiler MUST reject a `name` argument that is not a non-empty string
+literal, with a diagnostic naming the model, the index, and the malformed
+name.
+
+#### Scenario: Empty name literal
+
+- GIVEN `@@index([a], name: "")`
+- WHEN the schema is validated
+- THEN a diagnostic is produced naming the model, the index, and the malformed (empty) name
