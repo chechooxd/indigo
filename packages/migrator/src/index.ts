@@ -17,6 +17,8 @@ export {
   triggerName,
   mapScalarToPg,
   quoteIdent,
+  indexName,
+  renderIndexDdl,
 } from "./postgres.js";
 
 // Versioned migration diff engine (`indigodb migrate`).

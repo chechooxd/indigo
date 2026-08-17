@@ -1,0 +1,12 @@
+// Regression: an implicit-btree @@index gaining an explicit `type:` must
+// diff as DROP+CREATE USING <method>, not a no-op (PostgreSQL cannot ALTER
+// an existing index's access method). `tags` is `Json` (-> jsonb) because
+// GIN needs a type with a default operator class registered for it —
+// plain `text` has none.
+
+Table User {
+  id   Int  @id @default(autoincrement())
+  tags Json
+
+  @@index([tags], type: gin)
+}
