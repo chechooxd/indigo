@@ -13,6 +13,7 @@ import type {
   ResolvedTable,
   ResolvedColumn,
   ResolvedEnum,
+  ResolvedEnumMember,
   ResolvedIndex,
   ForeignKey,
 } from "@indigodb/core";
@@ -99,7 +100,11 @@ function enumValueRemovedDiagnostic(e: ResolvedEnum, removed: string[]): Migrati
 // ─── Column matching ─────────────────────────────────────────────────────────
 
 interface ColumnMatch {
-  /** Columns matched by logical field name — includes unchanged and renamed (`@map` moved) pairs. */
+  /**
+   * Columns matched by logical field name (pass 1) OR physical `dbName`
+   * (pass 2, residuals only) — includes unchanged, renamed (`@map` moved),
+   * and physical-identity-fallback pairs alike.
+   */
   pairs: { old: ResolvedColumn; col: ResolvedColumn }[];
   /** Physical rename, keyed by OLD `dbName` → NEW `dbName`, for one table. */
   renameMap: Map<string, string>;
@@ -112,10 +117,13 @@ interface ColumnMatch {
 /**
  * Matches `prev`'s columns against `next`'s: logical field name first
  * (unchanged identity — a `dbName` divergence here is an unambiguous
- * `@map` rename), then physical `dbName` second (a logical rename with a
- * stable `@map` — the physical column never moves, nothing to emit).
- * Residual columns matched by neither key feed Rule R (see
- * `ambiguousColumnRemapDiagnostic`).
+ * `@map` rename), then physical `dbName` second on the residuals (a
+ * logical name that diverges on both sides while the physical column is
+ * the same one — e.g. an introspected `prev` whose `name` === its
+ * `dbName`). Both passes push a real `{old, col}` pair so every downstream
+ * diff (type/nullability/default ALTERs, unique-index toggle) still runs
+ * for a pass-2 match; only the identity key differs. Residual columns
+ * matched by neither key feed Rule R (see `ambiguousColumnRemapDiagnostic`).
  */
 function matchColumns(prev: ResolvedTable, next: ResolvedTable): ColumnMatch {
   const prevByName = new Map(prev.columns.map((c) => [c.name, c]));
@@ -133,12 +141,24 @@ function matchColumns(prev: ResolvedTable, next: ResolvedTable): ColumnMatch {
     if (old.dbName !== col.dbName) renameMap.set(old.dbName, col.dbName);
   }
 
+  // Pass 2 — residuals only: physical `dbName` identity. A column matched
+  // here already has `old.dbName === col.dbName` by construction (that is
+  // the match key), so it never contributes to `renameMap` — this pairing
+  // exists to preserve the column's diff-relevant identity when the logical
+  // `name` diverged on both sides (e.g. an introspected `prev` whose `name`
+  // === its `dbName`), not to detect a rename. Pushing the pair here closes
+  // a pre-existing latent bug: previously this pass consumed both columns
+  // without ever pairing them, so a column renamed AND type/nullability/
+  // default-changed in the same edit silently dropped its ALTER — the
+  // physical match said "same column", but nothing carried that identity
+  // forward into `diffTable`'s "Changed columns" pass.
   const prevRemaining = prev.columns.filter((c) => !consumedPrev.has(c.name));
   const nextRemaining = next.columns.filter((c) => !consumedNext.has(c.name));
   const prevByDbName = new Map(prevRemaining.map((c) => [c.dbName, c]));
   for (const col of nextRemaining) {
     const old = prevByDbName.get(col.dbName);
     if (!old) continue;
+    pairs.push({ old, col });
     consumedPrev.add(old.name);
     consumedNext.add(col.name);
   }
@@ -148,6 +168,122 @@ function matchColumns(prev: ResolvedTable, next: ResolvedTable): ColumnMatch {
     renameMap,
     added: next.columns.filter((c) => !consumedNext.has(c.name)),
     dropped: prev.columns.filter((c) => !consumedPrev.has(c.name)),
+  };
+}
+
+// ─── Table matching ──────────────────────────────────────────────────────────
+
+interface TableMatch {
+  /**
+   * Tables matched by logical `name` (pass 1) OR physical `dbName` (pass 2,
+   * residuals only).
+   */
+  pairs: { old: ResolvedTable; table: ResolvedTable }[];
+  /** `next` tables matched by neither logical name nor physical `dbName`. */
+  added: ResolvedTable[];
+  /** `prev` tables matched by neither logical name nor physical `dbName`. */
+  dropped: ResolvedTable[];
+}
+
+/**
+ * Matches `prev`'s tables against `next`'s: logical `name` first, then
+ * physical `dbName` second on the residuals — the table-level analogue of
+ * `matchColumns`. Without the `dbName` fallback, a `prev` whose `name`
+ * === `dbName` (e.g. an introspected schema) never matches a `next` table
+ * declared with `@@map` under a different logical `name`: the table looks
+ * dropped-and-recreated every run even though its physical identity is
+ * unchanged. Consumers MUST derive table-drop detection from `dropped`
+ * (a consumed set), never from `nextTables.has(name)` — the latter only
+ * proves "no `next` table shares this `name`", not "no `next` table
+ * matches this `prev` table at all".
+ */
+function matchTables(prevTables: ResolvedTable[], nextTables: ResolvedTable[]): TableMatch {
+  const prevByName = new Map(prevTables.map((t) => [t.name, t]));
+  const consumedPrev = new Set<string>();
+  const consumedNext = new Set<string>();
+  const pairs: { old: ResolvedTable; table: ResolvedTable }[] = [];
+
+  for (const table of nextTables) {
+    const old = prevByName.get(table.name);
+    if (!old) continue;
+    pairs.push({ old, table });
+    consumedPrev.add(old.name);
+    consumedNext.add(table.name);
+  }
+
+  const prevRemaining = prevTables.filter((t) => !consumedPrev.has(t.name));
+  const nextRemaining = nextTables.filter((t) => !consumedNext.has(t.name));
+  const prevByDbName = new Map(prevRemaining.map((t) => [t.dbName, t]));
+  for (const table of nextRemaining) {
+    const old = prevByDbName.get(table.dbName);
+    if (!old) continue;
+    pairs.push({ old, table });
+    consumedPrev.add(old.name);
+    consumedNext.add(table.name);
+  }
+
+  return {
+    pairs,
+    added: nextTables.filter((t) => !consumedNext.has(t.name)),
+    dropped: prevTables.filter((t) => !consumedPrev.has(t.name)),
+  };
+}
+
+// ─── Enum member matching ────────────────────────────────────────────────────
+
+interface EnumMemberMatch {
+  /**
+   * Members matched by logical `name` (pass 1) OR physical `dbName`
+   * (pass 2, residuals only).
+   */
+  pairs: { old: ResolvedEnumMember; member: ResolvedEnumMember }[];
+  /** `next` members matched by neither logical name nor physical `dbName`. */
+  added: ResolvedEnumMember[];
+  /** `prev` members matched by neither logical name nor physical `dbName`. */
+  removed: ResolvedEnumMember[];
+}
+
+/**
+ * Matches an enum's `prev` members against `next`'s: logical `name` first,
+ * then physical `dbName` second on the residuals — the enum-member
+ * analogue of `matchColumns`/`matchTables`. Without the fallback, a
+ * `@map`'d member whose logical `name` diverges from an introspected
+ * `prev` (`name` === `dbName`) is reported as removed-then-added, tripping
+ * the `enum-value-removed` diagnostic and blocking generation even though
+ * the physical label never left the type.
+ */
+function matchEnumMembers(
+  oldMembers: ResolvedEnumMember[],
+  nextMembers: ResolvedEnumMember[],
+): EnumMemberMatch {
+  const oldByName = new Map(oldMembers.map((m) => [m.name, m]));
+  const consumedOld = new Set<string>();
+  const consumedNext = new Set<string>();
+  const pairs: { old: ResolvedEnumMember; member: ResolvedEnumMember }[] = [];
+
+  for (const m of nextMembers) {
+    const old = oldByName.get(m.name);
+    if (!old) continue;
+    pairs.push({ old, member: m });
+    consumedOld.add(old.name);
+    consumedNext.add(m.name);
+  }
+
+  const oldRemaining = oldMembers.filter((m) => !consumedOld.has(m.name));
+  const nextRemaining = nextMembers.filter((m) => !consumedNext.has(m.name));
+  const oldByDbName = new Map(oldRemaining.map((m) => [m.dbName, m]));
+  for (const m of nextRemaining) {
+    const old = oldByDbName.get(m.dbName);
+    if (!old) continue;
+    pairs.push({ old, member: m });
+    consumedOld.add(old.name);
+    consumedNext.add(m.name);
+  }
+
+  return {
+    pairs,
+    added: nextMembers.filter((m) => !consumedNext.has(m.name)),
+    removed: oldMembers.filter((m) => !consumedOld.has(m.name)),
   };
 }
 
@@ -602,8 +738,8 @@ function computeStatements(
 
   const prevEnums = new Map((prev?.enums ?? []).map((e) => [e.name, e]));
   const nextEnums = new Map(next.enums.map((e) => [e.name, e]));
-  const prevTables = new Map((prev?.tables ?? []).map((t) => [t.name, t]));
-  const nextTables = new Map(next.tables.map((t) => [t.name, t]));
+  const tableMatch = matchTables(prev?.tables ?? [], next.tables);
+  const oldTableByNextName = new Map(tableMatch.pairs.map((p) => [p.table.name, p.old]));
 
   // Enums first (tables may depend on them). `ADD VALUE` cannot run in the
   // same transaction as a later statement that uses it, so it is tagged
@@ -618,32 +754,31 @@ function computeStatements(
     }
     const oldMembers = enumMembers(old);
     const nextMembers = enumMembers(e);
-    const oldNames = new Set(oldMembers.map((m) => m.name));
-    const nextNames = new Set(nextMembers.map((m) => m.name));
-    for (const m of nextMembers) {
-      if (!oldNames.has(m.name)) {
-        push(
-          stmts,
-          [`ALTER TYPE ${quoteIdent(e.name)} ADD VALUE IF NOT EXISTS '${esc(m.dbName)}';`],
-          "pre-transaction",
-        );
-      }
+    const memberMatch = matchEnumMembers(oldMembers, nextMembers);
+
+    for (const m of memberMatch.added) {
+      push(
+        stmts,
+        [`ALTER TYPE ${quoteIdent(e.name)} ADD VALUE IF NOT EXISTS '${esc(m.dbName)}';`],
+        "pre-transaction",
+      );
     }
     // A member kept under the same name but pointed at a new physical label
     // is an unambiguous rename — the enum analogue of a column `@map` rename.
     // Emitting nothing would leave the database holding a label the schema no
-    // longer names, with no signal anywhere.
-    const oldByName = new Map(oldMembers.map((m) => [m.name, m]));
-    for (const m of nextMembers) {
-      const before = oldByName.get(m.name);
-      if (!before || before.dbName === m.dbName) continue;
+    // longer names, with no signal anywhere. A pass-2 (physical-identity)
+    // pair always has `before.dbName === m.dbName` by construction, so it
+    // never reaches here.
+    for (const { old: before, member: m } of memberMatch.pairs) {
+      if (before.dbName === m.dbName) continue;
       push(stmts, [
         `ALTER TYPE ${quoteIdent(e.name)} RENAME VALUE '${esc(before.dbName)}' TO '${esc(m.dbName)}';`,
       ]);
     }
 
-    const removed = oldMembers.filter((m) => !nextNames.has(m.name)).map((m) => m.name);
-    if (removed.length > 0) diagnostics.push(enumValueRemovedDiagnostic(e, removed));
+    if (memberMatch.removed.length > 0) {
+      diagnostics.push(enumValueRemovedDiagnostic(e, memberMatch.removed.map((m) => m.name)));
+    }
   }
 
   // Realtime notify function, before any trigger that references it. Emitted
@@ -663,7 +798,7 @@ function computeStatements(
   const fkAdds: string[] = [];
   const fkRenames: string[] = [];
   for (const table of next.tables) {
-    const old = prevTables.get(table.name) ?? null;
+    const old = oldTableByNextName.get(table.name) ?? null;
     if (!old) {
       const { adds } = diffTableFks(null, table, new Map());
       fkAdds.push(...adds);
@@ -683,7 +818,7 @@ function computeStatements(
 
   // 3b: new + altered table structure, FK-free.
   for (const table of next.tables) {
-    const old = prevTables.get(table.name);
+    const old = oldTableByNextName.get(table.name);
     push(
       stmts,
       !old ? createTable(table, next.enums) : diffTable(old, table, next.enums, diagnostics, matches.get(table.name)!),
@@ -698,10 +833,12 @@ function computeStatements(
   push(stmts, fkAdds);
 
   // Dropped tables (after alters so dependent FKs are handled by CASCADE).
-  for (const table of prevTables.values()) {
-    if (!nextTables.has(table.name)) {
-      push(stmts, [`DROP TABLE ${quoteIdent(table.dbName)} CASCADE;`]);
-    }
+  // Uses `tableMatch.dropped` (a consumed set from `matchTables`), never
+  // `nextTables.has(name)` — the latter only proves no `next` table shares
+  // this table's `name`, not that no `next` table matched it at all (a
+  // physical-`dbName` fallback match would still be missed).
+  for (const table of tableMatch.dropped) {
+    push(stmts, [`DROP TABLE ${quoteIdent(table.dbName)} CASCADE;`]);
   }
 
   // Dropped enums last (tables referencing them are already gone/altered).
