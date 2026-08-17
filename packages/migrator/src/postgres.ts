@@ -16,6 +16,7 @@ import type {
   ResolvedEnum,
   ResolvedEnumMember,
   ForeignKey,
+  ResolvedIndex,
 } from "@indigodb/core";
 
 /** A member's schema name plus the PostgreSQL label it must render as; falls
@@ -147,6 +148,39 @@ export function renderColumn(column: ResolvedColumn, enums: ResolvedEnum[] = [])
   }
 
   return parts.join(" ");
+}
+
+/**
+ * The physical name an index resolves to: the explicit `name:` argument
+ * verbatim, or the auto-derived `${table}_${cols}_${suffix}` formula
+ * (`_key` for a UNIQUE index, `_idx` otherwise) when omitted. Shared by
+ * `renderIndexDdl` (below) and `migrate.ts` (design decision #9) so the two
+ * DDL paths can never drift apart on naming.
+ */
+export function indexName(table: ResolvedTable, index: ResolvedIndex): string {
+  const suffix = index.unique ? "key" : "idx";
+  return index.name ?? `${table.dbName}_${index.columns.join("_")}_${suffix}`;
+}
+
+/**
+ * Renders one `CREATE [UNIQUE] INDEX [IF NOT EXISTS] "name" ON "table"
+ * [USING method] (cols);` statement. `USING <method>` is omitted entirely
+ * when `index.type` is absent — this keeps every pre-existing unnamed/
+ * untyped index's DDL byte-for-byte identical to before this change
+ * (design's Interfaces section).
+ */
+export function renderIndexDdl(
+  table: ResolvedTable,
+  index: ResolvedIndex,
+  options: { ifNotExists?: boolean } = {},
+): string {
+  const kind = index.unique ? "UNIQUE INDEX" : "INDEX";
+  const ifNotExists = options.ifNotExists ? " IF NOT EXISTS" : "";
+  const cols = index.columns.map(quoteIdent).join(", ");
+  // Postgres syntax: `USING method` sits between the table and the column
+  // list — AFTER the column list is a syntax error.
+  const using = index.type ? ` USING ${index.type}` : "";
+  return `CREATE ${kind}${ifNotExists} ${quoteIdent(indexName(table, index))} ON ${quoteIdent(table.dbName)}${using} (${cols});`;
 }
 
 /** Renders the `CREATE TABLE IF NOT EXISTS` for a table (columns + PK). */
@@ -282,13 +316,7 @@ export function renderPushSql(schema: ResolvedSchema): string {
       );
     }
     for (const index of table.indexes) {
-      const kind = index.unique ? "UNIQUE INDEX" : "INDEX";
-      const suffix = index.unique ? "key" : "idx";
-      const name = index.name ?? `${table.dbName}_${index.columns.join("_")}_${suffix}`;
-      const cols = index.columns.map(quoteIdent).join(", ");
-      blocks.push(
-        `CREATE ${kind} IF NOT EXISTS ${quoteIdent(name)} ON ${quoteIdent(table.dbName)} (${cols});`,
-      );
+      blocks.push(renderIndexDdl(table, index, { ifNotExists: true }));
     }
   }
 

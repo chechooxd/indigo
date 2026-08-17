@@ -96,6 +96,13 @@ pub struct ResolvedIndex {
     pub unique: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub name: Option<String>,
+    /// Postgres index access method (`@@index`/`@@unique`'s `type:` arg).
+    /// Declared LAST (after `name`) and always omitted when absent — an
+    /// explicit `type: btree` canonicalizes to `None` in `resolve.rs`
+    /// (design decision #4/#5), so pre-existing fixtures 01-15 stay
+    /// byte-identical.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
+    pub index_type: Option<IndexMethod>,
 }
 
 /// Serialized as the bare variant name ("OneToOne" etc.), like the TS enum.

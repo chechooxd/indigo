@@ -92,8 +92,15 @@ export interface ResolvedIndex {
   columns: string[];
   /** Whether it is a UNIQUE index. */
   unique: boolean;
-  /** Optional index name. */
+  /** Optional index name (`name:` argument); absent when auto-derived. */
   name?: string;
+  /**
+   * Postgres index access method (`type:` argument). Absent means the
+   * default btree — an explicit `type: btree` in the schema also
+   * canonicalizes to absent, so it never diffs against an implicit btree
+   * index.
+   */
+  type?: "btree" | "gin" | "gist" | "hash";
 }
 
 // ─── Relations (for the client / ERD) ────────────────────────────────────────
