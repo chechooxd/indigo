@@ -76,6 +76,20 @@ pub struct ForeignKey {
     pub on_update: Option<String>,
 }
 
+/// Postgres index access method for `@@index`/`@@unique`'s `type:` argument
+/// (design decision #3). `Btree` is kept in the enum so `type: btree` is
+/// accepted rather than rejected as "unknown method" — see decision #4 for
+/// why it canonicalizes to `None` once `resolve.rs` populates the IR
+/// (PR B; deliberately unpopulated in PR A).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexMethod {
+    Btree,
+    Gin,
+    Gist,
+    Hash,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResolvedIndex {
     pub columns: Vec<String>,
@@ -220,5 +234,13 @@ mod tests {
         let c = column(None);
         let json = serde_json::to_string(&c).unwrap();
         assert!(!json.contains("nativeType"));
+    }
+
+    #[test]
+    fn index_method_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&IndexMethod::Btree).unwrap(), "\"btree\"");
+        assert_eq!(serde_json::to_string(&IndexMethod::Gin).unwrap(), "\"gin\"");
+        assert_eq!(serde_json::to_string(&IndexMethod::Gist).unwrap(), "\"gist\"");
+        assert_eq!(serde_json::to_string(&IndexMethod::Hash).unwrap(), "\"hash\"");
     }
 }

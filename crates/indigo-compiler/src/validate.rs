@@ -174,11 +174,23 @@ fn check_shape(
     field: Option<String>,
 ) {
     let one_string = matches!(attr.args.as_slice(), [a] if a.name.is_empty() && matches!(a.value, AttributeValue::String { .. }));
-    let one_ref_array = matches!(attr.args.as_slice(), [a] if a.name.is_empty() && matches!(a.value, AttributeValue::Array { .. }));
+    // `ArgShape::Index`: exactly one positional array argument (`name`/`type`
+    // named args are checked separately by `validate_index_args`, not here —
+    // this only guards the shape `OneReferenceArray` used to guard).
+    let has_one_positional_array = attr
+        .args
+        .iter()
+        .filter(|a| a.name.is_empty())
+        .count()
+        == 1
+        && matches!(
+            attr.args.iter().find(|a| a.name.is_empty()).map(|a| &a.value),
+            Some(AttributeValue::Array { .. })
+        );
     let complaint = match shape {
         ArgShape::None if !attr.args.is_empty() => Some("takes no arguments"),
         ArgShape::OneString if !one_string => Some("requires exactly one string argument"),
-        ArgShape::OneReferenceArray if !one_ref_array => Some("requires exactly one array argument"),
+        ArgShape::Index if !has_one_positional_array => Some("requires exactly one array argument"),
         _ => None,
     };
     if let Some(complaint) = complaint {
@@ -289,6 +301,7 @@ fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_
                 Some(shape) => check_shape(errors, shape, &attr.name, attr, &location, Some(model.name.clone()), None),
             }
         }
+        validate_index_args(errors, model);
     }
     for e in &schema.enums {
         for value in &e.values {
@@ -299,6 +312,218 @@ fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_
                     Some(shape) => check_shape(errors, shape, &attr.name, attr, &location, None, None),
                 }
             }
+        }
+    }
+}
+
+// ─── Named/typed indexes (`@@index`/`@@unique` `name:`/`type:`, PR A) ───────
+
+/// One `@@index`/`@@unique` attribute's columns, resolved to physical (db)
+/// names the same way `resolve.rs::resolve_indexes` would — needed so
+/// derived-name collision detection matches `migrate.ts::indexName`'s
+/// formula exactly (design decision #6).
+fn index_columns(model: &Model, attr: &Attribute) -> Vec<String> {
+    let value = attr.args.iter().find(|a| a.name.is_empty()).map(|a| &a.value);
+    as_reference_list(value)
+        .into_iter()
+        .map(|name| {
+            model
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .map(field_db_name)
+                .unwrap_or(name)
+        })
+        .collect()
+}
+
+fn field_db_name(field: &Field) -> String {
+    crate::resolve::field_db_name(field)
+}
+
+/// `${table}_${cols}_${suffix}` — `migrate.ts::indexName`'s auto-derivation
+/// formula, replicated so an explicit `name:` can be checked against it.
+fn derived_index_name(table_db_name: &str, columns: &[String], unique: bool) -> String {
+    let suffix = if unique { "key" } else { "idx" };
+    format!("{table_db_name}_{}_{suffix}", columns.join("_"))
+}
+
+/// `${table}_${col}_key` — `postgres.ts::uniqueColIndexName`'s formula for a
+/// single-column `@unique` field's implicit index.
+fn derived_unique_col_name(table_db_name: &str, col_db_name: &str) -> String {
+    format!("{table_db_name}_{col_db_name}_key")
+}
+
+/// One name occupying the per-table index-name namespace: either an
+/// explicit `name:` argument or an auto-derived name from an unnamed
+/// `@@index`/`@@unique`/single-column `@unique` field.
+struct NameSource {
+    name: String,
+    explicit: bool,
+}
+
+/// Validates `name:`/`type:` on every `@@index`/`@@unique` attribute of
+/// `model`: unknown named-arg keys, method-enum membership, name
+/// well-formedness, table-scoped name uniqueness (against other explicit
+/// names AND derived names, including derived single-column `@unique` field
+/// names — design decision #6), and `@@unique`'s btree-only restriction
+/// (decision #7).
+fn validate_index_args(errors: &mut Vec<ValidationError>, model: &Model) {
+    let known_args = rules::INDEX_ARG_KEYS.join(", ");
+    let allowed_methods = rules::INDEX_METHODS.join(", ");
+    let table_db_name = crate::resolve::table_db_name(model);
+    let mut sources: Vec<NameSource> = Vec::new();
+
+    for attr in &model.attributes {
+        if attr.namespace.is_some() || (attr.name != "index" && attr.name != "unique") {
+            continue;
+        }
+        let attr_label = format!("@@{}", attr.name);
+        let model_name = model.name.clone();
+
+        // Unknown named-argument keys.
+        for arg in &attr.args {
+            if !arg.name.is_empty() && !rules::INDEX_ARG_KEYS.contains(&arg.name.as_str()) {
+                errors.push(ValidationError {
+                    message: format!(
+                        "Unknown {attr_label} argument \"{}\" on model \"{model_name}\". Known arguments: {known_args}.",
+                        arg.name
+                    ),
+                    model: Some(model_name.clone()),
+                    field: None,
+                });
+            }
+        }
+
+        let columns = index_columns(model, attr);
+        if columns.is_empty() {
+            continue; // Mirrors resolve_indexes: an attribute with no valid array is skipped.
+        }
+        let unique = attr.name == "unique";
+
+        // `type:` — dual-form (bare identifier OR quoted string, decision #2).
+        if let Some(arg) = attr.args.iter().find(|a| a.name == "type") {
+            let raw = match &arg.value {
+                AttributeValue::Reference { value } | AttributeValue::String { value } => Some(value.clone()),
+                _ => None,
+            };
+            let Some(raw) = raw else {
+                errors.push(ValidationError {
+                    message: format!(
+                        "Attribute \"{attr_label}\" on model \"{model_name}\" requires \"type\" to be an index method identifier."
+                    ),
+                    model: Some(model_name.clone()),
+                    field: None,
+                });
+                continue;
+            };
+            match rules::index_method(&raw) {
+                None => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Invalid {attr_label} type \"{raw}\" on model \"{model_name}\". Allowed: {allowed_methods}."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+                Some(method) => {
+                    if unique && !matches!(method, crate::ir::IndexMethod::Btree) {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "Attribute \"@@unique\" on model \"{model_name}\" does not support index type \"{raw}\"; unique indexes require btree."
+                            ),
+                            model: Some(model_name.clone()),
+                            field: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // `name:` — well-formedness, then queued for the table-scoped
+        // uniqueness pass below.
+        let explicit_name = match attr.args.iter().find(|a| a.name == "name") {
+            None => None,
+            Some(arg) => match &arg.value {
+                AttributeValue::String { value } => {
+                    let is_well_formed = !value.is_empty()
+                        && value.len() <= rules::MAX_IDENTIFIER_BYTES
+                        && !value.contains('"')
+                        && !value.chars().any(|c| c.is_control());
+                    if !is_well_formed {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "Invalid index name \"{value}\" on model \"{model_name}\". Index names must be 1-63 characters and must not contain quotes or control characters."
+                            ),
+                            model: Some(model_name.clone()),
+                            field: None,
+                        });
+                        None
+                    } else {
+                        Some(value.clone())
+                    }
+                }
+                _ => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Attribute \"{attr_label}\" on model \"{model_name}\" requires \"name\" to be a string literal."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                    None
+                }
+            },
+        };
+
+        match explicit_name {
+            Some(name) => sources.push(NameSource { name, explicit: true }),
+            None => sources.push(NameSource { name: derived_index_name(&table_db_name, &columns, unique), explicit: false }),
+        }
+    }
+
+    // Derived single-column `@unique` field names also occupy the namespace
+    // (decision #6) — collected as additional (non-explicit) sources.
+    for field in &model.fields {
+        if has_attr(&field.attributes, "unique") {
+            sources.push(NameSource {
+                name: derived_unique_col_name(&table_db_name, &field_db_name(field)),
+                explicit: false,
+            });
+        }
+    }
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    for source in &sources {
+        if !source.explicit || !seen.insert(&source.name) {
+            continue;
+        }
+        let others_same_name = sources.iter().filter(|s| s.name == source.name && !std::ptr::eq(*s, source));
+        let mut explicit_collisions = 0usize;
+        let mut derived_collision = false;
+        for other in others_same_name {
+            if other.explicit {
+                explicit_collisions += 1;
+            } else {
+                derived_collision = true;
+            }
+        }
+        if explicit_collisions > 0 {
+            errors.push(ValidationError {
+                message: format!("Duplicate index name \"{}\" on model \"{}\".", source.name, model.name),
+                model: Some(model.name.clone()),
+                field: None,
+            });
+        } else if derived_collision {
+            errors.push(ValidationError {
+                message: format!(
+                    "Index name \"{}\" on model \"{}\" collides with the name derived for another index on the same table.",
+                    source.name, model.name
+                ),
+                model: Some(model.name.clone()),
+                field: None,
+            });
         }
     }
 }
@@ -677,6 +902,221 @@ enum Status {
         );
         assert!(errors.iter().any(|e| e.field.as_deref() == Some("status")), "{errors:?}");
         assert!(errors.iter().any(|e| e.field.as_deref() == Some("owner")), "{errors:?}");
+    }
+
+    // ─── Named/typed indexes (PR A) ──────────────────────────────────────────
+
+    #[test]
+    fn index_explicit_name_and_type_are_accepted_without_diagnostics() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id   String @id
+  a    String
+  b    String
+  @@index([a, b], name: "custom_idx", type: gin)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn index_explicit_type_btree_is_accepted_like_omitted_type() {
+        // A4.2 — `type: btree` is a no-op acceptance-wise in PR A (canonicalizing
+        // to `None` is resolve.rs's job in PR B).
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], type: btree)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn index_unknown_type_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], type: brin)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].model.as_deref(), Some("User"));
+        assert!(errors[0].message.contains("brin"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("Allowed: btree, gin, gist, hash"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_unknown_named_argument_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], method: "gin")
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("method"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("Known arguments: name, type"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_type_wrong_value_kind_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], type: 1)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("\"type\""), "{}", errors[0].message);
+        assert!(errors[0].message.contains("index method identifier"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_name_wrong_value_kind_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], name: gin)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("\"name\""), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string literal"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_empty_name_literal_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], name: "")
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("1-63 characters"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_name_too_long_is_rejected() {
+        let long_name = "x".repeat(64);
+        let errors = validate_source(&format!(
+            r#"
+Table User {{
+  id String @id
+  a  String
+  @@index([a], name: "{long_name}")
+}}
+"#
+        ));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("1-63 characters"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn index_duplicate_explicit_name_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  b  String
+  @@index([a], name: "dup_idx")
+  @@index([b], name: "dup_idx")
+}
+"#,
+        );
+        assert!(errors.iter().any(|e| e.message.contains("Duplicate index name \"dup_idx\"")), "{errors:?}");
+    }
+
+    #[test]
+    fn index_explicit_name_colliding_with_derived_name_is_rejected() {
+        // User_a_idx is what @@index([a]) (no explicit name) derives to.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  b  String
+  @@index([a])
+  @@index([b], name: "User_a_idx")
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("User_a_idx") && e.message.contains("collides with the name derived for another index")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn index_explicit_name_colliding_with_derived_single_column_unique_field_name_is_rejected() {
+        // User_email_key is what `email String @unique` derives to.
+        let errors = validate_source(
+            r#"
+Table User {
+  id    String @id
+  email String @unique
+  a     String
+  @@index([a], name: "User_email_key")
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("User_email_key") && e.message.contains("collides with the name derived for another index")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn unique_rejects_non_btree_type() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@unique([a], type: gin)
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("@@unique") && e.message.contains("gin") && e.message.contains("require btree")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn unique_accepts_explicit_btree_type() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@unique([a], type: btree)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
     }
 
     #[test]

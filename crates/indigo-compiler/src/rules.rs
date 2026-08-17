@@ -16,6 +16,7 @@
 //! now a hard `ValidationError` (see `release-notes.md`).
 
 use crate::ast::AttributeValue;
+use crate::ir::IndexMethod;
 
 /// Referential actions accepted for `onDelete` / `onUpdate`
 /// (`@relation(onDelete: ..., onUpdate: ...)`), PascalCase, case-sensitive —
@@ -59,8 +60,12 @@ pub enum ArgShape {
     None,
     /// Exactly one positional string (`@map("x")`, `@note("x")`).
     OneString,
-    /// Exactly one positional reference array (`@@index([a, b])`).
-    OneReferenceArray,
+    /// Exactly one positional reference array, plus optional named `name`/
+    /// `type` args (`@@index([a, b], name: "x", type: gin)`). Replaces
+    /// `OneReferenceArray` — `@@index`/`@@unique` were its only users
+    /// (design decision #1); the "requires exactly one array argument"
+    /// message is preserved verbatim for parity.
+    Index,
     /// Literal type must match the field's scalar type; generator calls and
     /// enum-typed bare references are always accepted.
     Default,
@@ -80,8 +85,8 @@ pub const ATTRIBUTE_RULES: &[(AttributeTarget, &str, ArgShape)] = &[
     (AttributeTarget::Model, "realtime", ArgShape::None),
     (AttributeTarget::Model, "map", ArgShape::OneString),
     (AttributeTarget::Model, "note", ArgShape::OneString),
-    (AttributeTarget::Model, "index", ArgShape::OneReferenceArray),
-    (AttributeTarget::Model, "unique", ArgShape::OneReferenceArray),
+    (AttributeTarget::Model, "index", ArgShape::Index),
+    (AttributeTarget::Model, "unique", ArgShape::Index),
     (AttributeTarget::EnumValue, "map", ArgShape::OneString),
 ];
 
@@ -93,6 +98,32 @@ pub fn attribute_rule(target: AttributeTarget, name: &str) -> Option<ArgShape> {
 /// `@relation` named-argument keys. A misspelled key (e.g. `onDlete`) was a
 /// silent no-op before this change — the exact failure mode it exists to kill.
 pub const RELATION_ARG_KEYS: [&str; 4] = ["fields", "references", "onDelete", "onUpdate"];
+
+/// `@@index`/`@@unique` named-argument keys (design decision #1/#3).
+pub const INDEX_ARG_KEYS: [&str; 2] = ["name", "type"];
+
+/// Closed set of Postgres index access methods accepted by `type:`
+/// (proposal open assumption #1 — no `brin`/`spgist` yet).
+pub const INDEX_METHODS: [&str; 4] = ["btree", "gin", "gist", "hash"];
+
+/// `NAMEDATALEN` — Postgres silently truncates identifiers longer than this,
+/// which would break a later `DROP`/`RENAME` round-trip keyed on the full
+/// name (design decision #10).
+pub const MAX_IDENTIFIER_BYTES: usize = 63;
+
+/// Maps a schema-spelled index method (lowercase bare identifier or quoted
+/// string, e.g. `"gin"`) to its `IndexMethod` variant. `None` for anything
+/// outside the closed set — resolving an invalid value is a validation
+/// error (`validate.rs`), not this function's job.
+pub fn index_method(name: &str) -> Option<IndexMethod> {
+    match name {
+        "btree" => Some(IndexMethod::Btree),
+        "gin" => Some(IndexMethod::Gin),
+        "gist" => Some(IndexMethod::Gist),
+        "hash" => Some(IndexMethod::Hash),
+        _ => None,
+    }
+}
 
 /// Generator calls always accepted as a `@default(...)` value, regardless
 /// of the field's scalar type (`resolve.rs::resolve_default` passthrough).
@@ -165,6 +196,30 @@ mod tests {
     #[test]
     fn native_type_rule_rejects_unknown_names() {
         assert_eq!(native_type_rule("Foo"), None);
+    }
+
+    #[test]
+    fn index_method_accepts_every_closed_spelling() {
+        use crate::ir::IndexMethod;
+        assert_eq!(index_method("btree"), Some(IndexMethod::Btree));
+        assert_eq!(index_method("gin"), Some(IndexMethod::Gin));
+        assert_eq!(index_method("gist"), Some(IndexMethod::Gist));
+        assert_eq!(index_method("hash"), Some(IndexMethod::Hash));
+    }
+
+    #[test]
+    fn index_method_rejects_unknown_and_uppercase_spellings() {
+        assert_eq!(index_method("brin"), None);
+        assert_eq!(index_method("GIN"), None);
+        assert_eq!(index_method(""), None);
+    }
+
+    #[test]
+    fn arg_shape_index_replaces_one_reference_array_for_index_and_unique() {
+        // @@index/@@unique were OneReferenceArray's only users; ArgShape::Index
+        // must now be what attribute_rule reports for both.
+        assert_eq!(attribute_rule(AttributeTarget::Model, "index"), Some(ArgShape::Index));
+        assert_eq!(attribute_rule(AttributeTarget::Model, "unique"), Some(ArgShape::Index));
     }
 
     #[test]
