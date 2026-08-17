@@ -13,14 +13,38 @@ DDL or produces an actionable diagnostic and emits nothing for that change.
 ### Requirement: An unambiguous `@map`-only rename emits a column rename
 
 When a field's logical name is unchanged but its `@map` (physical column
-name) changes, the system MUST emit `ALTER TABLE ... RENAME COLUMN` and MUST
-NOT emit `DROP COLUMN`/`ADD COLUMN` for that field, preserving existing data.
+name) changes, and `prev` carries recoverable logical names (a `.indigo`-
+sourced or snapshot-sourced schema), the system MUST emit `ALTER TABLE ...
+RENAME COLUMN` and MUST NOT emit `DROP COLUMN`/`ADD COLUMN` for that field,
+preserving existing data.
 
-#### Scenario: Physical rename via @map
+When `prev` is derived via shadow-replay-then-introspect (see
+`schema-introspection`), it carries no recoverable logical names — every
+introspected column's `name` equals its physical `dbName`. Column matching
+therefore falls back to physical-name matching only (`dbName` stability
+across `prev`/`next`). A genuine `@map` physical rename changes `dbName`
+between `prev` and `next` by definition, so it MUST be emitted as
+`DROP COLUMN`/`ADD COLUMN` rather than a rename in this case. This is
+accepted, documented behavior, not a bug: it is the known fidelity boundary
+of introspection-derived `prev`, and it is most visible as a one-time cost
+on the first migration generated after adopting shadow-replay-diff for a
+schema that already has an established `@map`.
 
-- GIVEN field `createdAt` has `@map("created_at")` in the previous schema and `@map("creation_date")` in the next schema, with the field name unchanged
+(Previously: rename detection assumed `prev` always carried recoverable
+logical names; the physical-only-`prev` case did not exist.)
+
+#### Scenario: Physical rename via @map with schema-sourced prev
+
+- GIVEN field `createdAt` has `@map("created_at")` in the previous schema and `@map("creation_date")` in the next schema, with the field name unchanged, and `prev` is `.indigo`- or snapshot-sourced
 - WHEN a migration is generated
 - THEN the only statement for that field is `ALTER TABLE ... RENAME COLUMN "created_at" TO "creation_date";`
+
+#### Scenario: @map rename degrades to drop+add with shadow-replay-derived prev (accepted, documented)
+
+- GIVEN a schema already has field `createdAt @map("created_at")` applied to the real database, shadow-replay-diff has just been adopted, and the schema is then edited to `createdAt @map("creation_date")`
+- WHEN `migrate dev` builds `prev` via shadow-replay-then-introspect and generates a migration
+- THEN the emitted statements are `ALTER TABLE ... DROP COLUMN "created_at"` and `ALTER TABLE ... ADD COLUMN "creation_date" ...` for that field, not a `RENAME COLUMN`
+- AND this is the documented, expected behavior of introspection-derived `prev`, not a defect to be filed or mitigated
 
 ### Requirement: A simultaneous field-name-and-`@map` change is refused
 
