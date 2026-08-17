@@ -4,7 +4,11 @@
 //! deep-equal the TS implementation (the parity harness is the referee);
 //! notable quirks preserved:
 //! - `realtime` is `Some(true)` or absent, never `Some(false)`;
-//! - `ForeignKey.name` / `ResolvedIndex.name` are never emitted;
+//! - `ForeignKey.name` is never emitted; `ResolvedIndex.name`/`.indexType`
+//!   are emitted only when the schema declares an explicit `name:`/`type:`
+//!   on `@@index`/`@@unique` — an omitted `name:` stays `None` (the
+//!   auto-derived `${table}_${cols}_${suffix}` fallback remains a
+//!   migrator-side concern), and `type: btree` canonicalizes to `None`;
 //! - a singular inverse-side relation without a FK is always `OneToOne`;
 //! - unknown `@relation` refs fall back to the raw name (`.get(r) ?? r`);
 //! - scalar/enum list fields become plain columns (list-ness dropped);
@@ -127,6 +131,25 @@ fn first_array_refs(attr: &Attribute) -> Vec<String> {
     as_reference_list(value)
 }
 
+/// Extracts `@@index`/`@@unique`'s `type:` argument (bare identifier OR
+/// quoted string, decision #2) and maps it through `rules::index_method`.
+/// An explicit `type: btree` canonicalizes to `None` (decision #4) so it
+/// never falsely diffs against an implicit btree index; anything outside
+/// the closed method set is `None` here too — an invalid value is a
+/// `validate.rs` diagnostic, not this function's job.
+fn resolve_index_type(attr: &Attribute) -> Option<IndexMethod> {
+    let raw = match attr.args.iter().find(|a| a.name == "type").map(|a| &a.value) {
+        Some(AttributeValue::Reference { value }) | Some(AttributeValue::String { value }) => {
+            Some(value.as_str())
+        }
+        _ => None,
+    }?;
+    match crate::rules::index_method(raw)? {
+        IndexMethod::Btree => None,
+        method => Some(method),
+    }
+}
+
 fn resolve_indexes(model: &Model, field_to_db: &HashMap<String, String>) -> Vec<ResolvedIndex> {
     let mut indexes = Vec::new();
     for attr in &model.attributes {
@@ -140,7 +163,21 @@ fn resolve_indexes(model: &Model, field_to_db: &HashMap<String, String>) -> Vec<
         if columns.is_empty() {
             continue;
         }
-        indexes.push(ResolvedIndex { columns, unique: attr.name == "unique", name: None });
+        // Only an EXPLICIT `name:` is emitted here — omitted names stay
+        // `None` (unchanged from before this change) so the auto-derived
+        // `${table}_${cols}_${suffix}` formula remains a migrator-side
+        // concern (`postgres.ts`/`migrate.ts`'s `index.name ?? derived`),
+        // keeping fixtures 01-15's unnamed indexes byte-identical.
+        let name = match attr.args.iter().find(|a| a.name == "name").map(|a| &a.value) {
+            Some(AttributeValue::String { value }) => Some(value.clone()),
+            _ => None,
+        };
+        indexes.push(ResolvedIndex {
+            columns,
+            unique: attr.name == "unique",
+            name,
+            index_type: resolve_index_type(attr),
+        });
     }
     indexes
 }
@@ -517,5 +554,112 @@ Table User {
 "#,
         );
         assert!(native_type_of(&resolved, "User", "name").is_none());
+    }
+
+    fn index_of<'a>(resolved: &'a ResolvedSchema, table: &str, columns: &[&str]) -> &'a ResolvedIndex {
+        resolved
+            .tables
+            .iter()
+            .find(|t| t.name == table)
+            .expect("table exists")
+            .indexes
+            .iter()
+            .find(|i| i.columns == columns)
+            .expect("index exists")
+    }
+
+    #[test]
+    fn explicit_index_name_is_honoured() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email], name: "custom_email_idx")
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.name.as_deref(), Some("custom_email_idx"));
+    }
+
+    #[test]
+    fn omitted_index_name_resolves_to_none() {
+        // Name derivation (`${table}_${cols}_idx`) stays a migrator-side
+        // concern (`postgres.ts`/`migrate.ts`'s `index.name ?? derived`
+        // fallback) — resolve.rs only ever emits an EXPLICIT `name:`, so
+        // fixtures 01-15's pre-existing unnamed `@@index`/`@@unique`
+        // attributes stay byte-identical (no new `name` key appears).
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email])
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.name, None);
+    }
+
+    #[test]
+    fn bare_identifier_index_type_is_resolved() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email], type: gin)
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.index_type, Some(IndexMethod::Gin));
+    }
+
+    #[test]
+    fn quoted_string_index_type_is_resolved() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email], type: "gist")
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.index_type, Some(IndexMethod::Gist));
+    }
+
+    #[test]
+    fn explicit_btree_index_type_canonicalizes_to_none() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email], type: btree)
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.index_type, None);
+    }
+
+    #[test]
+    fn omitted_index_type_resolves_to_none() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id    String @id
+  email String
+  @@index([email])
+}
+"#,
+        );
+        let idx = index_of(&resolved, "User", &["email"]);
+        assert_eq!(idx.index_type, None);
     }
 }

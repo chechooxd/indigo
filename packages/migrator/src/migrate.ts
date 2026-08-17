@@ -25,6 +25,8 @@ import {
   renderCreateTrigger,
   renderDropTrigger,
   enumMembers,
+  indexName,
+  renderIndexDdl,
 } from "./postgres.js";
 import type {
   MigrationDiagnostic,
@@ -42,11 +44,6 @@ function esc(v: string): string {
 
 function fkName(table: ResolvedTable, fk: ForeignKey): string {
   return fk.name ?? `${table.dbName}_${fk.columns.join("_")}_fkey`;
-}
-
-function indexName(table: ResolvedTable, index: ResolvedIndex): string {
-  const suffix = index.unique ? "key" : "idx";
-  return index.name ?? `${table.dbName}_${index.columns.join("_")}_${suffix}`;
 }
 
 function uniqueColIndexName(table: ResolvedTable, col: ResolvedColumn): string {
@@ -210,10 +207,12 @@ function createUniqueColIndex(table: ResolvedTable, col: ResolvedColumn): string
   return `CREATE UNIQUE INDEX ${quoteIdent(uniqueColIndexName(table, col))} ON ${quoteIdent(table.dbName)} (${quoteIdent(col.dbName)});`;
 }
 
+/** Delegates to `postgres.ts`'s shared renderer (design decision #9) — never
+ * re-derives `USING <method>`/naming independently, or the two DDL paths
+ * (push vs. migrate) would drift apart. `migrate.ts` never wants `IF NOT
+ * EXISTS`: it emits exact, ordered DDL for a versioned migration file. */
 function createIndex(table: ResolvedTable, index: ResolvedIndex): string {
-  const kind = index.unique ? "UNIQUE INDEX" : "INDEX";
-  const cols = index.columns.map(quoteIdent).join(", ");
-  return `CREATE ${kind} ${quoteIdent(indexName(table, index))} ON ${quoteIdent(table.dbName)} (${cols});`;
+  return renderIndexDdl(table, index);
 }
 
 function addForeignKey(table: ResolvedTable, fk: ForeignKey): string {
@@ -278,8 +277,47 @@ function alterColumn(
 
 // ─── Constraint signatures ───────────────────────────────────────────────────
 
-function indexSignature(index: ResolvedIndex): string {
+/**
+ * Two-pass index diff key (design decision #8), replacing the old single-key
+ * `indexSignature` (columns + uniqueness only) that treated a name-only or
+ * method-only change as "unchanged".
+ *
+ * Pass 1 — `indexKey`: FULL identity (columns + uniqueness + explicit
+ * `name`, `""` when absent). A same-key match means the index is either
+ * unchanged, drifted only on its AUTO-DERIVED name (handled the same way
+ * as before — an `ALTER INDEX RENAME`), or had its `type` change (handled
+ * as a `DROP`+`CREATE`, since PostgreSQL cannot `ALTER` an index's access
+ * method).
+ *
+ * Pass 2 — residuals only (`indexShape`/`indexDefinition`): pairs an
+ * unmatched prev/next index by shape (columns + uniqueness) ONLY when
+ * exactly one residual remains per side, mirroring `matchColumns`'s
+ * conservatism (never guesses among multiple same-shape candidates). A
+ * shape-only match is a pure rename (`ALTER INDEX RENAME`); a shape match
+ * whose `type` also differs is a single combined `DROP`+`CREATE` (never two
+ * separate statements). An unpaired residual is a genuine add or drop.
+ */
+function indexKey(index: ResolvedIndex): string {
+  return `${index.unique ? "u" : "i"}:${index.columns.join(",")}:${index.name ?? ""}`;
+}
+
+function indexShape(index: ResolvedIndex): string {
   return `${index.unique ? "u" : "i"}:${index.columns.join(",")}`;
+}
+
+function indexDefinition(index: ResolvedIndex): string {
+  return `${indexShape(index)}|${index.type ?? ""}`;
+}
+
+function groupByShape(indexes: ResolvedIndex[]): Map<string, ResolvedIndex[]> {
+  const groups = new Map<string, ResolvedIndex[]>();
+  for (const idx of indexes) {
+    const shape = indexShape(idx);
+    const group = groups.get(shape);
+    if (group) group.push(idx);
+    else groups.set(shape, [idx]);
+  }
+  return groups;
 }
 
 /** Identity only — column set + referenced table/columns. No referential actions. */
@@ -448,18 +486,30 @@ function diffTable(
   }
 
   // Indexes (against the remapped `prev`, so an unchanged index covering a
-  // renamed column is not reported as dropped-and-recreated).
-  const prevIdx = new Map(prev.indexes.map((i) => [indexSignature(i), i]));
-  const nextIdx = new Map(next.indexes.map((i) => [indexSignature(i), i]));
-  const origIdxBySig = new Map(prev.indexes.map((i, n) => [indexSignature(i), prevOriginal.indexes[n]]));
-  for (const [sig, index] of nextIdx) {
-    const old = prevIdx.get(sig);
-    if (!old) {
+  // renamed column is not reported as dropped-and-recreated). See
+  // `indexKey`/`indexShape`/`indexDefinition` above for the two-pass matcher.
+  const prevIdxByKey = new Map(prev.indexes.map((i) => [indexKey(i), i]));
+  const nextIdxByKey = new Map(next.indexes.map((i) => [indexKey(i), i]));
+  const origIdxByKey = new Map(prev.indexes.map((i, n) => [indexKey(i), prevOriginal.indexes[n]]));
+
+  // Pass 1: full-identity match (columns + uniqueness + explicit name).
+  const consumedPrevKeys = new Set<string>();
+  const consumedNextKeys = new Set<string>();
+  for (const [key, index] of nextIdxByKey) {
+    const old = prevIdxByKey.get(key);
+    if (!old) continue;
+    consumedPrevKeys.add(key);
+    consumedNextKeys.add(key);
+    if (indexDefinition(old) !== indexDefinition(index)) {
+      // Same identity, `type` changed: PostgreSQL cannot ALTER an index's
+      // access method — drop and recreate under the new one.
+      const original = origIdxByKey.get(key) ?? old;
+      stmts.push(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`);
       stmts.push(createIndex(next, index));
       continue;
     }
     if (!index.name) {
-      const original = origIdxBySig.get(sig);
+      const original = origIdxByKey.get(key);
       if (original) {
         const oldName = indexName(prevOriginal, original);
         const newName = indexName(next, index);
@@ -467,9 +517,44 @@ function diffTable(
       }
     }
   }
-  for (const [sig, index] of prevIdx) {
-    if (!nextIdx.has(sig)) {
-      const original = origIdxBySig.get(sig) ?? index;
+
+  // Pass 2: residuals — pair by shape ONLY when exactly one residual remains
+  // per side (matchColumns-style conservatism); anything left unpaired is a
+  // genuine add or drop.
+  const prevResidual = prev.indexes.filter((i) => !consumedPrevKeys.has(indexKey(i)));
+  const nextResidual = next.indexes.filter((i) => !consumedNextKeys.has(indexKey(i)));
+  const prevByShape = groupByShape(prevResidual);
+  const nextByShape = groupByShape(nextResidual);
+  const pairedPrevKeys = new Set<string>();
+  const pairedNextKeys = new Set<string>();
+
+  for (const [shape, prevGroup] of prevByShape) {
+    const nextGroup = nextByShape.get(shape);
+    if (!nextGroup || prevGroup.length !== 1 || nextGroup.length !== 1) continue;
+    const oldResidual = prevGroup[0];
+    const newResidual = nextGroup[0];
+    pairedPrevKeys.add(indexKey(oldResidual));
+    pairedNextKeys.add(indexKey(newResidual));
+    const original = origIdxByKey.get(indexKey(oldResidual)) ?? oldResidual;
+    const oldName = indexName(prevOriginal, original);
+    const newName = indexName(next, newResidual);
+    if (indexDefinition(oldResidual) === indexDefinition(newResidual)) {
+      // Shape and method identical, only the name differs: pure rename.
+      if (oldName !== newName) stmts.push(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`);
+    } else {
+      // Name and/or method differ: a single combined DROP+CREATE, never two
+      // separate statements.
+      stmts.push(`DROP INDEX ${quoteIdent(oldName)};`);
+      stmts.push(createIndex(next, newResidual));
+    }
+  }
+
+  for (const idx of nextResidual) {
+    if (!pairedNextKeys.has(indexKey(idx))) stmts.push(createIndex(next, idx));
+  }
+  for (const idx of prevResidual) {
+    if (!pairedPrevKeys.has(indexKey(idx))) {
+      const original = origIdxByKey.get(indexKey(idx)) ?? idx;
       stmts.push(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`);
     }
   }

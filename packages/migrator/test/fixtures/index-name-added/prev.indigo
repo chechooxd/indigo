@@ -1,0 +1,9 @@
+// Regression: an unnamed (derived-name) @@index gaining an explicit `name:`
+// must diff as ALTER INDEX RENAME, not a no-op.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String
+
+  @@index([email])
+}

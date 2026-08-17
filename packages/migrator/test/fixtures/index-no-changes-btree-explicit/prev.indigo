@@ -1,0 +1,10 @@
+// Regression guard for design decision #4: an implicit-btree index and one
+// explicitly declaring `type: btree` are physically identical — the diff
+// must be empty, not a spurious DROP+CREATE.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String
+
+  @@index([email])
+}

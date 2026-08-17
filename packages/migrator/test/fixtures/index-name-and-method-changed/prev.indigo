@@ -1,0 +1,11 @@
+// Regression: name AND method changing together must diff as a single
+// combined DROP+CREATE, never two separate statements (RENAME then
+// DROP+CREATE, or two DROP+CREATE pairs). `hash` is used (not `gin`/`gist`)
+// because PostgreSQL registers a default HASH operator class for `text`.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String
+
+  @@index([email], name: "name_a")
+}
