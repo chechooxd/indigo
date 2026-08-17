@@ -1,0 +1,8 @@
+// Simulates an introspected `prev`: table `name` === its `dbName`
+// (introspection never recovers the logical `.indigo` name), so this
+// table's own `name` equals the physical name the `next` schema below
+// only reaches through `@@map`.
+Table widgets {
+  id   Int    @id @default(autoincrement())
+  name String
+}

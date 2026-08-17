@@ -1,0 +1,8 @@
+// The field is renamed (amount -> amountCents) AND its type changes
+// (Int -> Float) in the same edit, while the physical `dbName` stays
+// "amount_cents". Pass-2 (physical `dbName`) matching MUST still pair
+// this column with prev's so the type change is not silently skipped.
+Table Transaction {
+  id          Int   @id @default(autoincrement())
+  amountCents Float @map("amount_cents")
+}
