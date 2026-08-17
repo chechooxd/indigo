@@ -1,0 +1,9 @@
+// Steady-state schema: logical name "Widget", physical name "widgets" via
+// `@@map`. Against a physically-identical `prev` (see prev.indigo), this
+// MUST produce an empty plan — no spurious DROP+CREATE TABLE.
+Table Widget {
+  id   Int    @id @default(autoincrement())
+  name String
+
+  @@map("widgets")
+}

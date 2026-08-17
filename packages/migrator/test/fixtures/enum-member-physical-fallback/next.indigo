@@ -1,0 +1,13 @@
+// The member is declared under its logical name "PENDING" with an
+// explicit `@map("pending_review")`. Physically it is the SAME member as
+// prev's "pending_review" — this MUST NOT trip `enum-value-removed`, and
+// MUST NOT emit a duplicate `ADD VALUE`.
+enum Status {
+  ACTIVE
+  PENDING @map("pending_review")
+}
+
+Table Widget {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}
