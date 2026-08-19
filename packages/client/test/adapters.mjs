@@ -15,6 +15,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { createPgAdapter, createPGliteAdapter } from "../dist/adapters/index.js";
 import { IndigoDatabaseError } from "../dist/errors.js";
 import { IndigoClientBase } from "../dist/client.js";
+import { withDatabase } from "./pglite-harness.mjs";
 
 let failures = 0;
 
@@ -263,6 +264,60 @@ await check(
     } finally {
       await db.close();
     }
+  },
+);
+
+// ─── Phase 4: createPGliteAdapter error-parity ─────────────────────────────
+
+await check(
+  "createPGliteAdapter: a unique-constraint violation on the direct exec path surfaces as IndigoDatabaseError",
+  async () => {
+    await withDatabase(async (db) => {
+      const adapter = createPGliteAdapter(db);
+      await adapter.exec(
+        'CREATE TABLE "User" (id SERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE)',
+        [],
+      );
+      await adapter.exec('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+
+      let caught;
+      try {
+        await adapter.exec('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+      } catch (err) {
+        caught = err;
+      }
+      assert(caught instanceof IndigoDatabaseError, "expected an IndigoDatabaseError to be thrown");
+      assert(caught.code === "UNIQUE_VIOLATION", `expected code UNIQUE_VIOLATION, got: ${caught?.code}`);
+      assert(caught.sqlstate === "23505", `expected sqlstate 23505, got: ${caught?.sqlstate}`);
+      assert(caught.cause !== undefined, "expected .cause to hold the original PGlite error");
+    });
+  },
+);
+
+await check(
+  "createPGliteAdapter: a unique-constraint violation inside a transaction callback surfaces as IndigoDatabaseError and escapes $transaction",
+  async () => {
+    await withDatabase(async (db) => {
+      const adapter = createPGliteAdapter(db);
+      await adapter.exec(
+        'CREATE TABLE "User" (id SERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE)',
+        [],
+      );
+      await adapter.exec('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+
+      let caught;
+      try {
+        await adapter.transaction(async (exec) => {
+          await exec('INSERT INTO "User" (email) VALUES ($1)', ["a@x.com"]);
+        });
+      } catch (err) {
+        caught = err;
+      }
+      assert(caught instanceof IndigoDatabaseError, "expected an IndigoDatabaseError to be thrown");
+      assert(caught.code === "UNIQUE_VIOLATION", `expected code UNIQUE_VIOLATION, got: ${caught?.code}`);
+      assert(caught.sqlstate === "23505", `expected sqlstate 23505, got: ${caught?.sqlstate}`);
+      assert(caught.cause !== undefined, "expected .cause to hold the original PGlite error");
+    });
   },
 );
 

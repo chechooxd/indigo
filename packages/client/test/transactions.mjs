@@ -233,9 +233,14 @@ await check(
         caught = err;
       }
       assert(caught instanceof Error, "expected $transaction to reject with the tx operation's error");
+      // `createPGliteAdapter`'s transaction-scoped exec is now wrapped with
+      // `withDatabaseErrors` (client-driver-adapters spec, error parity with
+      // `createPgAdapter`), so the not-null violation surfaces as a typed
+      // `IndigoDatabaseError` with the original PGlite error reachable via
+      // `.cause`, rather than as the raw untyped error itself.
       assert(
-        /null/i.test(caught.message),
-        `expected the underlying not-null constraint violation to propagate, got: ${caught?.message}`,
+        caught.cause !== undefined && /null/i.test(caught.cause.message),
+        `expected the underlying not-null constraint violation to propagate via .cause, got: ${caught?.cause?.message}`,
       );
 
       // Prove there is no leaked/held session: the client must still be

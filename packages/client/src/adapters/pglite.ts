@@ -9,6 +9,7 @@
  */
 
 import type { DriverAdapter, Executor } from "../types.js";
+import { withDatabaseErrors } from "../errors.js";
 
 /**
  * Structural subset of PGlite's own API that this adapter needs. Matches the
@@ -35,11 +36,13 @@ export function createPGliteAdapter(
   pglite: PGliteLike,
   options: { close?: boolean } = {},
 ): DriverAdapter {
-  const exec: Executor = async (sql, params) => (await pglite.query(sql, params)).rows;
+  const exec: Executor = withDatabaseErrors(
+    async (sql, params) => (await pglite.query(sql, params)).rows,
+  );
 
   const transaction: DriverAdapter["transaction"] = (fn) =>
     pglite.transaction(async (tx) =>
-      fn(async (sql, params) => (await tx.query(sql, params)).rows),
+      fn(withDatabaseErrors(async (sql, params) => (await tx.query(sql, params)).rows)),
     );
 
   const adapter: DriverAdapter = { exec, transaction };
