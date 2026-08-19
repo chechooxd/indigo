@@ -10,6 +10,7 @@ export * from "./ir.js";
 export * from "./resolve.js";
 export * from "./validate.js";
 export * from "./attributes.js";
+export * from "./print.js";
 
 // Re-export the parser entry point so consumers can go straight from source
 // text to a resolved schema via `@indigodb/core`.

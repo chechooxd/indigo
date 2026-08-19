@@ -2,9 +2,9 @@
  * @indigodb/cli — Shared helpers
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
-import { parse, resolve, IndigoParseError, validate } from "@indigodb/core";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { parse, resolve, IndigoParseError, validate, printSchema } from "@indigodb/core";
 import type { Schema, ResolvedSchema } from "@indigodb/core";
 
 /** Minimal `.env` loader (no dependency). Does not override existing env vars. */
@@ -95,8 +95,96 @@ export function resolveConnectionString(resolved: ResolvedSchema): string {
   process.exit(1);
 }
 
+/**
+ * Resolves a database connection string for commands that do NOT depend on
+ * a pre-existing schema file (e.g. `db pull`, whose output IS the schema
+ * file). Unlike `resolveConnectionString`, this never reads
+ * `resolved.datasource.url` — there is no resolved schema yet.
+ *
+ * Precedence: `--url` flag wins over `DATABASE_URL`. If neither resolves,
+ * errors naming both missing inputs and exits 1.
+ */
+export function resolveBareConnectionString(options: { url?: string }): string {
+  if (options.url) return options.url;
+  const fromEnv = process.env.DATABASE_URL;
+  if (fromEnv) return fromEnv;
+  console.error(`❌ No connection string. Pass --url or set DATABASE_URL.`);
+  process.exit(1);
+}
+
 /** Determines the client output path (generator block > flag > default). */
 export function resolveOutputPath(ast: Schema, flag?: string): string {
   const fromGenerator = ast.generators[0]?.output;
   return resolvePath(flag ?? fromGenerator ?? "src/generated/indigo.ts");
+}
+
+/**
+ * `db pull` NEVER writes credentials into the schema file — even when
+ * `--url` was the actual connection source — because the printed datasource
+ * always points at `DATABASE_URL`. `introspectResolvedSchema` never
+ * populates `schema.datasource` itself, so the CLI synthesizes it here
+ * before printing.
+ */
+export function synthesizePullDatasource(): NonNullable<ResolvedSchema["datasource"]> {
+  return {
+    name: "db",
+    provider: "postgresql",
+    url: { kind: "function", name: "env", args: [{ kind: "string", value: "DATABASE_URL" }] },
+  };
+}
+
+export interface WritePulledSchemaOptions {
+  /** Target schema file path. Ignored when `print` is true. */
+  schema: string;
+  /** Write nothing to disk — print the schema text to stdout only. */
+  print?: boolean;
+}
+
+export interface WritePulledSchemaResult {
+  text: string;
+  /** Absolute path written to, or `undefined` when `print` was used. */
+  path?: string;
+  /** Whether a file already existed at `path` and was overwritten. */
+  overwrote: boolean;
+}
+
+/**
+ * Prints `resolved` (with the datasource synthesized to `env("DATABASE_URL")`,
+ * never a literal credential) and either writes it to `options.schema`
+ * (overwriting unconditionally, no confirmation/`--force`) or, with
+ * `options.print`, writes only to stdout and touches no file. Always logs a
+ * visible success line; logs `⚠️  Overwrote <path>` when a file existed, and
+ * — for a non-`--print` write — the FK-comments-not-regenerated-by-migrate-dev
+ * warning banner, since a pulled schema's foreign keys survive only as
+ * structured comments and `migrate dev` would otherwise plan to drop them.
+ */
+export function writePulledSchema(
+  resolved: ResolvedSchema,
+  options: WritePulledSchemaOptions,
+): WritePulledSchemaResult {
+  resolved.datasource = synthesizePullDatasource();
+  const text = printSchema(resolved);
+
+  if (options.print) {
+    console.log(text);
+    return { text, overwrote: false };
+  }
+
+  const schemaPath = resolvePath(options.schema);
+  const overwrote = existsSync(schemaPath);
+  mkdirSync(dirname(schemaPath), { recursive: true });
+  writeFileSync(schemaPath, text);
+
+  console.log("✅ Schema pulled.");
+  console.log(`   ${schemaPath}`);
+  console.log(`   ${resolved.tables.length} tables, ${resolved.enums.length} enums.`);
+  if (overwrote) console.log(`⚠️  Overwrote ${schemaPath}`);
+  console.log();
+  console.log(
+    "⚠️  Foreign keys survive only as structured comments in the pulled schema — " +
+      "`migrate dev` will NOT regenerate them and will plan to DROP every FK constraint. " +
+      "Re-add `@relation(...)` fields by hand before running `migrate dev` against this schema.",
+  );
+
+  return { text, path: schemaPath, overwrote };
 }
