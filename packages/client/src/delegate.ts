@@ -36,6 +36,7 @@ import type {
   Payload,
 } from "./types.js";
 import { withQueryContext } from "./context.js";
+import { defer } from "./promise.js";
 
 function quote(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
@@ -669,11 +670,11 @@ export class ModelDelegate<
     return "asc";
   }
 
-  async findMany<
+  findMany<
     A extends FindManyArgs<Row, Rel, Where, Cursor> = FindManyArgs<Row, Rel, Where, Cursor>,
   >(args: A = {} as A): Promise<Payload<Row, Rel, A>[]> {
-    return withQueryContext({ model: this.meta.name, operation: "findMany" }, () =>
-      this.findManyImpl(args),
+    return defer(this.meta.name, "findMany", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "findMany" }, () => d.findManyImpl(args)),
     );
   }
 
@@ -766,21 +767,33 @@ export class ModelDelegate<
     return rows as unknown as Payload<Row, Rel, A>[];
   }
 
-  async findFirst<A extends FindFirstArgs<Row, Rel, Where> = FindFirstArgs<Row, Rel, Where>>(
+  findFirst<A extends FindFirstArgs<Row, Rel, Where> = FindFirstArgs<Row, Rel, Where>>(
     args: A = {} as A,
   ): Promise<Payload<Row, Rel, A> | null> {
-    return withQueryContext({ model: this.meta.name, operation: "findFirst" }, async () => {
-      const rows = await this.findMany({ ...args, take: 1 } as A);
-      return rows[0] ?? null;
-    });
+    return defer(this.meta.name, "findFirst", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "findFirst" }, () => d.findFirstImpl(args)),
+    );
   }
 
-  async findUnique<A extends FindUniqueArgs<Row, Rel, Where> = FindUniqueArgs<Row, Rel, Where>>(
+  private async findFirstImpl<
+    A extends FindFirstArgs<Row, Rel, Where> = FindFirstArgs<Row, Rel, Where>,
+  >(args: A): Promise<Payload<Row, Rel, A> | null> {
+    const rows = await this.findMany({ ...args, take: 1 } as A);
+    return rows[0] ?? null;
+  }
+
+  findUnique<A extends FindUniqueArgs<Row, Rel, Where> = FindUniqueArgs<Row, Rel, Where>>(
     args: A,
   ): Promise<Payload<Row, Rel, A> | null> {
-    return withQueryContext({ model: this.meta.name, operation: "findUnique" }, () =>
-      this.findFirst({ where: args.where, select: args.select, include: args.include } as A),
+    return defer(this.meta.name, "findUnique", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "findUnique" }, () => d.findUniqueImpl(args)),
     );
+  }
+
+  private async findUniqueImpl<
+    A extends FindUniqueArgs<Row, Rel, Where> = FindUniqueArgs<Row, Rel, Where>,
+  >(args: A): Promise<Payload<Row, Rel, A> | null> {
+    return this.findFirst({ where: args.where, select: args.select, include: args.include } as A);
   }
 
   /**
@@ -1102,9 +1115,9 @@ export class ModelDelegate<
    * itself; phase 3 applies every non-`fkSide` relation op, now that the
    * parent's key exists for the child's FK (spec Requirement 1).
    */
-  async create(args: CreateArgs<CreateInput>): Promise<Row> {
-    return withQueryContext({ model: this.meta.name, operation: "create" }, () =>
-      this.createImpl(args),
+  create(args: CreateArgs<CreateInput>): Promise<Row> {
+    return defer(this.meta.name, "create", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "create" }, () => d.createImpl(args)),
     );
   }
 
@@ -1191,9 +1204,9 @@ export class ModelDelegate<
    * unbounded `update()` (design.md's confirmed product decision: `set: []`
    * disconnects the entire currently-linked set, deletes nothing).
    */
-  async update(args: UpdateArgs<Row, UpdateInput, Where>): Promise<Row> {
-    return withQueryContext({ model: this.meta.name, operation: "update" }, () =>
-      this.updateImpl(args),
+  update(args: UpdateArgs<Row, UpdateInput, Where>): Promise<Row> {
+    return defer(this.meta.name, "update", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "update" }, () => d.updateImpl(args)),
     );
   }
 
@@ -1282,25 +1295,33 @@ export class ModelDelegate<
     });
   }
 
-  async delete(args: DeleteArgs<Row, Where>): Promise<Row> {
-    return withQueryContext({ model: this.meta.name, operation: "delete" }, async () => {
-      const params = new Params();
-      let sql = `DELETE FROM ${quote(this.meta.table)}`;
-      sql += this.buildWhere(args.where, params);
-      sql += ` RETURNING ${this.selectList()}`;
-      const rows = await this.exec(sql, params.values);
-      return rows[0] as Row;
-    });
+  delete(args: DeleteArgs<Row, Where>): Promise<Row> {
+    return defer(this.meta.name, "delete", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "delete" }, () => d.deleteImpl(args)),
+    );
   }
 
-  async count(args: CountArgs<Row, Where> = {}): Promise<number> {
-    return withQueryContext({ model: this.meta.name, operation: "count" }, async () => {
-      const params = new Params();
-      let sql = `SELECT count(*)::int AS count FROM ${quote(this.meta.table)}`;
-      sql += this.buildWhere(args.where, params);
-      const rows = await this.exec(sql, params.values);
-      return Number((rows[0] as { count: number }).count);
-    });
+  private async deleteImpl(args: DeleteArgs<Row, Where>): Promise<Row> {
+    const params = new Params();
+    let sql = `DELETE FROM ${quote(this.meta.table)}`;
+    sql += this.buildWhere(args.where, params);
+    sql += ` RETURNING ${this.selectList()}`;
+    const rows = await this.exec(sql, params.values);
+    return rows[0] as Row;
+  }
+
+  count(args: CountArgs<Row, Where> = {}): Promise<number> {
+    return defer(this.meta.name, "count", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "count" }, () => d.countImpl(args)),
+    );
+  }
+
+  private async countImpl(args: CountArgs<Row, Where>): Promise<number> {
+    const params = new Params();
+    let sql = `SELECT count(*)::int AS count FROM ${quote(this.meta.table)}`;
+    sql += this.buildWhere(args.where, params);
+    const rows = await this.exec(sql, params.values);
+    return Number((rows[0] as { count: number }).count);
   }
 
   /**
@@ -1317,9 +1338,9 @@ export class ModelDelegate<
    * SQL is issued (spec has no "0 rows" scenario; there is nothing to
    * `VALUES` list from).
    */
-  async createMany(args: CreateManyArgs<CreateManyInput>): Promise<BatchPayload> {
-    return withQueryContext({ model: this.meta.name, operation: "createMany" }, () =>
-      this.createManyImpl(args),
+  createMany(args: CreateManyArgs<CreateManyInput>): Promise<BatchPayload> {
+    return defer(this.meta.name, "createMany", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "createMany" }, () => d.createManyImpl(args)),
     );
   }
 
@@ -1356,9 +1377,9 @@ export class ModelDelegate<
    * compiler. `requireNonEmptyWhere` throws BEFORE any SQL is built (spec
    * "updateMany and deleteMany require a non-empty where").
    */
-  async updateMany(args: UpdateManyArgs<Row, UpdateInput, Where>): Promise<BatchPayload> {
-    return withQueryContext({ model: this.meta.name, operation: "updateMany" }, () =>
-      this.updateManyImpl(args),
+  updateMany(args: UpdateManyArgs<Row, UpdateInput, Where>): Promise<BatchPayload> {
+    return defer(this.meta.name, "updateMany", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "updateMany" }, () => d.updateManyImpl(args)),
     );
   }
 
@@ -1380,9 +1401,9 @@ export class ModelDelegate<
    * shapes), reusing `buildWhere` unmodified — same required-`where`
    * guard as `updateMany`.
    */
-  async deleteMany(args: DeleteManyArgs<Row, Where>): Promise<BatchPayload> {
-    return withQueryContext({ model: this.meta.name, operation: "deleteMany" }, () =>
-      this.deleteManyImpl(args),
+  deleteMany(args: DeleteManyArgs<Row, Where>): Promise<BatchPayload> {
+    return defer(this.meta.name, "deleteMany", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "deleteMany" }, () => d.deleteManyImpl(args)),
     );
   }
 
@@ -1517,11 +1538,11 @@ export class ModelDelegate<
    * unmodified — no second WHERE compiler. Every `_sum`/`_avg`/`_min`/`_max`
    * field is validated BEFORE any SQL is built.
    */
-  async aggregate<A extends AggregateArgs<Row, Where, Numeric> = AggregateArgs<Row, Where, Numeric>>(
+  aggregate<A extends AggregateArgs<Row, Where, Numeric> = AggregateArgs<Row, Where, Numeric>>(
     args: A = {} as A,
   ): Promise<AggregateResult> {
-    return withQueryContext({ model: this.meta.name, operation: "aggregate" }, () =>
-      this.aggregateImpl(args),
+    return defer(this.meta.name, "aggregate", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "aggregate" }, () => d.aggregateImpl(args)),
     );
   }
 
@@ -1552,10 +1573,12 @@ export class ModelDelegate<
    * carries the grouped `by` fields plus the requested aggregates,
    * flattened onto the same object.
    */
-  async groupBy<A extends GroupByArgs<Row, Where, Numeric> = GroupByArgs<Row, Where, Numeric>>(
+  groupBy<A extends GroupByArgs<Row, Where, Numeric> = GroupByArgs<Row, Where, Numeric>>(
     args: A,
   ): Promise<Array<GroupByResult<Row>>> {
-    return withQueryContext({ model: this.meta.name, operation: "groupBy" }, () => this.groupByImpl(args));
+    return defer(this.meta.name, "groupBy", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "groupBy" }, () => d.groupByImpl(args)),
+    );
   }
 
   private async groupByImpl(args: GroupByArgs<Row, Where, Numeric>): Promise<Array<GroupByResult<Row>>> {
@@ -1633,14 +1656,16 @@ export class ModelDelegate<
    * (client-upsert spec "upsert issues one ON CONFLICT statement targeting
    * a declared unique group").
    */
-  async upsert<
+  upsert<
     A extends UpsertArgs<CreateInput, UpdateInput, UniqueWhere> = UpsertArgs<
       CreateInput,
       UpdateInput,
       UniqueWhere
     >,
   >(args: A): Promise<Row> {
-    return withQueryContext({ model: this.meta.name, operation: "upsert" }, () => this.upsertImpl(args));
+    return defer(this.meta.name, "upsert", this, (d) =>
+      withQueryContext({ model: d.meta.name, operation: "upsert" }, () => d.upsertImpl(args)),
+    );
   }
 
   private async upsertImpl(args: UpsertArgs<CreateInput, UpdateInput, UniqueWhere>): Promise<Row> {
