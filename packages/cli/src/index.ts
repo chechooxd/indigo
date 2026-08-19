@@ -13,12 +13,14 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { Command } from "commander";
 import pg from "pg";
 import { generateClient } from "@indigodb/generator";
-import { renderPushSql } from "@indigodb/migrator";
+import { renderPushSql, introspectResolvedSchema } from "@indigodb/migrator";
 import {
   loadEnv,
   loadSchema,
   resolveConnectionString,
+  resolveBareConnectionString,
   resolveOutputPath,
+  writePulledSchema,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -108,6 +110,35 @@ db
       await client.end();
     }
   });
+
+// ─── db pull ─────────────────────────────────────────────────────────────────
+db
+  .command("pull")
+  .description("Introspect the database and write/print an .indigo schema.")
+  .option("-s, --schema <path>", "Schema file path", "./schema.indigo")
+  .option("--url <connectionString>", "Database connection string (overrides DATABASE_URL)")
+  .option("--db-schema <name>", "Catalog schema to introspect", "public")
+  .option("--print", "Print the schema to stdout instead of writing it")
+  .action(
+    async (options: { schema: string; url?: string; dbSchema: string; print?: boolean }) => {
+      loadEnv();
+      const connectionString = resolveBareConnectionString({ url: options.url });
+      const client = new pg.Client({ connectionString });
+      try {
+        await client.connect();
+        const resolved = await introspectResolvedSchema(
+          (sql, params) => client.query(sql, params),
+          { schema: options.dbSchema },
+        );
+        writePulledSchema(resolved, { schema: options.schema, print: options.print });
+      } catch (error) {
+        console.error("❌ db pull failed:", (error as Error).message);
+        process.exitCode = 1;
+      } finally {
+        await client.end();
+      }
+    },
+  );
 
 // ─── migrate ─────────────────────────────────────────────────────────────────
 // Versioned migrations with history (like `prisma migrate`), vs. the historyless
