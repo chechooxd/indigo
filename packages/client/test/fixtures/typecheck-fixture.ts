@@ -14,6 +14,8 @@
  */
 
 import { ModelDelegate } from "../../src/delegate.js";
+import { IndigoClientBase } from "../../src/client.js";
+import type { IndigoPromise } from "../../src/promise.js";
 import type {
   ToOneRelationInput,
   ToManyRelationInput,
@@ -24,6 +26,7 @@ import type {
   JsonFilter,
   GroupByArgs,
   UpsertArgs,
+  DeferredResults,
 } from "../../src/types.js";
 
 // Mirrors the generator's const-object enum emission (client-query-type-
@@ -144,6 +147,15 @@ declare const postDelegate: ModelDelegate<
   PostRelations,
   PostWhereInput
 >;
+
+// `declare const` is only legal at module/namespace top level, not inside a
+// function body (TS1184) — module-scoped stand-ins for the generator's
+// emitted array-form overload and `IndigoClientBase`, used by the
+// `$transaction` array-form scenarios inside `scenarios()` below.
+declare const arrayTransaction: <const Ops extends readonly IndigoPromise<unknown>[]>(
+  ops: Ops,
+) => Promise<DeferredResults<Ops>>;
+declare const baseClient: IndigoClientBase;
 
 // ── numeric-gated aggregate narrowing (client-aggregation PR C) — mirrors
 //    the generator's `<Model>NumericFields` union: every field tagged
@@ -431,6 +443,47 @@ async function scenarios() {
     update: { name: "A" },
   };
   void upsertArgsWithNonUniqueWhere;
+
+  // ── $transaction array form typing (client-transaction-array-form,
+  //    client-deferred-queries spec: "Existing Promise-typed call sites keep
+  //    compiling", "Array form executes ops atomically in order on one
+  //    session") ──
+
+  // A delegate method's `IndigoPromise<T>` return value assigns directly to
+  // a plain `Promise<T>`-typed variable and composes with `Promise.all`,
+  // since `IndigoPromise<T>` structurally implements `Promise<T>`
+  // (design.md Decision 1) — no subclassing, no special-casing needed at
+  // any existing `Promise<T>`-typed call site.
+  const assignableToPromise: Promise<User[]> = userDelegate.findMany();
+  void assignableToPromise;
+
+  const [viaPromiseAll, countViaPromiseAll] = await Promise.all([
+    userDelegate.findMany(),
+    postDelegate.count(),
+  ]);
+  void viaPromiseAll;
+  void countViaPromiseAll;
+
+  // Mirrors the generator's emitted array-form overload —
+  // `$transaction<const Ops extends readonly IndigoPromise<unknown>[]>(ops:
+  // Ops): Promise<DeferredResults<Ops>>` — without needing a full generated
+  // `IndigoClient` fixture: `DeferredResults<Ops>` itself is the runtime
+  // package's own type contract (types.ts), so this proves the tuple
+  // inference directly.
+  const [createdUser, createdPost]: [User, Post] = await arrayTransaction([
+    userDelegate.create({ data: { name: "Ada", email: "ada@example.com" } }),
+    postDelegate.create({ data: { title: "t", authorId: 1 } }),
+  ]);
+  void createdUser;
+  void createdPost;
+
+  // `IndigoClientBase` has no array-accepting `$transaction` overload
+  // (client-transactions spec, "IndigoClientBase does not support the array
+  // form") — enforced purely at compile time by never declaring one; an
+  // array literal is not assignable to `fn: (exec: Executor) => Promise<T>`.
+  // @ts-expect-error IndigoClientBase.$transaction only accepts the callback
+  // form — an array is not assignable to `(exec: Executor) => Promise<T>`
+  baseClient.$transaction([userDelegate.create({ data: { name: "Ada", email: "ada@example.com" } })]);
 }
 
 void scenarios;

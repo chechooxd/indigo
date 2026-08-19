@@ -7,6 +7,11 @@
  * constructor that calls the factory once, and a generated `$transaction`
  * method on `IndigoClient` that hands the callback a `TransactionClient`
  * bound to a session-scoped executor (see design.md, Decision #3/#5).
+ *
+ * Slice 3 (`client-transaction-array-form`, design.md Decision 4/5) changes
+ * `__delegates`'s return shape to `{ tx, byModel }` and adds a second
+ * `$transaction` overload for the array form (`$transaction([...])`),
+ * sharing `$withSession`/`__delegates` with the callback form.
  */
 
 import { readFileSync } from "node:fs";
@@ -36,17 +41,18 @@ function check(name, fn) {
 
 console.log("generator regression: transaction emission");
 
-check("emits a __delegates(exec, realtime, runAtomic?) factory function", () => {
+check("emits a __delegates(exec, realtime, runAtomic?) factory returning { tx, byModel }", () => {
   deepStrictEqual(
     output.includes(
       "function __delegates(\n" +
         "  exec: Executor,\n" +
         "  realtime: () => RealtimeConnectionManager,\n" +
         "  runAtomic?: RunAtomic,\n" +
-        "): TransactionClient {",
+        "): { tx: TransactionClient; byModel: Record<string, unknown> } {",
     ),
     true,
   );
+  deepStrictEqual(output.includes("return { tx: client, byModel: reg };"), true);
 });
 
 check("__delegates builds the plain model's ModelDelegate", () => {
@@ -119,7 +125,7 @@ check("IndigoClient declares readonly delegate fields without initializers", () 
 });
 
 check(
-  "generated constructor calls __delegates(this.exec, this.$realtime, runAtomic) once, wiring the REAL top-level thunk, and assigns fields",
+  "generated constructor calls __delegates(this.exec, this.$realtime, runAtomic) once, destructures d.tx, and assigns fields",
   () => {
     const ctorStart = output.indexOf("constructor(options?: IndigoClientOptions) {");
     deepStrictEqual(ctorStart >= 0, true);
@@ -131,25 +137,59 @@ check(
       ),
       true,
     );
-    deepStrictEqual(ctorBlock.includes("this.user = "), true);
-    deepStrictEqual(ctorBlock.includes("this.message = "), true);
+    deepStrictEqual(ctorBlock.includes("this.user = d.tx.user;"), true);
+    deepStrictEqual(ctorBlock.includes("this.message = d.tx.message;"), true);
     // exactly one factory call in the constructor
     const matches = ctorBlock.match(/__delegates\(/g) ?? [];
     deepStrictEqual(matches.length, 1);
   },
 );
 
-check("emits $transaction<T>(fn) delegating to $withSession and __delegates", () => {
+check("emits the callback-form $transaction overload signature", () => {
   deepStrictEqual(
     output.includes(
-      "$transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> {",
+      "$transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T>;",
     ),
     true,
   );
+});
+
+check("emits the array-form $transaction overload signature", () => {
   deepStrictEqual(
-    output.includes("return this.$withSession((exec) => fn(__delegates(exec, this.$realtime)));"),
+    output.includes(
+      "$transaction<const Ops extends readonly IndigoPromise<unknown>[]>(ops: Ops): Promise<DeferredResults<Ops>>;",
+    ),
     true,
   );
+});
+
+check("array-form implementation validates every element, short-circuits empty, and calls runDeferred via __delegates(...).byModel", () => {
+  deepStrictEqual(output.includes("if (Array.isArray(fnOrOps)) {"), true);
+  deepStrictEqual(output.includes("if (!isIndigoPromise(op)) {"), true);
+  deepStrictEqual(output.includes('new IndigoTransactionError(\n            "NOT_A_DEFERRED_OPERATION",'), true);
+  deepStrictEqual(output.includes("if (fnOrOps.length === 0) {"), true);
+  deepStrictEqual(output.includes("return Promise.resolve([]);"), true);
+  deepStrictEqual(
+    output.includes(
+      "return this.$withSession((exec) => runDeferred(fnOrOps, __delegates(exec, this.$realtime).byModel));",
+    ),
+    true,
+  );
+});
+
+check("callback-form implementation still delegates to $withSession and __delegates(...).tx", () => {
+  deepStrictEqual(
+    output.includes("return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));"),
+    true,
+  );
+});
+
+check("imports the runtime deferred-operation contract (isIndigoPromise, runDeferred, IndigoTransactionError)", () => {
+  deepStrictEqual(output.includes("isIndigoPromise"), true);
+  deepStrictEqual(output.includes("runDeferred"), true);
+  deepStrictEqual(output.includes("IndigoTransactionError"), true);
+  deepStrictEqual(output.includes("IndigoPromise,"), true);
+  deepStrictEqual(output.includes("DeferredResults,"), true);
 });
 
 if (failures > 0) {

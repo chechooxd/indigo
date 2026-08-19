@@ -165,14 +165,26 @@ export function isIndigoPromise(value: unknown): value is IndigoPromise<unknown>
  *   return defer(this.meta.name, "count", this, (d) => d.countImpl(args));
  * }
  * ```
+ *
+ * The DECLARED return type erases `D` down to `IndigoPromise<T>` (`D`
+ * defaulting to `unknown`) rather than leaking the caller's concrete `D` —
+ * `client-transaction-array-form` design.md Decision 4/5: `$transaction`'s
+ * array-form overload constrains its input to `readonly IndigoPromise<unknown>[]`,
+ * and `IndigoPromise<T, D>.run`'s parameter position is CONTRAVARIANT in `D`,
+ * so a concrete `IndigoPromise<T, ModelDelegate<...>>` (what every delegate
+ * method actually returns) is never structurally assignable to
+ * `IndigoPromise<T, unknown>` — only an explicit erasure at this one
+ * boundary makes the array form's generic inference (`DeferredResults<Ops>`)
+ * type-check at every call site. This is a type-only erasure: the runtime
+ * value is unchanged, `__claim`/`settle` still close over the real `D`.
  */
 export function defer<T, D>(
   model: string,
   operation: string,
   self: D,
   run: (delegate: D) => Promise<T>,
-): IndigoPromise<T, D> {
-  return new IndigoPromise<T, D>(model, operation, self, run);
+): IndigoPromise<T> {
+  return new IndigoPromise<T, D>(model, operation, self, run) as unknown as IndigoPromise<T>;
 }
 
 /**

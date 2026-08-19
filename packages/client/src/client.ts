@@ -11,6 +11,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { DriverAdapter, Executor, QueryExtension, TransactionHook } from "./types.js";
 import { RealtimeConnectionManager, SseTransport } from "./realtime.js";
 import { createPgAdapter } from "./adapters/pg.js";
+import { IndigoTransactionError } from "./promise.js";
 
 export interface RealtimeOptions {
   /**
@@ -50,6 +51,22 @@ export interface IndigoClientOptions {
   extensions?: QueryExtension[];
 }
 
+/**
+ * `IndigoClientBase` — bare runtime client. It supports only the CALLBACK
+ * form of `$transaction(fn)` (`client-transaction-array-form` spec,
+ * "IndigoClientBase does not support the array form"). The sequential ARRAY
+ * form (`$transaction([...])`) requires the generated `IndigoClient`'s
+ * `TransactionClient`/`byModel` registry (built by the generator's
+ * `__delegates`, design.md Decision 4) to rebind each `IndigoPromise` by
+ * model name — a registry this bare base class has no way to build, since it
+ * has no compiled model metadata. Compile-time, this is enforced simply by
+ * never declaring an array-accepting overload here. At runtime, a caller
+ * that bypasses the types (plain JS, or TypeScript `as any`) is caught by
+ * the explicit `Array.isArray` guard in `$transaction` below — without it,
+ * such a caller would instead get an opaque "fn is not a function" error
+ * thrown from inside `$withSession` AFTER `BEGIN` was already issued
+ * (design.md Decision 5).
+ */
 export class IndigoClientBase {
   private readonly pool: PgPool | null;
   private readonly run: Executor;
@@ -203,6 +220,18 @@ export class IndigoClientBase {
    * to that same executor instead.
    */
   async $transaction<T>(fn: (exec: Executor) => Promise<T>): Promise<T> {
+    // Runtime boundary guard (see class doc comment above) — checked before
+    // any session/BEGIN work, so a JS/`as any` caller passing an array gets
+    // an explicit, typed error instead of an opaque failure deep inside
+    // `$withSession`.
+    if (Array.isArray(fn)) {
+      throw new IndigoTransactionError(
+        "ARRAY_FORM_REQUIRES_GENERATED_CLIENT",
+        "IndigoClientBase.$transaction only supports the callback form " +
+          "(fn: (exec) => Promise<T>). The array form ($transaction([...])) " +
+          "requires a generated IndigoClient — run `indigodb generate`.",
+      );
+    }
     return this.$withSession(fn);
   }
 

@@ -248,7 +248,7 @@ export function generateClient(schema: ResolvedSchema): string {
   const out: string[] = [];
   const hasRealtime = schema.tables.some((t) => t.realtime);
 
-  const runtimeImports = ["IndigoClientBase", "ModelDelegate"];
+  const runtimeImports = ["IndigoClientBase", "ModelDelegate", "isIndigoPromise", "runDeferred", "IndigoTransactionError"];
   if (hasRealtime) runtimeImports.push("RealtimeModelDelegate");
   out.push(
     "// ──────────────────────────────────────────────────────────────────────────────",
@@ -280,6 +280,8 @@ export function generateClient(schema: ResolvedSchema): string {
     "  AggregateResult,",
     "  GroupByResult,",
     "  UpsertArgs,",
+    "  IndigoPromise,",
+    "  DeferredResults,",
     '} from "@indigodb/client";',
     "",
   );
@@ -395,7 +397,7 @@ export function generateClient(schema: ResolvedSchema): string {
     "  exec: Executor,",
     "  realtime: () => RealtimeConnectionManager,",
     "  runAtomic?: RunAtomic,",
-    "): TransactionClient {",
+    "): { tx: TransactionClient; byModel: Record<string, unknown> } {",
     "  const reg: Record<string, ModelDelegate<any, any, any, any>> = {};",
     "  const siblings = () => reg;",
     "  const client: TransactionClient = {",
@@ -434,7 +436,7 @@ export function generateClient(schema: ResolvedSchema): string {
     const d = delegateName(table.name);
     out.push(`  reg[${JSON.stringify(table.name)}] = client.${d};`);
   }
-  out.push("  return client;", "}", "");
+  out.push("  return { tx: client, byModel: reg };", "}", "");
 
   // ─── Client class ───────────────────────────────────────────────────────
   out.push("export class IndigoClient extends IndigoClientBase {");
@@ -451,13 +453,33 @@ export function generateClient(schema: ResolvedSchema): string {
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    out.push(`    this.${d} = d.${d};`);
+    out.push(`    this.${d} = d.tx.${d};`);
   }
   out.push(
     "  }",
     "",
-    "  $transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> {",
-    "    return this.$withSession((exec) => fn(__delegates(exec, this.$realtime)));",
+    "  $transaction<T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T>;",
+    "  $transaction<const Ops extends readonly IndigoPromise<unknown>[]>(ops: Ops): Promise<DeferredResults<Ops>>;",
+    "  $transaction(",
+    "    fnOrOps: ((tx: TransactionClient) => Promise<unknown>) | readonly IndigoPromise<unknown>[],",
+    "  ): Promise<unknown> {",
+    "    if (Array.isArray(fnOrOps)) {",
+    "      for (const op of fnOrOps) {",
+    "        if (!isIndigoPromise(op)) {",
+    "          throw new IndigoTransactionError(",
+    '            "NOT_A_DEFERRED_OPERATION",',
+    '            "$transaction array elements must be deferred operations returned by a model " +',
+    "              `delegate method (e.g. db.user.create(...)), got ${typeof op}. If this value comes ` +",
+    '              "from a generated client, regenerate it.",',
+    "          );",
+    "        }",
+    "      }",
+    "      if (fnOrOps.length === 0) {",
+    "        return Promise.resolve([]);",
+    "      }",
+    "      return this.$withSession((exec) => runDeferred(fnOrOps, __delegates(exec, this.$realtime).byModel));",
+    "    }",
+    "    return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));",
     "  }",
   );
   out.push("}", "");

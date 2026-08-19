@@ -36,7 +36,7 @@ import type {
   Payload,
 } from "./types.js";
 import { withQueryContext } from "./context.js";
-import { defer } from "./promise.js";
+import { defer, type IndigoPromise } from "./promise.js";
 
 function quote(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
@@ -672,7 +672,7 @@ export class ModelDelegate<
 
   findMany<
     A extends FindManyArgs<Row, Rel, Where, Cursor> = FindManyArgs<Row, Rel, Where, Cursor>,
-  >(args: A = {} as A): Promise<Payload<Row, Rel, A>[]> {
+  >(args: A = {} as A): IndigoPromise<Payload<Row, Rel, A>[]> {
     return defer(this.meta.name, "findMany", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "findMany" }, () => d.findManyImpl(args)),
     );
@@ -769,7 +769,7 @@ export class ModelDelegate<
 
   findFirst<A extends FindFirstArgs<Row, Rel, Where> = FindFirstArgs<Row, Rel, Where>>(
     args: A = {} as A,
-  ): Promise<Payload<Row, Rel, A> | null> {
+  ): IndigoPromise<Payload<Row, Rel, A> | null> {
     return defer(this.meta.name, "findFirst", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "findFirst" }, () => d.findFirstImpl(args)),
     );
@@ -784,7 +784,7 @@ export class ModelDelegate<
 
   findUnique<A extends FindUniqueArgs<Row, Rel, Where> = FindUniqueArgs<Row, Rel, Where>>(
     args: A,
-  ): Promise<Payload<Row, Rel, A> | null> {
+  ): IndigoPromise<Payload<Row, Rel, A> | null> {
     return defer(this.meta.name, "findUnique", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "findUnique" }, () => d.findUniqueImpl(args)),
     );
@@ -1115,7 +1115,7 @@ export class ModelDelegate<
    * itself; phase 3 applies every non-`fkSide` relation op, now that the
    * parent's key exists for the child's FK (spec Requirement 1).
    */
-  create(args: CreateArgs<CreateInput>): Promise<Row> {
+  create(args: CreateArgs<CreateInput>): IndigoPromise<Row> {
     return defer(this.meta.name, "create", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "create" }, () => d.createImpl(args)),
     );
@@ -1204,7 +1204,7 @@ export class ModelDelegate<
    * unbounded `update()` (design.md's confirmed product decision: `set: []`
    * disconnects the entire currently-linked set, deletes nothing).
    */
-  update(args: UpdateArgs<Row, UpdateInput, Where>): Promise<Row> {
+  update(args: UpdateArgs<Row, UpdateInput, Where>): IndigoPromise<Row> {
     return defer(this.meta.name, "update", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "update" }, () => d.updateImpl(args)),
     );
@@ -1295,7 +1295,7 @@ export class ModelDelegate<
     });
   }
 
-  delete(args: DeleteArgs<Row, Where>): Promise<Row> {
+  delete(args: DeleteArgs<Row, Where>): IndigoPromise<Row> {
     return defer(this.meta.name, "delete", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "delete" }, () => d.deleteImpl(args)),
     );
@@ -1310,7 +1310,7 @@ export class ModelDelegate<
     return rows[0] as Row;
   }
 
-  count(args: CountArgs<Row, Where> = {}): Promise<number> {
+  count(args: CountArgs<Row, Where> = {}): IndigoPromise<number> {
     return defer(this.meta.name, "count", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "count" }, () => d.countImpl(args)),
     );
@@ -1338,7 +1338,7 @@ export class ModelDelegate<
    * SQL is issued (spec has no "0 rows" scenario; there is nothing to
    * `VALUES` list from).
    */
-  createMany(args: CreateManyArgs<CreateManyInput>): Promise<BatchPayload> {
+  createMany(args: CreateManyArgs<CreateManyInput>): IndigoPromise<BatchPayload> {
     return defer(this.meta.name, "createMany", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "createMany" }, () => d.createManyImpl(args)),
     );
@@ -1377,7 +1377,7 @@ export class ModelDelegate<
    * compiler. `requireNonEmptyWhere` throws BEFORE any SQL is built (spec
    * "updateMany and deleteMany require a non-empty where").
    */
-  updateMany(args: UpdateManyArgs<Row, UpdateInput, Where>): Promise<BatchPayload> {
+  updateMany(args: UpdateManyArgs<Row, UpdateInput, Where>): IndigoPromise<BatchPayload> {
     return defer(this.meta.name, "updateMany", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "updateMany" }, () => d.updateManyImpl(args)),
     );
@@ -1401,7 +1401,7 @@ export class ModelDelegate<
    * shapes), reusing `buildWhere` unmodified — same required-`where`
    * guard as `updateMany`.
    */
-  deleteMany(args: DeleteManyArgs<Row, Where>): Promise<BatchPayload> {
+  deleteMany(args: DeleteManyArgs<Row, Where>): IndigoPromise<BatchPayload> {
     return defer(this.meta.name, "deleteMany", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "deleteMany" }, () => d.deleteManyImpl(args)),
     );
@@ -1540,7 +1540,7 @@ export class ModelDelegate<
    */
   aggregate<A extends AggregateArgs<Row, Where, Numeric> = AggregateArgs<Row, Where, Numeric>>(
     args: A = {} as A,
-  ): Promise<AggregateResult> {
+  ): IndigoPromise<AggregateResult> {
     return defer(this.meta.name, "aggregate", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "aggregate" }, () => d.aggregateImpl(args)),
     );
@@ -1575,7 +1575,7 @@ export class ModelDelegate<
    */
   groupBy<A extends GroupByArgs<Row, Where, Numeric> = GroupByArgs<Row, Where, Numeric>>(
     args: A,
-  ): Promise<Array<GroupByResult<Row>>> {
+  ): IndigoPromise<Array<GroupByResult<Row>>> {
     return defer(this.meta.name, "groupBy", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "groupBy" }, () => d.groupByImpl(args)),
     );
@@ -1662,7 +1662,7 @@ export class ModelDelegate<
       UpdateInput,
       UniqueWhere
     >,
-  >(args: A): Promise<Row> {
+  >(args: A): IndigoPromise<Row> {
     return defer(this.meta.name, "upsert", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "upsert" }, () => d.upsertImpl(args)),
     );
