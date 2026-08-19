@@ -18,5 +18,7 @@ export { RealtimeConnectionManager, SseTransport } from "./realtime.js";
 export type { RealtimeTransport, TransportHandlers, Unsubscribe } from "./realtime.js";
 export type { RealtimeEvent, RealtimeOp } from "@indigodb/realtime";
 export { currentQueryContext } from "./context.js";
+export { IndigoPromise, isIndigoPromise, defer, runDeferred, IndigoTransactionError } from "./promise.js";
+export type { TransactionErrorCode } from "./promise.js";
 export type * from "./types.js";
 export * from "./adapters/index.js";

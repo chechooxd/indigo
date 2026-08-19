@@ -6,6 +6,8 @@
  * model; `WhereInput` is derived structurally from `Row`.
  */
 
+import type { IndigoPromise } from "./promise.js";
+
 export type OrderDirection = "asc" | "desc";
 
 /** Operator object usable in a `where` clause (MVP subset). */
@@ -504,3 +506,16 @@ export interface DriverAdapter {
    */
   transaction?: TransactionHook;
 }
+
+// ─── Array-form `$transaction([...])` (client-transaction-array-form spec) ──
+
+/**
+ * Tuple-preserving result type for `$transaction([op1, op2, ...])`
+ * (design.md "Contracts"): reads `T` directly out of each element's
+ * `IndigoPromise<T>` — not `Awaited<Ops[K]>` — so a non-deferred array
+ * element (a plain value or a stale eager `Promise<T>`) is a compile error
+ * instead of silently widening to `never`/`unknown` through `Awaited`.
+ */
+export type DeferredResults<Ops extends readonly unknown[]> = {
+  -readonly [K in keyof Ops]: Ops[K] extends IndigoPromise<infer T> ? T : never;
+};
