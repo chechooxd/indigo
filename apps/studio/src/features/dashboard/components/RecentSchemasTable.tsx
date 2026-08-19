@@ -9,15 +9,16 @@ import { Edit3, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { RecentSchema } from '../../../types';
 
+const VIEW_ALL_DISABLED_TITLE = 'All schemas are already listed here.';
+
 interface RecentSchemasTableProps {
   schemas: RecentSchema[];
   onToggleActive: (id: string) => void;
   onEdit: (id: string) => void;
   onRemove: (id: string, e: React.MouseEvent) => void;
-  onViewAll: () => void;
 }
 
-export function RecentSchemasTable({ schemas, onToggleActive, onEdit, onRemove, onViewAll }: RecentSchemasTableProps) {
+export function RecentSchemasTable({ schemas, onToggleActive, onEdit, onRemove }: RecentSchemasTableProps) {
   const { t } = useTranslation();
 
   return (
@@ -32,8 +33,9 @@ export function RecentSchemasTable({ schemas, onToggleActive, onEdit, onRemove, 
           </span>
         </div>
         <button
-          onClick={onViewAll}
-          className="text-zinc-400 text-xs font-semibold hover:text-white hover:underline cursor-pointer"
+          disabled
+          title={VIEW_ALL_DISABLED_TITLE}
+          className="text-zinc-400 text-xs font-semibold hover:text-white hover:underline cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
         >
           {t('dashboard.recent_schemas.view_all')}
         </button>

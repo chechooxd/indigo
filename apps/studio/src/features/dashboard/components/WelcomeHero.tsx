@@ -8,13 +8,14 @@ import { useTranslation } from 'react-i18next';
 import { Terminal, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+const CLI_DISABLED_TITLE = "Connecting to the CLI isn't available from the browser.";
+
 interface WelcomeHeroProps {
   schemasCount: number;
-  onOpenCli: () => void;
   onQuickCreate: () => void;
 }
 
-export function WelcomeHero({ schemasCount, onOpenCli, onQuickCreate }: WelcomeHeroProps) {
+export function WelcomeHero({ schemasCount, onQuickCreate }: WelcomeHeroProps) {
   const { t } = useTranslation();
 
   return (
@@ -32,7 +33,8 @@ export function WelcomeHero({ schemasCount, onOpenCli, onQuickCreate }: WelcomeH
           <Button
             id="btn-open-cli"
             variant="outline"
-            onClick={onOpenCli}
+            disabled
+            title={CLI_DISABLED_TITLE}
             className="px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 text-zinc-300 text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer h-auto"
           >
             <Terminal className="w-4 h-4 text-zinc-400" />

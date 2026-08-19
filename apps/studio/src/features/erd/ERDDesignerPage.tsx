@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReactFlowProvider } from '@xyflow/react';
-import { Copy, History, PanelLeft, PanelRight, Columns } from 'lucide-react';
+import { PanelLeft, PanelRight, Columns } from 'lucide-react';
 import { INITIAL_DSL_CODE } from '../../data/mockData';
 import { registerIndigoLanguage } from '../../lib/monaco-indigo';
 import { fetchSchemaSource } from '../../lib/api';
@@ -15,6 +15,7 @@ import { useERDParser } from './hooks/useERDParser';
 import { usePanelLayout } from './hooks/usePanelLayout';
 import ERDCanvas from './ERDCanvas';
 import ERDSidebar from './components/ERDSidebar';
+import { DslEditorToolbar } from './components/DslEditorToolbar';
 
 export default function ERDDesignerPage() {
   const [dslCode, setDslCode] = useState<string>(INITIAL_DSL_CODE);
@@ -34,11 +35,6 @@ export default function ERDDesignerPage() {
 
   const { layout, setLayout, editorWidth, startResize } = usePanelLayout();
   const { nodes, links, tableGroups } = useERDParser(dslCode);
-
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(dslCode);
-    alert('Código copiado al portapapeles');
-  };
 
   const toggleFolder = (folderName: string) => {
     setExpandedFolders(prev => {
@@ -82,21 +78,21 @@ export default function ERDDesignerPage() {
         <button
           onClick={() => setLayout('editor')}
           className={`p-1.5 rounded cursor-pointer ${layout === 'editor' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-          title="Solo editor"
+          title="Editor only"
         >
           <PanelLeft size={16} />
         </button>
         <button
           onClick={() => setLayout('both')}
           className={`p-1.5 rounded cursor-pointer ${layout === 'both' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-          title="Dividir vista"
+          title="Split view"
         >
           <Columns size={16} />
         </button>
         <button
           onClick={() => setLayout('canvas')}
           className={`p-1.5 rounded cursor-pointer ${layout === 'canvas' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-          title="Solo lienzo"
+          title="Canvas only"
         >
           <PanelRight size={16} />
         </button>
@@ -111,22 +107,7 @@ export default function ERDDesignerPage() {
             <span className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest font-mono">
               INDIGODSL V1.0
             </span>
-            <div className="flex gap-2">
-              <button
-                onClick={handleCopyCode}
-                className="p-1.5 hover:bg-zinc-900 rounded-xl text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                title="Copy DSL script"
-              >
-                <Copy className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => alert('Loading script backup history...')}
-                className="p-1.5 hover:bg-zinc-900 rounded-xl text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                title="View revision log"
-              >
-                <History className="w-4 h-4" />
-              </button>
-            </div>
+            <DslEditorToolbar dslCode={dslCode} />
           </div>
 
           <div className="flex-1 w-full h-full relative">

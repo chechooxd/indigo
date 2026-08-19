@@ -7,13 +7,17 @@ import React, { useState } from 'react';
 import { RefreshCw, Folder, ChevronRight, Database } from 'lucide-react';
 import type { Table } from '../../../../types';
 
+const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
+
 interface SchemaBrowserPanelProps {
   tables: Table[];
   selectedTable: string;
   onSelectTable: (tableName: string) => void;
+  canRefresh: boolean;
+  onRefresh: () => Promise<void>;
 }
 
-export function SchemaBrowserPanel({ tables, selectedTable, onSelectTable }: SchemaBrowserPanelProps) {
+export function SchemaBrowserPanel({ tables, selectedTable, onSelectTable, canRefresh, onRefresh }: SchemaBrowserPanelProps) {
   const [expandedFolder, setExpandedFolder] = useState<boolean>(true);
 
   return (
@@ -23,9 +27,11 @@ export function SchemaBrowserPanel({ tables, selectedTable, onSelectTable }: Sch
           SCHEMA BROWSER
         </span>
         <button
-          onClick={() => alert('Schema metadata refreshed.')}
-          className="p-1.5 hover:text-white text-zinc-500 hover:bg-zinc-900 rounded-xl transition-all cursor-pointer"
-          title="Refresh database schema"
+          onClick={onRefresh}
+          disabled={!canRefresh}
+          title={!canRefresh ? REFRESH_DISABLED_TITLE : undefined}
+          aria-label="Refresh schema"
+          className="p-1.5 hover:text-white text-zinc-500 hover:bg-zinc-900 rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCw className="w-3.5 h-3.5" />
         </button>

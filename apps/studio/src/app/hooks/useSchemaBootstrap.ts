@@ -4,8 +4,7 @@
  */
 
 import { useEffect } from 'react';
-import { fetchSchema } from '../../lib/api';
-import { resolvedToTables } from '../../lib/schema-adapter';
+import { loadSchemaIntoStore } from '../../lib/schema-loader';
 import { useDataStore } from '../../store/useDataStore';
 
 /**
@@ -17,11 +16,6 @@ export function useSchemaBootstrap(): void {
   const { setTables, setResolvedSchema } = useDataStore();
 
   useEffect(() => {
-    fetchSchema().then((resolved) => {
-      if (resolved && resolved.tables.length > 0) {
-        setResolvedSchema(resolved);
-        setTables(resolvedToTables(resolved));
-      }
-    });
+    void loadSchemaIntoStore({ setTables, setResolvedSchema });
   }, [setTables, setResolvedSchema]);
 }
