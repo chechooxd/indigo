@@ -19,7 +19,14 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { planMigration, renderMigrationSql, splitMigrationSql } from "@indigodb/migrator";
+import {
+  planMigration,
+  renderMigrationSql,
+  splitMigrationSql,
+  buildShadowSchema,
+  ShadowReplayError,
+} from "@indigodb/migrator";
+import type { MigrationSource } from "@indigodb/migrator";
 import type { ResolvedSchema } from "@indigodb/core";
 
 const MIGRATIONS_DIR = "migrations";
@@ -75,6 +82,29 @@ async function appliedMigrations(client: pg.Client): Promise<Set<string>> {
   return new Set(result.rows.map((r: { name: string }) => r.name));
 }
 
+/**
+ * Ordered migration names, in the order `_indigo_migrations` actually
+ * recorded them (`ORDER BY id`) — this is `buildShadowSchema`'s `recorded`
+ * input, distinct from `appliedMigrations`'s unordered `Set` (which
+ * `migrateDeploy`/`migrateStatus` still use for membership checks only).
+ */
+async function recordedMigrations(client: pg.Client): Promise<string[]> {
+  const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}" ORDER BY id`);
+  return result.rows.map((r: { name: string }) => r.name);
+}
+
+/**
+ * Builds `buildShadowSchema`'s I/O-injection seam from the real filesystem:
+ * `onDisk` from `listMigrationDirs()`, `read` from `migrations/<id>/migration.sql`.
+ */
+function fsMigrationSource(recorded: string[]): MigrationSource {
+  return {
+    recorded,
+    onDisk: listMigrationDirs(),
+    read: (id: string) => readFileSync(join(migrationsRoot(), id, "migration.sql"), "utf-8"),
+  };
+}
+
 export interface DevOptions {
   resolved: ResolvedSchema;
   name: string;
@@ -99,46 +129,82 @@ async function applyMigrationSql(client: pg.Client, sql: string): Promise<void> 
   if (transactional.trim().length > 0) await client.query(transactional);
 }
 
+/**
+ * Resolves the schema `migrateDev` diffs against. Shadow-replay (default):
+ * connects, reads `_indigo_migrations` in RECORDED order, replays every
+ * migration file into an isolated shadow database, and introspects it —
+ * this is what the target database actually looks like, independent of
+ * `.snapshot.json`. `INDIGODB_MIGRATE_PREV=snapshot` is the escape hatch:
+ * it keeps the OLD `loadSnapshot()` path reachable — a one-line revert, and
+ * the only way to adopt an existing `db push`-managed database (tables
+ * exist, history is empty — a case shadow replay legitimately refuses,
+ * since it has no migration to replay to reach that state).
+ */
+async function resolvePrevSchema(client: pg.Client): Promise<ResolvedSchema | null> {
+  if (process.env.INDIGODB_MIGRATE_PREV === "snapshot") {
+    return loadSnapshot();
+  }
+  const recorded = await recordedMigrations(client);
+  const source = fsMigrationSource(recorded);
+  return buildShadowSchema(source, {
+    onWarning: (message) => console.warn(`⚠️  ${message}`),
+  });
+}
+
 /** Creates a migration from schema changes and applies it. */
 export async function migrateDev(options: DevOptions): Promise<void> {
-  const prev = loadSnapshot();
-  // One diff, one plan: the plan carries the statements, their execution
-  // phase and any blocking diagnostics, so nothing below re-derives it.
-  const plan = planMigration(prev, options.resolved);
-
-  if (plan.diagnostics.length > 0) {
-    console.error("❌ Cannot generate a migration for this schema change:");
-    for (const d of plan.diagnostics) console.error(`   • ${d.message}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  if (plan.statements.length === 0) {
-    console.log("✅ No schema changes — database is up to date.");
-    return;
-  }
-
-  const id = `${timestamp()}_${slugify(options.name)}`;
-  const dir = join(migrationsRoot(), id);
-  mkdirSync(dir, { recursive: true });
-  const sql = renderMigrationSql(plan);
-  writeFileSync(join(dir, "migration.sql"), sql);
-
   const client = new pg.Client({ connectionString: options.connectionString });
   try {
     await client.connect();
     await ensureHistory(client);
-    await applyMigrationSql(client, sql);
-    await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
-    await client.query("COMMIT");
-    saveSnapshot(options.resolved);
-    console.log(`✅ Migration created and applied: ${id}`);
-    console.log(`   ${plan.statements.length} statement(s) → migrations/${id}/migration.sql`);
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    rmSync(dir, { recursive: true, force: true }); // discard the failed migration file
-    console.error("❌ Migration failed, rolled back:", (error as Error).message);
-    process.exitCode = 1;
+
+    let prev: ResolvedSchema | null;
+    try {
+      prev = await resolvePrevSchema(client);
+    } catch (error) {
+      if (error instanceof ShadowReplayError) {
+        console.error(`❌ ${error.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+
+    // One diff, one plan: the plan carries the statements, their execution
+    // phase and any blocking diagnostics, so nothing below re-derives it.
+    const plan = planMigration(prev, options.resolved);
+
+    if (plan.diagnostics.length > 0) {
+      console.error("❌ Cannot generate a migration for this schema change:");
+      for (const d of plan.diagnostics) console.error(`   • ${d.message}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (plan.statements.length === 0) {
+      console.log("✅ No schema changes — database is up to date.");
+      return;
+    }
+
+    const id = `${timestamp()}_${slugify(options.name)}`;
+    const dir = join(migrationsRoot(), id);
+    mkdirSync(dir, { recursive: true });
+    const sql = renderMigrationSql(plan);
+    writeFileSync(join(dir, "migration.sql"), sql);
+
+    try {
+      await applyMigrationSql(client, sql);
+      await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
+      await client.query("COMMIT");
+      saveSnapshot(options.resolved);
+      console.log(`✅ Migration created and applied: ${id}`);
+      console.log(`   ${plan.statements.length} statement(s) → migrations/${id}/migration.sql`);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      rmSync(dir, { recursive: true, force: true }); // discard the failed migration file
+      console.error("❌ Migration failed, rolled back:", (error as Error).message);
+      process.exitCode = 1;
+    }
   } finally {
     await client.end();
   }

@@ -1,0 +1,7 @@
+// Simulates an introspected `prev`: column `name` === its `dbName`
+// ("amount_cents"), so it never matches `next`'s logical field name
+// "amountCents" by pass-1 name matching — only by physical `dbName`.
+Table Transaction {
+  id     Int @id @default(autoincrement())
+  amount Int @map("amount_cents")
+}

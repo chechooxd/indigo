@@ -246,26 +246,31 @@
             "columns": [
               "email"
             ],
-            "unique": false
+            "unique": false,
+            "name": "user_email_idx"
           },
           {
             "columns": [
               "tags"
             ],
-            "unique": false
+            "unique": false,
+            "type": "gin"
           },
           {
             "columns": [
               "bio"
             ],
-            "unique": false
+            "unique": false,
+            "name": "user_bio_gist_idx",
+            "type": "gist"
           },
           {
             "columns": [
               "email",
               "tags"
             ],
-            "unique": true
+            "unique": true,
+            "name": "user_email_tags_key"
           },
           {
             "columns": [

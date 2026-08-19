@@ -1,0 +1,12 @@
+// Simulates an introspected `prev`: enum member `name` === its `dbName`
+// ("pending_review"), so it never matches `next`'s logical member name
+// "PENDING" by pass-1 name matching — only by physical `dbName`.
+enum Status {
+  ACTIVE
+  pending_review
+}
+
+Table Widget {
+  id     Int    @id @default(autoincrement())
+  status Status @default(ACTIVE)
+}

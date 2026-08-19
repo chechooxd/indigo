@@ -835,7 +835,8 @@
             "columns": [
               "a"
             ],
-            "unique": false
+            "unique": false,
+            "name": ""
           }
         ],
         "relations": []
@@ -884,13 +885,15 @@
             "columns": [
               "a"
             ],
-            "unique": false
+            "unique": false,
+            "name": "dup_idx"
           },
           {
             "columns": [
               "b"
             ],
-            "unique": false
+            "unique": false,
+            "name": "dup_idx"
           }
         ],
         "relations": []
@@ -945,7 +948,8 @@
             "columns": [
               "b"
             ],
-            "unique": false
+            "unique": false,
+            "name": "CollidesWithDerived_a_idx"
           }
         ],
         "relations": []
@@ -994,7 +998,8 @@
             "columns": [
               "a"
             ],
-            "unique": false
+            "unique": false,
+            "name": "CollidesWithUniqueField_email_key"
           }
         ],
         "relations": []
@@ -1033,7 +1038,8 @@
             "columns": [
               "a"
             ],
-            "unique": false
+            "unique": false,
+            "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
           }
         ],
         "relations": []
@@ -1072,7 +1078,8 @@
             "columns": [
               "a"
             ],
-            "unique": true
+            "unique": true,
+            "type": "gin"
           }
         ],
         "relations": []

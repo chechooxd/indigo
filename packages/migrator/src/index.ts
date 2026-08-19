@@ -17,10 +17,21 @@ export {
   triggerName,
   mapScalarToPg,
   quoteIdent,
+  indexName,
+  renderIndexDdl,
 } from "./postgres.js";
 
 // Versioned migration diff engine (`indigodb migrate`).
 export { planMigration, renderMigrationSql } from "./migrate.js";
+
+// Schema introspection (shadow-replay diff source).
+export { introspectResolvedSchema } from "./introspect.js";
+export type { IntrospectionQuery, IntrospectOptions } from "./introspect.js";
+
+// Shadow replay (migrate-runner's diff source): replays recorded migration
+// files into an isolated database, then introspects it.
+export { buildShadowSchema, ShadowReplayError } from "./shadow.js";
+export type { MigrationSource, ShadowDb, BuildShadowSchemaOptions } from "./shadow.js";
 
 // Migration plan contract: phase-tagged statements plus blocking diagnostics.
 export {

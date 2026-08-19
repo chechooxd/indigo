@@ -1,0 +1,13 @@
+// Regression: a method-only change (gin -> hash) on an otherwise-identical
+// index must diff as DROP+CREATE USING hash. `tags` is `Json` (-> jsonb):
+// real PostgreSQL registers a default operator class for both GIN and HASH
+// on jsonb, but NOT for GIST on any IndigoDB scalar type (no built-in
+// opclass without an extra extension) — so GIST is deliberately not
+// exercised in an appliability-tested fixture.
+
+Table User {
+  id   Int  @id @default(autoincrement())
+  tags Json
+
+  @@index([tags], type: hash)
+}

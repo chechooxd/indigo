@@ -1,0 +1,9 @@
+// Regression: an explicit name changing (A -> B) must diff as a single
+// ALTER INDEX RENAME, never a DROP+CREATE.
+
+Table User {
+  id    Int    @id @default(autoincrement())
+  email String
+
+  @@index([email], name: "name_a")
+}

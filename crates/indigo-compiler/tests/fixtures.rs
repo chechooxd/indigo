@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use indigo_compiler::{parse_source, resolve, validate};
+use indigo_compiler::{ir, parse_source, resolve, validate};
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
@@ -581,18 +581,54 @@ fn fixture_16_named_typed_indexes_has_zero_validation_errors() {
 }
 
 #[test]
-fn fixture_16_ir_stays_unpopulated_until_pr_b() {
-    // PR A deliberately leaves `resolve.rs`/`ResolvedIndex` untouched — the
-    // grammar and validation accept `name:`/`type:`, but the IR does not yet
-    // carry them. Populating `ResolvedIndex.name`/`.type` is PR B's job.
+fn fixture_16_ir_is_populated_in_pr_b() {
+    // PR B: `resolve.rs` now populates `ResolvedIndex.name`/`.indexType` from
+    // explicit `name:`/`type:` args; an omitted `name:` stays `None` and an
+    // explicit `type: btree` canonicalizes to `None` (design decision #4).
     let source = fs::read_to_string(fixtures_dir().join("16-named-typed-indexes.indigo")).unwrap();
     let schema = parse_source(&source).unwrap();
     let resolved = resolve::resolve(&schema);
     let user_table = resolved.tables.iter().find(|t| t.name == "User").expect("User table");
     assert_eq!(user_table.indexes.len(), 5, "{:?}", user_table.indexes);
-    for index in &user_table.indexes {
-        assert_eq!(index.name, None, "PR A must not populate ResolvedIndex.name yet: {index:?}");
-    }
+
+    let by_columns = |cols: &[&str]| {
+        user_table
+            .indexes
+            .iter()
+            .find(|i| i.columns == cols)
+            .unwrap_or_else(|| panic!("no index over {cols:?} in {:?}", user_table.indexes))
+    };
+
+    let email = by_columns(&["email"]);
+    assert_eq!(email.name.as_deref(), Some("user_email_idx"));
+    assert_eq!(email.index_type, None);
+
+    let tags = by_columns(&["tags"]);
+    assert_eq!(tags.name, None);
+    assert_eq!(tags.index_type, Some(ir::IndexMethod::Gin));
+
+    // Two indexes cover `["bio"]` — the plain `@@index` and the `@@unique` —
+    // so distinguish by `unique` too.
+    let bio_index = user_table
+        .indexes
+        .iter()
+        .find(|i| i.columns == ["bio"] && !i.unique)
+        .expect("plain @@index([bio]) exists");
+    assert_eq!(bio_index.name.as_deref(), Some("user_bio_gist_idx"));
+    assert_eq!(bio_index.index_type, Some(ir::IndexMethod::Gist));
+
+    let email_tags = by_columns(&["email", "tags"]);
+    assert_eq!(email_tags.name.as_deref(), Some("user_email_tags_key"));
+    assert_eq!(email_tags.index_type, None);
+    assert!(email_tags.unique);
+
+    let bio_unique = user_table
+        .indexes
+        .iter()
+        .find(|i| i.columns == ["bio"] && i.unique)
+        .expect("@@unique([bio], type: btree) exists");
+    assert_eq!(bio_unique.name, None);
+    assert_eq!(bio_unique.index_type, None, "explicit type: btree must canonicalize to None");
 }
 
 #[test]
