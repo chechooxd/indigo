@@ -1,0 +1,19 @@
+// Named and typed indexes (`@@index`/`@@unique`'s `name:`/`type:` args):
+// PR A is grammar+validation only — the compiler accepts and validates the
+// new named args, but `resolve.rs` does NOT populate `ResolvedIndex.name`/
+// `type` yet (that lands in PR B), so this fixture's golden `validation`
+// array must be empty and `resolved` must show every index with NO `name`
+// key and NO `type` key.
+
+Table User {
+  id    String @id
+  email String
+  tags  String
+  bio   String
+
+  @@index([email], name: "user_email_idx")
+  @@index([tags], type: gin)
+  @@index([bio], name: "user_bio_gist_idx", type: gist)
+  @@unique([email, tags], name: "user_email_tags_key")
+  @@unique([bio], type: btree)
+}
