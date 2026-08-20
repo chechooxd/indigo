@@ -35,6 +35,7 @@ import {
   splitMigrationSql,
   buildShadowSchema,
   ShadowReplayError,
+  scanRequiresForce,
 } from "@indigodb/migrator";
 import type { MigrationSource } from "@indigodb/migrator";
 import type { ResolvedSchema } from "@indigodb/core";
@@ -240,6 +241,29 @@ export interface DevOptions {
   connectionString: string;
   createClient?: () => Promise<MigrationClient>;
   cwd?: string;
+  /** Bypasses the requires-force refusal gate — applies destructive statements. */
+  force?: boolean;
+}
+
+/**
+ * `migrateDeploy`'s seams plus `force`, kept separate from `RunnerSeams`
+ * (shared with `migrateStatus`, which has no force concept) so existing
+ * call sites and tests keep compiling untouched.
+ */
+export interface DeployOptions extends RunnerSeams {
+  /** Bypasses the requires-force refusal gate — applies destructive statements. */
+  force?: boolean;
+}
+
+/**
+ * Prints the shared `❌ … refused: … destructive statement(s).` + bulleted
+ * `impacts` + `Re-run with --force to apply them.` shape both `migrateDev`
+ * and `migrateDeploy` use — byte-identical between the two commands (Q3).
+ */
+function printForceRefusal(header: string, impacts: string[]): void {
+  console.error(`❌ ${header}`);
+  for (const impact of impacts) console.error(`   • ${impact}`);
+  console.error("   Re-run with --force to apply them.");
 }
 
 /**
@@ -319,6 +343,19 @@ export async function migrateDev(options: DevOptions): Promise<void> {
       return;
     }
 
+    const destructive = plan.statements.filter(
+      (s): s is Extract<(typeof plan.statements)[number], { risk: "requires-force" }> =>
+        s.risk === "requires-force",
+    );
+    if (destructive.length > 0 && !options.force) {
+      printForceRefusal(
+        `migrate dev refused: this migration contains ${destructive.length} destructive statement(s).`,
+        destructive.map((s) => s.impact),
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     const id = `${timestamp()}_${slugify(options.name)}`;
     const dir = join(migrationsRoot(cwd), id);
     mkdirSync(dir, { recursive: true });
@@ -348,7 +385,7 @@ export async function migrateDev(options: DevOptions): Promise<void> {
 }
 
 /** Applies all pending migration files (production/CI). */
-export async function migrateDeploy(connectionString: string, seams: RunnerSeams = {}): Promise<void> {
+export async function migrateDeploy(connectionString: string, seams: DeployOptions = {}): Promise<void> {
   const cwd = seams.cwd ?? process.cwd();
   const dirs = listMigrationDirs(cwd);
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
@@ -379,6 +416,26 @@ export async function migrateDeploy(connectionString: string, seams: RunnerSeams
       console.log("✅ No pending migrations.");
       return;
     }
+
+    // Pre-scan ALL pending files before applying any: a per-file gate would
+    // apply file 1 then refuse file 2, leaving a half-migrated database.
+    const destructiveFiles: { id: string; impacts: string[] }[] = [];
+    for (const id of pending) {
+      const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
+      const impacts = scanRequiresForce(sql);
+      if (impacts.length > 0) destructiveFiles.push({ id, impacts });
+    }
+    if (destructiveFiles.length > 0 && !seams.force) {
+      const allImpacts = destructiveFiles.flatMap((f) => f.impacts);
+      const subject = destructiveFiles.map((f) => f.id).join(", ");
+      printForceRefusal(
+        `migrate deploy refused: ${subject} contains ${allImpacts.length} destructive statement(s).`,
+        allImpacts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     for (const id of pending) {
       const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
       await applyMigrationSql(client, sql);

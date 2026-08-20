@@ -10,10 +10,11 @@
  * is Slice 2, added to this same file.
  */
 
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { strictEqual, ok } from "node:assert";
 import { parse, resolve as resolveSchema } from "@indigodb/core";
+import { planMigration, renderMigrationSql } from "@indigodb/migrator";
 import {
   migrateDev,
   migrateDeploy,
@@ -46,6 +47,24 @@ console.log("cli migrate-runner: checksum + schema-upgrade suite");
 function minimalResolved() {
   const source = `Table User {\n  id Int @id @default(autoincrement())\n  name String\n}\n`;
   return resolveSchema(parse(source));
+}
+
+/** Wider shape than `minimalResolved()` — diffing down to it drops 2 columns. */
+function wideResolved() {
+  const source = `Table User {\n  id Int @id @default(autoincrement())\n  name String\n  email String\n  age Int\n}\n`;
+  return resolveSchema(parse(source));
+}
+
+/** A pure-DROP-COLUMN migration.sql (2 requires-force statements), rendered with markers. */
+function destructiveMigrationSql() {
+  const plan = planMigration(wideResolved(), minimalResolved());
+  return renderMigrationSql(plan);
+}
+
+/** A purely additive migration.sql — no requires-force statements at all. */
+function safeMigrationSql() {
+  const plan = planMigration(null, minimalResolved());
+  return renderMigrationSql(plan);
 }
 
 async function historyColumns(db) {
@@ -618,6 +637,333 @@ await check("migrateDev and migrateStatus never touch the advisory lock (deploy-
       ok(
         !statusQueries.some((q) => /advisory/.test(q.sql)),
         "expected migrateStatus to never issue an advisory-lock query",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── --force gating: migrateDev refuses destructive plans (Slice B) ──────────
+
+await check("migrateDev refuses a destructive plan without --force", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+      const before = await historyRows(db);
+      strictEqual(before.length, 1);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "drop-cols",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+      const refused = process.exitCode === 1;
+      process.exitCode = savedExitCode;
+
+      ok(refused, "expected process.exitCode = 1 refusing a destructive plan without --force");
+
+      const after = await historyRows(db);
+      strictEqual(after.length, 1, "no new migration should be recorded");
+
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+        d.isDirectory(),
+      );
+      strictEqual(dirs.length, 1, "no new migrations/<id>/ directory should be created");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrateDev --force applies a destructive plan", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "drop-cols",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+        force: true,
+      });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 2, "the forced migration should be recorded");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrateDev refusal message lists every offending statement, bulleted", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateDev({
+          resolved: minimalResolved(),
+          name: "drop-cols",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+        }),
+      );
+      process.exitCode = savedExitCode;
+
+      ok(
+        errors.some((l) => /^❌ migrate dev refused:/.test(l)),
+        `expected a "❌ migrate dev refused:" header, got:\n${errors.join("\n")}`,
+      );
+      const bullets = errors.filter((l) => l.trim().startsWith("•"));
+      strictEqual(bullets.length, 2, `expected 2 bulleted impacts, got:\n${errors.join("\n")}`);
+      ok(
+        bullets.some((l) => /DROP COLUMN/.test(l) && /email/i.test(l)),
+        `expected an email DROP COLUMN impact, got:\n${errors.join("\n")}`,
+      );
+      ok(
+        bullets.some((l) => /DROP COLUMN/.test(l) && /age/i.test(l)),
+        `expected an age DROP COLUMN impact, got:\n${errors.join("\n")}`,
+      );
+      ok(
+        errors.some((l) => /--force/.test(l)),
+        `expected a "Re-run with --force" hint, got:\n${errors.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── --force gating: migrateDeploy refuses destructive files (Slice B) ───────
+
+await check("migrateDeploy refuses a pending file carrying the marker without --force", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_drop_cols";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), destructiveMigrationSql());
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+      const refused = process.exitCode === 1;
+      process.exitCode = savedExitCode;
+
+      ok(refused, "expected process.exitCode = 1 refusing a marker-carrying file without --force");
+      ok(
+        errors.some((l) => l.includes(id)),
+        `expected the file id ${id} named in the refusal, got:\n${errors.join("\n")}`,
+      );
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 0, "nothing should have been applied");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check(
+  "migrateDeploy refuses the whole run when a LATER pending file is destructive — the earlier safe file is NOT applied",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const safeId = "20250101000000_safe";
+        const safeDir = join(cwd, "migrations", safeId);
+        mkdirSync(safeDir, { recursive: true });
+        writeFileSync(join(safeDir, "migration.sql"), safeMigrationSql());
+
+        const destructiveId = "20250102000000_drop_cols";
+        const destructiveDir = join(cwd, "migrations", destructiveId);
+        mkdirSync(destructiveDir, { recursive: true });
+        writeFileSync(join(destructiveDir, "migration.sql"), destructiveMigrationSql());
+
+        const savedExitCode = process.exitCode;
+        process.exitCode = undefined;
+        await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+        const refused = process.exitCode === 1;
+        process.exitCode = savedExitCode;
+
+        ok(refused, "expected process.exitCode = 1");
+        const rows = await historyRows(db);
+        strictEqual(rows.length, 0, "the earlier safe file must NOT have been applied either");
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("migrateDeploy --force applies marker-carrying files", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      // Real "User" table (with email/age) must already exist for the
+      // DROP COLUMN statements below to apply against real columns.
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+
+      const id = "20250102000000_drop_cols";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), destructiveMigrationSql());
+
+      await migrateDeploy("unused", { createClient: client, cwd, force: true });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 2);
+      ok(rows.some((r) => r.name === id));
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrateDeploy applies a legacy (unmarked) file without --force — backward compat", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+
+      const id = "20250102000000_legacy_drop";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), `ALTER TABLE "User" DROP COLUMN "email";\n`);
+
+      await migrateDeploy("unused", { createClient: client, cwd });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 2, "an unmarked legacy file must apply without --force");
+      ok(rows.some((r) => r.name === id));
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("a safe-only plan applies under both commands without --force, no gating output", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const devErrors = await captureErrors(() =>
+        migrateDev({
+          resolved: minimalResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        }),
+      );
+      strictEqual(devErrors.length, 0, `expected no error output, got:\n${devErrors.join("\n")}`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_safe";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), safeMigrationSql());
+
+      const deployErrors = await captureErrors(() =>
+        migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+      strictEqual(deployErrors.length, 0, `expected no error output, got:\n${deployErrors.join("\n")}`);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── migrateStatus never gates on a destructive pending file (Slice B) ───────
+
+await check("migrateStatus never gates and never sets exitCode on a destructive pending file", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_drop_cols";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), destructiveMigrationSql());
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateStatus("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+      // Not a strict `=== undefined` check: by this point in the suite,
+      // enough PGlite instances have been opened/closed that Node's
+      // WASM-instance GC can asynchronously normalize `undefined` to `0`
+      // (reproducible standalone with plain `new PGlite()`/`close()` loops,
+      // unrelated to `migrateStatus`) — what actually matters here is that
+      // migrateStatus never *gates* (never sets the `1` this suite's gates use).
+      const neverGated = process.exitCode !== 1;
+      process.exitCode = savedExitCode;
+
+      ok(neverGated, "migrateStatus must never set process.exitCode = 1 on a destructive pending file");
+      ok(
+        lines.some((l) => l.includes(id) && /· pending/.test(l)),
+        `expected "· pending" for the destructive-but-unapplied row, got:\n${lines.join("\n")}`,
       );
     } finally {
       cleanup();

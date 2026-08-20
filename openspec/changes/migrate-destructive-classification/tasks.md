@@ -46,24 +46,24 @@ Satisfies (spec): "Every generated migration statement is classified safe or req
 
 Satisfies (spec): dev+deploy symmetric refusal, `--force` applies the full plan unchanged, safe-only plan unaffected, no partial-force/no env-var bypass.
 
-- [ ] B.1 [RED] `packages/cli/test/migrate-runner.mjs`: add case 1 — `migrateDev` refuses a DROP COLUMN plan without `--force`: exitCode 1, no `migrations/<id>/` dir created, zero history rows. Run suite — confirm failure (no `force` option/gate exists).
-- [ ] B.2 [RED] `migrate-runner.mjs`: add case 2 — `migrateDev --force` applies the same plan.
-- [ ] B.3 [RED] `migrate-runner.mjs`: add case 3 — refusal message lists every offending statement (two impacts, both bulleted, `❌ migrate dev refused: ...` / `   • <impact>` shape).
-- [ ] B.4 [RED] `migrate-runner.mjs`: add case 4 — `migrateDeploy` refuses a pending file carrying the marker without `--force`.
-- [ ] B.5 [RED] `migrate-runner.mjs`: add case 5 — `migrateDeploy` refuses the whole run when a LATER pending file is destructive; the earlier safe file is NOT applied.
-- [ ] B.6 [RED] `migrate-runner.mjs`: add case 6 — `migrateDeploy --force` applies marker-carrying files.
-- [ ] B.7 [RED] `migrate-runner.mjs`: add case 7 — `migrateDeploy` applies a legacy (unmarked) file without `--force` — backward compat.
-- [ ] B.8 [RED] `migrate-runner.mjs`: add case 8 — a safe-only plan applies under both commands without `--force`, no gating output.
-- [ ] B.9 [RED] `migrate-runner.mjs`: add case 9 — `migrateStatus` never gates and never sets `exitCode` on a destructive pending file.
-- [ ] B.10 [GREEN] `packages/cli/src/migrate-runner.ts`: add `force?: boolean` to `DevOptions`; add `DeployOptions extends RunnerSeams { force?: boolean }`, threaded through `migrateDeploy`.
-- [ ] B.11 [GREEN] `migrate-runner.ts`: in `migrateDev`, scan `plan.statements` for `risk === "requires-force"` and refuse (`exitCode = 1`, `❌ migrate dev refused: ...` + bulleted impacts, `return`, never `throw`) BEFORE `mkdirSync`/`writeFileSync`, unless `force`.
-- [ ] B.12 [GREEN] `migrate-runner.ts`: in `migrateDeploy`, after `checksumPreflight` and before the apply loop, run `scanRequiresForce` over every pending file's on-disk SQL, aggregate impacts across all pending files, refuse the whole run (`exitCode = 1`, same message shape, `return`) unless `force`. Confirm gate order: lock -> `ensureHistory` -> `checksumPreflight` -> force gate -> apply loop.
-- [ ] B.13 [GREEN] `packages/cli/src/index.ts`: add `--force` to `migrate dev` (~150-157) and `migrate deploy` (~158-166), threaded into the runner calls.
-- [ ] B.14 [VERIFY] Run `node packages/cli/test/migrate-runner.mjs` — confirm cases 1-9 pass and the pre-existing checksum/advisory-lock suite is unaffected.
-- [ ] B.15 [VERIFY] `pnpm --filter @indigodb/cli build && pnpm --filter @indigodb/cli lint && pnpm --filter @indigodb/cli test`.
-- [ ] B.16 [VERIFY] `pnpm build && pnpm lint && pnpm test` (root) and `cd crates && cargo test` — no Rust/compiler files touched, sanity gate per project convention.
-- [ ] B.17 [COMMIT] Commit to a branch based on Slice A's commit: `feat(cli): gate destructive migrations behind --force`.
+- [x] B.1 [RED] `packages/cli/test/migrate-runner.mjs`: add case 1 — `migrateDev` refuses a DROP COLUMN plan without `--force`: exitCode 1, no `migrations/<id>/` dir created, zero history rows. Run suite — confirm failure (no `force` option/gate exists).
+- [x] B.2 [RED] `migrate-runner.mjs`: add case 2 — `migrateDev --force` applies the same plan.
+- [x] B.3 [RED] `migrate-runner.mjs`: add case 3 — refusal message lists every offending statement (two impacts, both bulleted, `❌ migrate dev refused: ...` / `   • <impact>` shape).
+- [x] B.4 [RED] `migrate-runner.mjs`: add case 4 — `migrateDeploy` refuses a pending file carrying the marker without `--force`.
+- [x] B.5 [RED] `migrate-runner.mjs`: add case 5 — `migrateDeploy` refuses the whole run when a LATER pending file is destructive; the earlier safe file is NOT applied.
+- [x] B.6 [RED] `migrate-runner.mjs`: add case 6 — `migrateDeploy --force` applies marker-carrying files.
+- [x] B.7 [RED] `migrate-runner.mjs`: add case 7 — `migrateDeploy` applies a legacy (unmarked) file without `--force` — backward compat.
+- [x] B.8 [RED] `migrate-runner.mjs`: add case 8 — a safe-only plan applies under both commands without `--force`, no gating output.
+- [x] B.9 [RED] `migrate-runner.mjs`: add case 9 — `migrateStatus` never gates and never sets `exitCode` on a destructive pending file.
+- [x] B.10 [GREEN] `packages/cli/src/migrate-runner.ts`: add `force?: boolean` to `DevOptions`; add `DeployOptions extends RunnerSeams { force?: boolean }`, threaded through `migrateDeploy`.
+- [x] B.11 [GREEN] `migrate-runner.ts`: in `migrateDev`, scan `plan.statements` for `risk === "requires-force"` and refuse (`exitCode = 1`, `❌ migrate dev refused: ...` + bulleted impacts, `return`, never `throw`) BEFORE `mkdirSync`/`writeFileSync`, unless `force`.
+- [x] B.12 [GREEN] `migrate-runner.ts`: in `migrateDeploy`, after `checksumPreflight` and before the apply loop, run `scanRequiresForce` over every pending file's on-disk SQL, aggregate impacts across all pending files, refuse the whole run (`exitCode = 1`, same message shape, `return`) unless `force`. Confirm gate order: lock -> `ensureHistory` -> `checksumPreflight` -> force gate -> apply loop.
+- [x] B.13 [GREEN] `packages/cli/src/index.ts`: add `--force` to `migrate dev` (~150-157) and `migrate deploy` (~158-166), threaded into the runner calls.
+- [x] B.14 [VERIFY] Run `node packages/cli/test/migrate-runner.mjs` — confirm cases 1-9 pass and the pre-existing checksum/advisory-lock suite is unaffected.
+- [x] B.15 [VERIFY] `pnpm --filter @indigodb/cli build && pnpm --filter @indigodb/cli lint && pnpm --filter @indigodb/cli test`.
+- [x] B.16 [VERIFY] `pnpm build && pnpm lint && pnpm test` (root) and `cd crates && cargo test` — no Rust/compiler files touched, sanity gate per project convention.
+- [x] B.17 [COMMIT] Commit to a branch based on Slice A's commit: `feat(cli): gate destructive migrations behind --force`.
 
 ## Post-slice cleanup
 
-- [ ] C.1 Confirm the proposal's Success Criteria are demonstrably met by the two slices' suites: DROP COLUMN refuses under both commands without `--force` (exit 1, nothing applied); refusal names offending statements; `--force` applies the plan unchanged; a purely additive plan is unaffected; type narrowing and SET NOT NULL-without-default tag `requires-force`; `pnpm build`/`lint`/`test` and `cargo test` stay green.
+- [x] C.1 Confirm the proposal's Success Criteria are demonstrably met by the two slices' suites: DROP COLUMN refuses under both commands without `--force` (exit 1, nothing applied); refusal names offending statements; `--force` applies the plan unchanged; a purely additive plan is unaffected; type narrowing and SET NOT NULL-without-default tag `requires-force`; `pnpm build`/`lint`/`test` and `cargo test` stay green.

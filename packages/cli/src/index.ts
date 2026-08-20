@@ -149,20 +149,22 @@ migrate
   .description("Create and apply a new migration from schema changes.")
   .requiredOption("-n, --name <name>", "Migration name")
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
-  .action(async (options: { name: string; schema: string }) => {
+  .option("--force", "Apply destructive (requires-force) statements without refusing")
+  .action(async (options: { name: string; schema: string; force?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
-    await migrateDev({ resolved, name: options.name, connectionString });
+    await migrateDev({ resolved, name: options.name, connectionString, force: options.force });
   });
 migrate
   .command("deploy")
   .description("Apply all pending migrations (CI/production).")
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
-  .action(async (options: { schema: string }) => {
+  .option("--force", "Apply destructive (requires-force) statements without refusing")
+  .action(async (options: { schema: string; force?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
-    await migrateDeploy(resolveConnectionString(resolved));
+    await migrateDeploy(resolveConnectionString(resolved), { force: options.force });
   });
 migrate
   .command("status")
