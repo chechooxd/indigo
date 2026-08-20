@@ -14,8 +14,19 @@ import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { strictEqual, ok } from "node:assert";
 import { parse, resolve as resolveSchema } from "@indigodb/core";
-import { migrateDev, migrateDeploy, migrateStatus, migrationChecksum } from "../dist/migrate-runner.js";
-import { withDatabase, createMigrationClient, createMigrationsRoot } from "./migrate-harness.mjs";
+import {
+  migrateDev,
+  migrateDeploy,
+  migrateStatus,
+  migrationChecksum,
+  MIGRATION_LOCK_KEY,
+} from "../dist/migrate-runner.js";
+import {
+  withDatabase,
+  createMigrationClient,
+  createMigrationsRoot,
+  spyMigrationClient,
+} from "./migrate-harness.mjs";
 
 let failures = 0;
 
@@ -440,6 +451,173 @@ await check("migrateStatus prints ⚠ modified for a drifted row and ✓ applied
       ok(
         lines.some((l) => l.includes(pendingId) && /· pending/.test(l)),
         `expected "· pending" for the not-yet-applied row, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── advisory lock around `migrate deploy` ────────────────────────────────────
+//
+// PGlite test-coverage gap (upstream issue #704): `pg_advisory_lock` does not
+// actually block on re-acquisition in PGlite, and PGlite is a single
+// in-process instance anyway — true racing-connection contention cannot be
+// simulated here. These cases assert SQL call sequence, key and ordering via
+// `spyMigrationClient` instead of real blocking; real-Postgres contention
+// verification stays manual/out of this harness.
+
+await check(
+  "migrateDeploy acquires pg_try_advisory_lock first and releases pg_advisory_unlock last",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const id = "20240101000000_init";
+        const dir = join(cwd, "migrations", id);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+
+        const { client: spyClient, queries } = spyMigrationClient(createMigrationClient(db));
+        await migrateDeploy("unused", { createClient: async () => spyClient, cwd });
+
+        ok(queries.length > 0, "expected at least one recorded query");
+        const first = queries[0];
+        ok(
+          /pg_try_advisory_lock/.test(first.sql),
+          `expected the first query to be pg_try_advisory_lock, got: ${first.sql}`,
+        );
+        strictEqual(first.params?.[0], MIGRATION_LOCK_KEY);
+
+        const firstHistoryIndex = queries.findIndex((q) => q.sql.includes("_indigo_migrations"));
+        ok(firstHistoryIndex > 0, "expected a _indigo_migrations query to follow the lock query");
+
+        const last = queries[queries.length - 1];
+        ok(
+          /pg_advisory_unlock/.test(last.sql),
+          `expected the last query to be pg_advisory_unlock, got: ${last.sql}`,
+        );
+        strictEqual(last.params?.[0], MIGRATION_LOCK_KEY);
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("migrateDeploy refuses when the advisory lock is already held (contention)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20240101000000_init";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+
+      const { client: spyClient, queries } = spyMigrationClient(createMigrationClient(db), {
+        onQuery: (sql) => {
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ pg_try_advisory_lock: false }] };
+          return undefined;
+        },
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateDeploy("unused", { createClient: async () => spyClient, cwd }),
+      );
+      const refused = process.exitCode === 1;
+      process.exitCode = savedExitCode;
+
+      ok(refused, "expected process.exitCode = 1 on lock contention");
+      ok(
+        errors.some((l) => /lock/i.test(l)),
+        `expected the refusal message to name the lock conflict, got: ${errors.join("\n")}`,
+      );
+      ok(
+        !errors.some((l) => /rolled back/i.test(l)),
+        "expected a refusal message, not a caught-throw rollback message",
+      );
+
+      let historyTableExists = true;
+      try {
+        await historyRows(db);
+      } catch {
+        historyTableExists = false;
+      }
+      ok(
+        !historyTableExists,
+        "expected ensureHistory to never have run (and thus no migration applied) since the lock refusal happens first",
+      );
+      ok(
+        !queries.some((q) => /pg_advisory_unlock/.test(q.sql)),
+        "expected no unlock call since the lock was never acquired",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check(
+  "migrateDeploy still releases the advisory lock when a pending migration fails mid-loop",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const id = "20240101000000_bad";
+        const dir = join(cwd, "migrations", id);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "migration.sql"), `THIS IS NOT VALID SQL AT ALL;\n`);
+
+        const { client: spyClient, queries } = spyMigrationClient(createMigrationClient(db));
+
+        const savedExitCode = process.exitCode;
+        process.exitCode = undefined;
+        const errors = await captureErrors(() =>
+          migrateDeploy("unused", { createClient: async () => spyClient, cwd }),
+        );
+        const failed = process.exitCode === 1;
+        process.exitCode = savedExitCode;
+
+        ok(failed, "expected process.exitCode = 1 on the invalid-SQL failure");
+        ok(
+          errors.some((l) => /rolled back/i.test(l)),
+          `expected the existing catch/rollback path message, got: ${errors.join("\n")}`,
+        );
+
+        const unlockCalls = queries.filter((q) => /pg_advisory_unlock/.test(q.sql));
+        strictEqual(unlockCalls.length, 1, "expected the lock to be released exactly once despite the failure");
+        strictEqual(unlockCalls[0].params?.[0], MIGRATION_LOCK_KEY);
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("migrateDev and migrateStatus never touch the advisory lock (deploy-only scope)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const { client: devClient, queries: devQueries } = spyMigrationClient(createMigrationClient(db));
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => devClient,
+        cwd,
+      });
+      ok(
+        !devQueries.some((q) => /advisory/.test(q.sql)),
+        "expected migrateDev to never issue an advisory-lock query",
+      );
+
+      const { client: statusClient, queries: statusQueries } = spyMigrationClient(createMigrationClient(db));
+      await migrateStatus("unused", { createClient: async () => statusClient, cwd });
+      ok(
+        !statusQueries.some((q) => /advisory/.test(q.sql)),
+        "expected migrateStatus to never issue an advisory-lock query",
       );
     } finally {
       cleanup();

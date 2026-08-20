@@ -53,6 +53,37 @@ export function createMigrationClient(db) {
 }
 
 /**
+ * Wraps a `MigrationClient` and records every `{ sql, params }` pair passed
+ * to `query`/`exec`, in order, in the returned `queries` array — so tests
+ * can assert on call sequence and arguments (e.g. advisory-lock ordering)
+ * without inspecting database state. By default every call forwards to
+ * `inner` untouched; `onQuery(sql, params)` may return an override result
+ * instead (used to force `pg_try_advisory_lock` to resolve `false` for the
+ * contention case) — `inner` is never touched when an override is returned.
+ */
+export function spyMigrationClient(inner, { onQuery } = {}) {
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      const override = onQuery?.(sql, params);
+      if (override !== undefined) return override;
+      return inner.query(sql, params);
+    },
+    async exec(sql) {
+      queries.push({ sql, params: undefined });
+      const override = onQuery?.(sql, undefined);
+      if (override !== undefined) return override;
+      return inner.exec(sql);
+    },
+    async end() {
+      return inner.end();
+    },
+  };
+  return { client, queries };
+}
+
+/**
  * Creates a fresh, isolated `mkdtempSync`-based directory to use as a
  * migrations root (`cwd` seam) for a single test, plus a `cleanup()` to
  * remove it afterwards. Kept separate from `migrationsRoot()`'s
