@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER INDEX \"name_a\" RENAME TO \"name_b\";",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

@@ -2,11 +2,13 @@
   "statements": [
     {
       "sql": "DROP INDEX \"name_a\";",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     },
     {
       "sql": "CREATE INDEX \"name_b\" ON \"User\" USING hash (\"email\");",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

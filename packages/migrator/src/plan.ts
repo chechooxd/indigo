@@ -19,11 +19,26 @@
  */
 export type MigrationPhase = "pre-transaction" | "transaction";
 
-/** One SQL statement, tagged with the phase it must execute in. */
-export interface MigrationStatement {
-  sql: string;
-  phase: MigrationPhase;
-}
+/**
+ * Whether applying a statement can lose or corrupt existing data (or fail
+ * outright against a populated table): `"safe"` statements never do;
+ * `"requires-force"` statements do (or PostgreSQL may refuse them, e.g.
+ * `SET NOT NULL` against a row already holding `NULL`) and must be
+ * explicitly confirmed before `migrate dev`/`migrate deploy` applies them.
+ */
+export type MigrationRisk = "safe" | "requires-force";
+
+/**
+ * One SQL statement, tagged with the phase it must execute in and its
+ * destructiveness. A discriminated union on `risk` — rather than an
+ * optional `impact?: string` alongside a flat `risk` — makes "tagged
+ * requires-force with no human-readable impact" unrepresentable: every
+ * requires-force statement is constructed with its impact, by construction,
+ * never left to a default.
+ */
+export type MigrationStatement =
+  | { sql: string; phase: MigrationPhase; risk: "safe" }
+  | { sql: string; phase: MigrationPhase; risk: "requires-force"; impact: string };
 
 /** Stable, machine-readable reason a migration's generation was refused. */
 export type MigrationDiagnosticCode =
@@ -113,4 +128,35 @@ export function splitMigrationSql(
   }
 
   return { preTransaction, transactional: transactionalBlocks.join("\n\n") };
+}
+
+/**
+ * Prefix of the comment line `renderMigrationSql` (see `migrate.ts`) writes
+ * directly above every `requires-force` statement in a rendered migration
+ * file: `-- indigo:requires-force <impact>`. This is the ONLY carrier that
+ * reaches `migrate deploy` — deploy reads `migration.sql` off disk and never
+ * re-runs `planMigration`, so an in-memory `risk` tag alone cannot gate it,
+ * and the spec forbids re-parsing SQL to rediscover destructiveness. One
+ * marker line serves three jobs: file annotation, deploy's gate input, and
+ * (verbatim) the refusal message's bulleted impact.
+ */
+export const REQUIRES_FORCE_MARKER = "-- indigo:requires-force ";
+
+/**
+ * Extracts every `requires-force` impact string from a rendered migration
+ * file, in file order — `migrate deploy`'s gate input. Not a SQL parser:
+ * it scans line-by-line for `REQUIRES_FORCE_MARKER`, mirroring
+ * `splitMigrationSql`'s "not a parser" contract above. A file with no
+ * marker line returns `[]` — LOAD-BEARING for backward compatibility:
+ * migration files written before this classifier existed carry no marker,
+ * so they stay ungated exactly as they were.
+ */
+export function scanRequiresForce(sql: string): string[] {
+  const impacts: string[] = [];
+  for (const line of sql.split("\n")) {
+    if (line.startsWith(REQUIRES_FORCE_MARKER)) {
+      impacts.push(line.slice(REQUIRES_FORCE_MARKER.length));
+    }
+  }
+  return impacts;
 }

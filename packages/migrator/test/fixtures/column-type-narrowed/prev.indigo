@@ -1,0 +1,4 @@
+Table User {
+  id  Int    @id @default(autoincrement())
+  age String
+}

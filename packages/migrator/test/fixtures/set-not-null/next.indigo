@@ -1,0 +1,10 @@
+// `nickname` becomes required (SET NOT NULL — requires-force, existing NULL
+// rows abort the migration) while `bio` becomes optional (DROP NOT NULL —
+// safe, never fails). Exercises both branches of the nullability split in
+// one fixture.
+
+Table User {
+  id       Int    @id @default(autoincrement())
+  nickname String
+  bio      String?
+}

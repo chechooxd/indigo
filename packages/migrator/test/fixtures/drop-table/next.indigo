@@ -1,0 +1,6 @@
+// The `Post` table is removed entirely: emits `DROP TABLE "Post" CASCADE;`,
+// tagged requires-force by the destructive-statement classifier.
+
+Table User {
+  id Int @id @default(autoincrement())
+}

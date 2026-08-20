@@ -1,0 +1,9 @@
+// `age` narrows from `String` to `Int`: emits
+// `ALTER TABLE "User" ALTER COLUMN "age" TYPE integer USING "age"::integer;`,
+// tagged requires-force by the destructive-statement classifier (a value
+// that fails to cast aborts the migration and can lose data on truncation).
+
+Table User {
+  id  Int @id @default(autoincrement())
+  age Int
+}

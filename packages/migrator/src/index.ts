@@ -36,13 +36,16 @@ export type { MigrationSource, ShadowDb, BuildShadowSchemaOptions } from "./shad
 // Migration plan contract: phase-tagged statements plus blocking diagnostics.
 export {
   splitMigrationSql,
+  scanRequiresForce,
   NO_TRANSACTION_BEGIN,
   NO_TRANSACTION_END,
+  REQUIRES_FORCE_MARKER,
 } from "./plan.js";
 export type {
   MigrationPlan,
   MigrationStatement,
   MigrationPhase,
+  MigrationRisk,
   MigrationDiagnostic,
   MigrationDiagnosticCode,
 } from "./plan.js";

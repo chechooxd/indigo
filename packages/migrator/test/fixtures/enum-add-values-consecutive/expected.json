@@ -2,11 +2,13 @@
   "statements": [
     {
       "sql": "ALTER TYPE \"A\" ADD VALUE IF NOT EXISTS 'Y';",
-      "phase": "pre-transaction"
+      "phase": "pre-transaction",
+      "risk": "safe"
     },
     {
       "sql": "ALTER TYPE \"B\" ADD VALUE IF NOT EXISTS 'Q';",
-      "phase": "pre-transaction"
+      "phase": "pre-transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

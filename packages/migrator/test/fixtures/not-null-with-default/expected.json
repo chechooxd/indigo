@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER TABLE \"User\" ADD COLUMN \"email\" text NOT NULL DEFAULT '';",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER TYPE \"Status\" RENAME VALUE 'active' TO 'enabled';",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

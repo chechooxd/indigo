@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER TABLE \"User\" ADD COLUMN \"nickname\" text;",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

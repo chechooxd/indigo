@@ -35,10 +35,37 @@ import type {
   MigrationPlan,
   MigrationStatement,
 } from "./plan.js";
-import { NO_TRANSACTION_BEGIN, NO_TRANSACTION_END } from "./plan.js";
+import { NO_TRANSACTION_BEGIN, NO_TRANSACTION_END, REQUIRES_FORCE_MARKER } from "./plan.js";
 
 function esc(v: string): string {
   return v.replace(/'/g, "''");
+}
+
+/**
+ * A comment line must not be breakable by an interpolated value — `impact`
+ * ultimately lands in a `-- indigo:requires-force <impact>` marker line
+ * (see `renderMigrationSql`), and a raw newline or CR in there would either
+ * truncate the marker or leak an extra "SQL" line into the file. Every
+ * `forced()` call routes through this before the string reaches the union.
+ */
+function stripNewlines(impact: string): string {
+  return impact.replace(/\r\n|\r|\n/g, " ");
+}
+
+/** Builds a `"safe"` statement — never destructive, applies unconditionally. */
+function safe(sql: string, phase: MigrationPhase = "transaction"): MigrationStatement {
+  return { sql, phase, risk: "safe" };
+}
+
+/**
+ * Builds a `"requires-force"` statement with its human-readable impact.
+ * Always `"transaction"` phase: no requires-force statement in this
+ * taxonomy is ever pre-transaction (only enum `ADD VALUE` is, and that is
+ * always safe), so `forced()` takes no phase parameter — there is nothing
+ * for a future emit site to get wrong here.
+ */
+function forced(sql: string, impact: string): MigrationStatement {
+  return { sql, phase: "transaction", risk: "requires-force", impact: stripNewlines(impact) };
 }
 
 // ─── Naming (kept stable with postgres.ts push output) ───────────────────────
@@ -319,23 +346,23 @@ function createEnum(e: ResolvedEnum): string {
  * `computeStatements`) so a table's own constraints never race its
  * dependencies' existence.
  */
-function createTable(table: ResolvedTable, enums: ResolvedEnum[]): string[] {
+function createTable(table: ResolvedTable, enums: ResolvedEnum[]): MigrationStatement[] {
   const lines = table.columns.map((c) => `  ${renderColumn(c, enums)}`);
   if (table.primaryKey.length > 0) {
     lines.push(`  PRIMARY KEY (${table.primaryKey.map(quoteIdent).join(", ")})`);
   }
-  const stmts = [`CREATE TABLE ${quoteIdent(table.dbName)} (\n${lines.join(",\n")}\n);`];
+  const stmts = [safe(`CREATE TABLE ${quoteIdent(table.dbName)} (\n${lines.join(",\n")}\n);`)];
   stmts.push(...tableConstraintsNoFk(table));
-  if (table.realtime) stmts.push(renderCreateTrigger(table));
+  if (table.realtime) stmts.push(safe(renderCreateTrigger(table)));
   return stmts;
 }
 
-function tableConstraintsNoFk(table: ResolvedTable): string[] {
-  const stmts: string[] = [];
+function tableConstraintsNoFk(table: ResolvedTable): MigrationStatement[] {
+  const stmts: MigrationStatement[] = [];
   for (const col of table.columns) {
-    if (col.unique) stmts.push(createUniqueColIndex(table, col));
+    if (col.unique) stmts.push(safe(createUniqueColIndex(table, col)));
   }
-  for (const index of table.indexes) stmts.push(createIndex(table, index));
+  for (const index of table.indexes) stmts.push(safe(createIndex(table, index)));
   return stmts;
 }
 
@@ -386,26 +413,42 @@ function alterColumn(
   prev: ResolvedColumn,
   next: ResolvedColumn,
   enums: ResolvedEnum[],
-): string[] {
-  const stmts: string[] = [];
+): MigrationStatement[] {
+  const stmts: MigrationStatement[] = [];
   const t = quoteIdent(table.dbName);
   const c = quoteIdent(next.dbName);
 
   if (prev.type !== next.type) {
     stmts.push(
-      `ALTER TABLE ${t} ALTER COLUMN ${c} TYPE ${mapScalarToPg(next.type)} USING ${c}::${mapScalarToPg(next.type)};`,
+      forced(
+        `ALTER TABLE ${t} ALTER COLUMN ${c} TYPE ${mapScalarToPg(next.type)} USING ${c}::${mapScalarToPg(next.type)};`,
+        `ALTER COLUMN TYPE ${table.name}.${next.name} (${prev.type} → ${next.type})`,
+      ),
     );
   }
   if (prev.nullable !== next.nullable) {
-    stmts.push(`ALTER TABLE ${t} ALTER COLUMN ${c} ${next.nullable ? "DROP NOT NULL" : "SET NOT NULL"};`);
+    // `DROP NOT NULL` never fails and never loses data: it stays safe.
+    // `SET NOT NULL` fails outright against any row already holding NULL —
+    // requires-force. The two branches must not share one ternary push, or
+    // a future edit to one risks silently mis-tagging the other.
+    stmts.push(
+      next.nullable
+        ? safe(`ALTER TABLE ${t} ALTER COLUMN ${c} DROP NOT NULL;`)
+        : forced(
+            `ALTER TABLE ${t} ALTER COLUMN ${c} SET NOT NULL;`,
+            `SET NOT NULL ${table.name}.${next.name}`,
+          ),
+    );
   }
   const prevDefault = renderDefaultClause(prev, enums);
   const nextDefault = renderDefaultClause(next, enums);
   if (prevDefault !== nextDefault) {
     stmts.push(
-      nextDefault
-        ? `ALTER TABLE ${t} ALTER COLUMN ${c} SET DEFAULT ${nextDefault};`
-        : `ALTER TABLE ${t} ALTER COLUMN ${c} DROP DEFAULT;`,
+      safe(
+        nextDefault
+          ? `ALTER TABLE ${t} ALTER COLUMN ${c} SET DEFAULT ${nextDefault};`
+          : `ALTER TABLE ${t} ALTER COLUMN ${c} DROP DEFAULT;`,
+      ),
     );
   }
   return stmts;
@@ -487,15 +530,15 @@ function diffTableFks(
   prevOriginal: ResolvedTable | null,
   next: ResolvedTable,
   renameMap: Map<string, string>,
-): { drops: string[]; adds: string[]; renames: string[] } {
+): { drops: MigrationStatement[]; adds: MigrationStatement[]; renames: MigrationStatement[] } {
   if (!prevOriginal) {
-    return { drops: [], adds: next.foreignKeys.map((fk) => addForeignKey(next, fk)), renames: [] };
+    return { drops: [], adds: next.foreignKeys.map((fk) => safe(addForeignKey(next, fk))), renames: [] };
   }
 
   const prev = remapPhysicalNames(prevOriginal, renameMap);
-  const drops: string[] = [];
-  const adds: string[] = [];
-  const renames: string[] = [];
+  const drops: MigrationStatement[] = [];
+  const adds: MigrationStatement[] = [];
+  const renames: MigrationStatement[] = [];
   const origBySig = new Map(prev.foreignKeys.map((fk, i) => [fkSignature(fk), prevOriginal.foreignKeys[i]]));
   const prevFk = new Map(prev.foreignKeys.map((f) => [fkSignature(f), f]));
   const nextFk = new Map(next.foreignKeys.map((f) => [fkSignature(f), f]));
@@ -503,7 +546,7 @@ function diffTableFks(
   for (const [sig, fk] of nextFk) {
     const old = prevFk.get(sig);
     if (!old || fkDefinition(old) !== fkDefinition(fk)) {
-      adds.push(addForeignKey(next, fk));
+      adds.push(safe(addForeignKey(next, fk)));
       continue;
     }
     if (!fk.name) {
@@ -513,7 +556,9 @@ function diffTableFks(
         const newName = fkName(next, fk);
         if (oldName !== newName) {
           renames.push(
-            `ALTER TABLE ${quoteIdent(next.dbName)} RENAME CONSTRAINT ${quoteIdent(oldName)} TO ${quoteIdent(newName)};`,
+            safe(
+              `ALTER TABLE ${quoteIdent(next.dbName)} RENAME CONSTRAINT ${quoteIdent(oldName)} TO ${quoteIdent(newName)};`,
+            ),
           );
         }
       }
@@ -523,7 +568,12 @@ function diffTableFks(
     const current = nextFk.get(sig);
     if (!current || fkDefinition(current) !== fkDefinition(fk)) {
       const original = origBySig.get(sig) ?? fk;
-      drops.push(dropForeignKey(next, original));
+      drops.push(
+        forced(
+          dropForeignKey(next, original),
+          `DROP CONSTRAINT ${next.name}.${fkName(next, original)}`,
+        ),
+      );
     }
   }
 
@@ -546,8 +596,8 @@ function diffTable(
   enums: ResolvedEnum[],
   diagnostics: MigrationDiagnostic[],
   match: ColumnMatch,
-): string[] {
-  const stmts: string[] = [];
+): MigrationStatement[] {
+  const stmts: MigrationStatement[] = [];
   const t = quoteIdent(next.dbName);
   const prev = remapPhysicalNames(prevOriginal, match.renameMap);
 
@@ -571,7 +621,7 @@ function diffTable(
   for (const { old, col } of match.pairs) {
     if (old.dbName !== col.dbName) {
       stmts.push(
-        `ALTER TABLE ${t} RENAME COLUMN ${quoteIdent(old.dbName)} TO ${quoteIdent(col.dbName)};`,
+        safe(`ALTER TABLE ${t} RENAME COLUMN ${quoteIdent(old.dbName)} TO ${quoteIdent(col.dbName)};`),
       );
     }
   }
@@ -583,12 +633,17 @@ function diffTable(
         diagnostics.push(requiredColumnWithoutDefaultDiagnostic(next, col));
         continue;
       }
-      stmts.push(`ALTER TABLE ${t} ADD COLUMN ${renderColumn(col, enums)};`);
-      if (col.unique) stmts.push(createUniqueColIndex(next, col));
+      stmts.push(safe(`ALTER TABLE ${t} ADD COLUMN ${renderColumn(col, enums)};`));
+      if (col.unique) stmts.push(safe(createUniqueColIndex(next, col)));
     }
     // Dropped columns (residual — no match by either key).
     for (const col of match.dropped) {
-      stmts.push(`ALTER TABLE ${t} DROP COLUMN ${quoteIdent(col.dbName)};`);
+      stmts.push(
+        forced(
+          `ALTER TABLE ${t} DROP COLUMN ${quoteIdent(col.dbName)};`,
+          `DROP COLUMN ${next.name}.${col.name}`,
+        ),
+      );
     }
   }
 
@@ -598,17 +653,20 @@ function diffTable(
       stmts.push(...alterColumn(next, old, col, enums));
     }
     if (old.unique !== col.unique) {
+      // Dropping a unique index only relaxes a constraint — it destroys no
+      // row data, so it stays safe (taxonomy edge case, same reasoning as
+      // every other `DROP INDEX` below).
       stmts.push(
         col.unique
-          ? createUniqueColIndex(next, col)
-          : `DROP INDEX ${quoteIdent(uniqueColIndexName(next, col))};`,
+          ? safe(createUniqueColIndex(next, col))
+          : safe(`DROP INDEX ${quoteIdent(uniqueColIndexName(next, col))};`),
       );
     } else if (col.unique && old.dbName !== col.dbName) {
       // Renamed column keeps its single-column unique index — the
       // auto-derived name embeds the column's dbName, so realign it.
       const oldName = uniqueColIndexName(prevOriginal, old);
       const newName = uniqueColIndexName(next, col);
-      if (oldName !== newName) stmts.push(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`);
+      if (oldName !== newName) stmts.push(safe(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`));
     }
   }
 
@@ -617,8 +675,14 @@ function diffTable(
   // what an inline `PRIMARY KEY (...)` in `CREATE TABLE` produces. A
   // hand-named PK constraint would not be found by this DROP.
   if (JSON.stringify(prev.primaryKey) !== JSON.stringify(next.primaryKey)) {
-    stmts.push(`ALTER TABLE ${t} DROP CONSTRAINT ${quoteIdent(`${prevOriginal.dbName}_pkey`)};`);
-    stmts.push(`ALTER TABLE ${t} ADD PRIMARY KEY (${next.primaryKey.map(quoteIdent).join(", ")});`);
+    const pkConstraint = `${prevOriginal.dbName}_pkey`;
+    stmts.push(
+      forced(
+        `ALTER TABLE ${t} DROP CONSTRAINT ${quoteIdent(pkConstraint)};`,
+        `DROP PRIMARY KEY ${next.name} (${pkConstraint})`,
+      ),
+    );
+    stmts.push(safe(`ALTER TABLE ${t} ADD PRIMARY KEY (${next.primaryKey.map(quoteIdent).join(", ")});`));
   }
 
   // Indexes (against the remapped `prev`, so an unchanged index covering a
@@ -638,10 +702,11 @@ function diffTable(
     consumedNextKeys.add(key);
     if (indexDefinition(old) !== indexDefinition(index)) {
       // Same identity, `type` changed: PostgreSQL cannot ALTER an index's
-      // access method — drop and recreate under the new one.
+      // access method — drop and recreate under the new one. DROP INDEX
+      // drops no row data (taxonomy edge case): stays safe.
       const original = origIdxByKey.get(key) ?? old;
-      stmts.push(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`);
-      stmts.push(createIndex(next, index));
+      stmts.push(safe(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`));
+      stmts.push(safe(createIndex(next, index)));
       continue;
     }
     if (!index.name) {
@@ -649,7 +714,7 @@ function diffTable(
       if (original) {
         const oldName = indexName(prevOriginal, original);
         const newName = indexName(next, index);
-        if (oldName !== newName) stmts.push(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`);
+        if (oldName !== newName) stmts.push(safe(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`));
       }
     }
   }
@@ -676,28 +741,28 @@ function diffTable(
     const newName = indexName(next, newResidual);
     if (indexDefinition(oldResidual) === indexDefinition(newResidual)) {
       // Shape and method identical, only the name differs: pure rename.
-      if (oldName !== newName) stmts.push(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`);
+      if (oldName !== newName) stmts.push(safe(`ALTER INDEX ${quoteIdent(oldName)} RENAME TO ${quoteIdent(newName)};`));
     } else {
       // Name and/or method differ: a single combined DROP+CREATE, never two
       // separate statements.
-      stmts.push(`DROP INDEX ${quoteIdent(oldName)};`);
-      stmts.push(createIndex(next, newResidual));
+      stmts.push(safe(`DROP INDEX ${quoteIdent(oldName)};`));
+      stmts.push(safe(createIndex(next, newResidual)));
     }
   }
 
   for (const idx of nextResidual) {
-    if (!pairedNextKeys.has(indexKey(idx))) stmts.push(createIndex(next, idx));
+    if (!pairedNextKeys.has(indexKey(idx))) stmts.push(safe(createIndex(next, idx)));
   }
   for (const idx of prevResidual) {
     if (!pairedPrevKeys.has(indexKey(idx))) {
       const original = origIdxByKey.get(indexKey(idx)) ?? idx;
-      stmts.push(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`);
+      stmts.push(safe(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`));
     }
   }
 
   // Realtime trigger toggled (@@realtime added or removed).
   if ((prev.realtime ?? false) !== (next.realtime ?? false)) {
-    stmts.push(next.realtime ? renderCreateTrigger(next) : renderDropTrigger(next));
+    stmts.push(safe(next.realtime ? renderCreateTrigger(next) : renderDropTrigger(next)));
   }
 
   return stmts;
@@ -706,7 +771,7 @@ function diffTable(
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 function push(stmts: MigrationStatement[], sqls: string[], phase: MigrationPhase = "transaction"): void {
-  for (const sql of sqls) stmts.push({ sql, phase });
+  for (const sql of sqls) stmts.push({ sql, phase, risk: "safe" });
 }
 
 /**
@@ -794,9 +859,9 @@ function computeStatements(
   // between the FK pass and each table's own structure pass so both agree
   // on which columns moved.
   const matches = new Map<string, ColumnMatch>();
-  const fkDrops: string[] = [];
-  const fkAdds: string[] = [];
-  const fkRenames: string[] = [];
+  const fkDrops: MigrationStatement[] = [];
+  const fkAdds: MigrationStatement[] = [];
+  const fkRenames: MigrationStatement[] = [];
   for (const table of next.tables) {
     const old = oldTableByNextName.get(table.name) ?? null;
     if (!old) {
@@ -814,23 +879,24 @@ function computeStatements(
 
   // 3a: drop every removed/redefined FK constraint first, so 3c can re-add a
   // same-named constraint without a duplicate-name failure.
-  push(stmts, fkDrops);
+  stmts.push(...fkDrops);
 
   // 3b: new + altered table structure, FK-free.
   for (const table of next.tables) {
     const old = oldTableByNextName.get(table.name);
-    push(
-      stmts,
-      !old ? createTable(table, next.enums) : diffTable(old, table, next.enums, diagnostics, matches.get(table.name)!),
+    stmts.push(
+      ...(!old
+        ? createTable(table, next.enums)
+        : diffTable(old, table, next.enums, diagnostics, matches.get(table.name)!)),
     );
   }
 
   // Realign FK constraint names left stale by a column rename (unchanged
   // constraint, not part of the drop/add flow).
-  push(stmts, fkRenames);
+  stmts.push(...fkRenames);
 
   // 3c: add every new/redefined FK constraint, once every table exists.
-  push(stmts, fkAdds);
+  stmts.push(...fkAdds);
 
   // Dropped tables (after alters so dependent FKs are handled by CASCADE).
   // Uses `tableMatch.dropped` (a consumed set from `matchTables`), never
@@ -838,10 +904,15 @@ function computeStatements(
   // this table's `name`, not that no `next` table matched it at all (a
   // physical-`dbName` fallback match would still be missed).
   for (const table of tableMatch.dropped) {
-    push(stmts, [`DROP TABLE ${quoteIdent(table.dbName)} CASCADE;`]);
+    stmts.push(
+      forced(`DROP TABLE ${quoteIdent(table.dbName)} CASCADE;`, `DROP TABLE ${table.name}`),
+    );
   }
 
   // Dropped enums last (tables referencing them are already gone/altered).
+  // PostgreSQL refuses `DROP TYPE` while anything still references it — a
+  // fail-safe: any real data loss already happened via a co-emitted
+  // DROP TABLE/DROP COLUMN/type-change ALTER, so this stays safe.
   for (const e of prevEnums.values()) {
     if (!nextEnums.has(e.name)) push(stmts, [`DROP TYPE ${quoteIdent(e.name)};`]);
   }
@@ -861,13 +932,20 @@ export function planMigration(prev: ResolvedSchema | null, next: ResolvedSchema)
   return { statements, diagnostics };
 }
 
-/** Wraps a migration plan's statements into a migration file body. */
+/**
+ * Wraps a migration plan's statements into a migration file body. A
+ * `"requires-force"` statement gets a `-- indigo:requires-force <impact>`
+ * comment line directly above its SQL — the ONLY carrier that reaches
+ * `migrate deploy` (see `REQUIRES_FORCE_MARKER` in `plan.ts`). No
+ * requires-force statement is ever `"pre-transaction"` (only enum
+ * `ADD VALUE` is, and that is always safe), so the two taggings never
+ * interact.
+ */
 export function renderMigrationSql(plan: MigrationPlan): string {
   if (plan.statements.length === 0) return "";
-  const blocks = plan.statements.map((stmt) =>
-    stmt.phase === "pre-transaction"
-      ? [NO_TRANSACTION_BEGIN, stmt.sql, NO_TRANSACTION_END].join("\n")
-      : stmt.sql,
-  );
+  const blocks = plan.statements.map((stmt) => {
+    const sql = stmt.risk === "requires-force" ? `${REQUIRES_FORCE_MARKER}${stmt.impact}\n${stmt.sql}` : stmt.sql;
+    return stmt.phase === "pre-transaction" ? [NO_TRANSACTION_BEGIN, sql, NO_TRANSACTION_END].join("\n") : sql;
+  });
   return `-- Generated by IndigoDB migrate (PostgreSQL)\n\n${blocks.join("\n\n")}\n`;
 }

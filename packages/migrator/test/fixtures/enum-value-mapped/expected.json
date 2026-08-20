@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER TYPE \"Status\" ADD VALUE IF NOT EXISTS 'pending_review';",
-      "phase": "pre-transaction"
+      "phase": "pre-transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

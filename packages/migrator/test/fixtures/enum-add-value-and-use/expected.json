@@ -2,11 +2,13 @@
   "statements": [
     {
       "sql": "ALTER TYPE \"S\" ADD VALUE IF NOT EXISTS 'B';",
-      "phase": "pre-transaction"
+      "phase": "pre-transaction",
+      "risk": "safe"
     },
     {
       "sql": "ALTER TABLE \"T\" ALTER COLUMN \"s\" SET DEFAULT 'B'::\"S\";",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

@@ -2,11 +2,13 @@
   "statements": [
     {
       "sql": "DROP INDEX \"User_tags_idx\";",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     },
     {
       "sql": "CREATE INDEX \"User_tags_idx\" ON \"User\" USING hash (\"tags\");",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],

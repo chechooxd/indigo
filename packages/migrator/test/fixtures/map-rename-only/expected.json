@@ -2,7 +2,8 @@
   "statements": [
     {
       "sql": "ALTER TABLE \"User\" RENAME COLUMN \"created_at\" TO \"creation_date\";",
-      "phase": "transaction"
+      "phase": "transaction",
+      "risk": "safe"
     }
   ],
   "diagnostics": [],
