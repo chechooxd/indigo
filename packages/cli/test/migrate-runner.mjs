@@ -14,7 +14,7 @@ import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { strictEqual, ok } from "node:assert";
 import { parse, resolve as resolveSchema } from "@indigodb/core";
-import { migrateDev, migrateDeploy, migrationChecksum } from "../dist/migrate-runner.js";
+import { migrateDev, migrateDeploy, migrateStatus, migrationChecksum } from "../dist/migrate-runner.js";
 import { withDatabase, createMigrationClient, createMigrationsRoot } from "./migrate-harness.mjs";
 
 let failures = 0;
@@ -49,6 +49,32 @@ async function historyRows(db) {
     `SELECT name, checksum, success FROM "_indigo_migrations" ORDER BY id`,
   );
   return result.rows;
+}
+
+/** Captures stdout `console.log` calls for the duration of `fn`. */
+async function captureLogs(fn) {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await fn();
+  } finally {
+    console.log = original;
+  }
+  return lines;
+}
+
+/** Captures stderr `console.error` calls for the duration of `fn`. */
+async function captureErrors(fn) {
+  const lines = [];
+  const original = console.error;
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    await fn();
+  } finally {
+    console.error = original;
+  }
+  return lines;
 }
 
 // ─── fresh install: full 5-column shape ──────────────────────────────────────
@@ -227,6 +253,194 @@ await check("migrateDeploy records checksum + success = true for each pending mi
       strictEqual(rows[0].name, id);
       strictEqual(rows[0].checksum, migrationChecksum(sql));
       strictEqual(rows[0].success, true);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── enforcement: migrateDev refuses on checksum drift (Slice 2) ─────────────
+
+await check("migrateDev refuses when an applied migration's on-disk file has drifted", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+      const before = await historyRows(db);
+      strictEqual(before.length, 1);
+
+      const file = join(cwd, "migrations", before[0].name, "migration.sql");
+      writeFileSync(file, readFileSync(file, "utf-8") + "-- drifted edit\n");
+
+      const source = `Table User {\n  id Int @id @default(autoincrement())\n  name String\n  age Int\n}\n`;
+      const nextResolved = resolveSchema(parse(source));
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateDev({
+          resolved: nextResolved,
+          name: "add-age",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+        }),
+      );
+      const refused = process.exitCode === 1;
+      process.exitCode = savedExitCode;
+
+      ok(refused, "expected process.exitCode = 1 on drift refusal");
+      ok(
+        errors.some((l) => l.includes(before[0].name)),
+        `expected the drifted id ${before[0].name} named in the refusal, got: ${errors.join("\n")}`,
+      );
+
+      const after = await historyRows(db);
+      strictEqual(after.length, 1, "no new migration should be recorded");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── enforcement: migrateDeploy preflight refuses on drift (Slice 2) ─────────
+
+await check(
+  "migrateDeploy preflight refuses on a drifted already-recorded migration before applying any pending migration",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const client = () => createMigrationClient(db);
+
+        const appliedId = "20240101000000_init";
+        const appliedDir = join(cwd, "migrations", appliedId);
+        mkdirSync(appliedDir, { recursive: true });
+        const appliedSql = `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`;
+        writeFileSync(join(appliedDir, "migration.sql"), appliedSql);
+        await migrateDeploy("unused", { createClient: client, cwd });
+
+        // Drift the already-applied file.
+        writeFileSync(join(appliedDir, "migration.sql"), appliedSql + "-- drifted edit\n");
+
+        // A genuinely pending migration that must NOT get applied.
+        const pendingId = "20240102000000_pending";
+        const pendingDir = join(cwd, "migrations", pendingId);
+        mkdirSync(pendingDir, { recursive: true });
+        writeFileSync(join(pendingDir, "migration.sql"), `CREATE TABLE "bar" (id serial PRIMARY KEY);\n`);
+
+        const savedExitCode = process.exitCode;
+        process.exitCode = undefined;
+        const errors = await captureErrors(() => migrateDeploy("unused", { createClient: client, cwd }));
+        const refused = process.exitCode === 1;
+        process.exitCode = savedExitCode;
+
+        ok(refused, "expected process.exitCode = 1 on preflight refusal");
+        ok(
+          errors.some((l) => l.includes(appliedId)),
+          `expected the drifted id ${appliedId} named in the refusal, got: ${errors.join("\n")}`,
+        );
+        ok(
+          !errors.some((l) => /rolled back/i.test(l)),
+          `expected a preflight refusal message, not a "rolled back" throw-catch message, got: ${errors.join("\n")}`,
+        );
+
+        const rows = await historyRows(db);
+        strictEqual(rows.length, 1, "the pending migration must not have been applied");
+        strictEqual(rows[0].name, appliedId);
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("migrateDeploy with no drift applies pending migrations normally (regression guard)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      const appliedId = "20240101000000_init";
+      const appliedDir = join(cwd, "migrations", appliedId);
+      mkdirSync(appliedDir, { recursive: true });
+      writeFileSync(join(appliedDir, "migration.sql"), `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      await migrateDeploy("unused", { createClient: client, cwd });
+
+      const pendingId = "20240102000000_pending";
+      const pendingDir = join(cwd, "migrations", pendingId);
+      mkdirSync(pendingDir, { recursive: true });
+      writeFileSync(join(pendingDir, "migration.sql"), `CREATE TABLE "bar" (id serial PRIMARY KEY);\n`);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      await migrateDeploy("unused", { createClient: client, cwd });
+      const clean = process.exitCode === undefined;
+      process.exitCode = savedExitCode;
+
+      ok(clean, "expected process.exitCode to stay untouched when there is no drift");
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 2, "both migrations should be applied");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── enforcement: migrateStatus reports drift non-fatally (Slice 2) ──────────
+
+await check("migrateStatus prints ⚠ modified for a drifted row and ✓ applied for clean rows, exit 0", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      const cleanId = "20240101000000_clean";
+      const cleanDir = join(cwd, "migrations", cleanId);
+      mkdirSync(cleanDir, { recursive: true });
+      writeFileSync(join(cleanDir, "migration.sql"), `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+
+      const driftedId = "20240102000000_drifted";
+      const drifted = join(cwd, "migrations", driftedId);
+      mkdirSync(drifted, { recursive: true });
+      const drifedSql = `CREATE TABLE "bar" (id serial PRIMARY KEY);\n`;
+      writeFileSync(join(drifted, "migration.sql"), drifedSql);
+
+      await migrateDeploy("unused", { createClient: client, cwd });
+      writeFileSync(join(drifted, "migration.sql"), drifedSql + "-- drifted edit\n");
+
+      const pendingId = "20240103000000_pending";
+      const pendingDir = join(cwd, "migrations", pendingId);
+      mkdirSync(pendingDir, { recursive: true });
+      writeFileSync(join(pendingDir, "migration.sql"), `CREATE TABLE "baz" (id serial PRIMARY KEY);\n`);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() => migrateStatus("unused", { createClient: client, cwd }));
+      const untouched = process.exitCode === undefined;
+      process.exitCode = savedExitCode;
+
+      ok(untouched, "migrateStatus must never set process.exitCode, even on drift");
+      ok(
+        lines.some((l) => l.includes(cleanId) && /✓ applied/.test(l)),
+        `expected "✓ applied" for the clean row, got:\n${lines.join("\n")}`,
+      );
+      ok(
+        lines.some((l) => l.includes(driftedId) && /⚠ modified/.test(l)),
+        `expected "⚠ modified" for the drifted row, got:\n${lines.join("\n")}`,
+      );
+      ok(
+        lines.some((l) => l.includes(pendingId) && /· pending/.test(l)),
+        `expected "· pending" for the not-yet-applied row, got:\n${lines.join("\n")}`,
+      );
     } finally {
       cleanup();
     }

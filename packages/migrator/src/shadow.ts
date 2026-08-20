@@ -11,10 +11,12 @@
  * destructive DDL for them. Replay yields exactly the state IndigoDB itself
  * is responsible for.
  *
- * `_indigo_migrations` records NAMES, not checksums — there is no stronger
- * signal than "recorded" vs. "on disk" to detect a desynced migrations
- * directory, so `buildShadowSchema` treats every mismatch between those two
- * sets as a hard refusal (`ShadowReplayError`) rather than guessing.
+ * `_indigo_migrations` records both NAMES and per-migration checksums.
+ * Order divergence (recorded vs. on-disk set/order) and checksum drift
+ * (recorded content vs. current on-disk content) are two INDEPENDENT desync
+ * signals — neither substitutes for the other. `buildShadowSchema` treats a
+ * mismatch on either signal as a hard refusal (`ShadowReplayError`) rather
+ * than guessing.
  *
  * I/O-injected by design: this module never touches `node:fs`, `pg`, or
  * `process.cwd()` directly. `MigrationSource` is the seam — the caller
@@ -42,6 +44,10 @@ export interface MigrationSource {
   onDisk: string[];
   /** Reads `migrations/<id>/migration.sql`'s contents for the given id. */
   read(id: string): string;
+  /** sha256 hex of `migrations/<id>/migration.sql`'s CURRENT on-disk bytes. */
+  checksum(id: string): string;
+  /** Stored checksum per recorded id; `null` = legacy row, comparison skipped. */
+  recordedChecksums: Record<string, string | null>;
 }
 
 /**
@@ -124,14 +130,19 @@ async function replayOne(db: ShadowDb, sql: string): Promise<void> {
  * actually applied them — into an isolated shadow database, then
  * introspecting it.
  *
- * Desync rules (no checksums exist; `recorded` vs. `onDisk` are the only
- * signals):
+ * Desync rules (`recorded`/`onDisk` set-and-order, plus per-id checksum
+ * drift, are independent signals — neither substitutes for the other):
  * - A recorded id with no matching on-disk directory REFUSES
  *   (`ShadowReplayError` naming the missing id(s)) — the migrations
  *   directory is missing files the database's history depends on.
  * - An on-disk directory not present in `recorded` (a PENDING migration)
  *   REFUSES, pointing at `indigodb migrate deploy` — applying it silently
  *   as part of `dev` would diverge from what `deploy` would have done.
+ * - A recorded id whose CURRENT on-disk checksum (`source.checksum(id)`)
+ *   differs from its stored checksum (`source.recordedChecksums[id]`)
+ *   REFUSES (`ShadowReplayError` naming the drifted id(s)) — the file on
+ *   disk no longer matches what the database's history says it applied. A
+ *   `null` stored checksum (legacy, unbackfilled) skips this comparison.
  * - Over an otherwise IDENTICAL set of ids, `recorded` order differing from
  *   `onDisk`'s lexicographic order WARNS (via `options.onWarning`) and
  *   replays in `recorded` order — that is the order that reproduces the
@@ -161,6 +172,17 @@ export async function buildShadowSchema(
     throw new ShadowReplayError(
       `shadow replay refused: ${pending.length} migration(s) exist on disk but are not recorded as applied: ${pending.join(", ")}. Run \`indigodb migrate deploy\` to apply pending migrations before running \`migrate dev\` again.`,
       pending,
+    );
+  }
+
+  const drifted = recorded.filter((id) => {
+    const stored = source.recordedChecksums[id];
+    return stored != null && stored !== source.checksum(id);
+  });
+  if (drifted.length > 0) {
+    throw new ShadowReplayError(
+      `shadow replay refused: ${drifted.length} migration(s) recorded as applied no longer match their on-disk content: ${drifted.join(", ")}`,
+      drifted,
     );
   }
 

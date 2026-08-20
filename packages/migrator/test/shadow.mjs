@@ -73,10 +73,20 @@ async function shadowPrevOf(prevResolved) {
       read: () => {
         throw new Error("unexpected read() call for an empty MigrationSource");
       },
+      checksum: () => {
+        throw new Error("unexpected checksum() call for an empty MigrationSource");
+      },
+      recordedChecksums: {},
     });
   }
   const sql = renderPushSql(prevResolved);
-  return buildShadowSchema({ recorded: ["0001_prev"], onDisk: ["0001_prev"], read: () => sql });
+  return buildShadowSchema({
+    recorded: ["0001_prev"],
+    onDisk: ["0001_prev"],
+    read: () => sql,
+    checksum: () => "checksum-0001_prev",
+    recordedChecksums: { "0001_prev": "checksum-0001_prev" },
+  });
 }
 
 // ─── C.1: plan-equivalence over the fixture corpus ───────────────────────────
@@ -231,7 +241,13 @@ await check("chain-replay-through-shadow: structurally equals renderPushSql(fina
     prev = schemas[i];
   }
 
-  const source = { recorded: ids, onDisk: [...ids], read: (id) => sqlById.get(id) };
+  const source = {
+    recorded: ids,
+    onDisk: [...ids],
+    read: (id) => sqlById.get(id),
+    checksum: (id) => `checksum-${id}`,
+    recordedChecksums: Object.fromEntries(ids.map((id) => [id, `checksum-${id}`])),
+  };
   const shadowResult = await buildShadowSchema(source);
   const final = schemas[schemas.length - 1];
 
@@ -269,6 +285,8 @@ await check("@@realtime chain replay: plpgsql trigger survives shadow replay, or
     recorded: ["0001_init", "0002_realtime"],
     onDisk: ["0001_init", "0002_realtime"],
     read: (id) => (id === "0001_init" ? plan1 : plan2),
+    checksum: (id) => `checksum-${id}`,
+    recordedChecksums: { "0001_init": "checksum-0001_init", "0002_realtime": "checksum-0002_realtime" },
   };
 
   let shadowResult;
@@ -315,7 +333,13 @@ await check("desync (C.8): recorded migration missing on disk refuses, naming th
   await assertShadowReplayError(
     () =>
       buildShadowSchema(
-        { recorded: ["0001_a", "0002_b"], onDisk: ["0001_a"], read: (id) => `-- ${id}` },
+        {
+          recorded: ["0001_a", "0002_b"],
+          onDisk: ["0001_a"],
+          read: (id) => `-- ${id}`,
+          checksum: (id) => `checksum-${id}`,
+          recordedChecksums: { "0001_a": "checksum-0001_a", "0002_b": "checksum-0002_b" },
+        },
         { createShadow: neverCalledCreateShadow },
       ),
     ["0002_b"],
@@ -326,7 +350,13 @@ await check("desync (C.9): pending on-disk directory not recorded refuses, messa
   let message = "";
   try {
     await buildShadowSchema(
-      { recorded: ["0001_a"], onDisk: ["0001_a", "0002_b"], read: (id) => `-- ${id}` },
+      {
+        recorded: ["0001_a"],
+        onDisk: ["0001_a", "0002_b"],
+        read: (id) => `-- ${id}`,
+        checksum: (id) => `checksum-${id}`,
+        recordedChecksums: { "0001_a": "checksum-0001_a" },
+      },
       { createShadow: neverCalledCreateShadow },
     );
   } catch (err) {
@@ -353,6 +383,8 @@ await check("desync (C.10): reordered same-set warns and replays in RECORDED ord
       recorded: ["0002_b", "0001_a"],
       onDisk: ["0001_a", "0002_b"],
       read: (id) => `-- marker ${id}`,
+      checksum: (id) => `checksum-${id}`,
+      recordedChecksums: { "0001_a": "checksum-0001_a", "0002_b": "checksum-0002_b" },
     },
     {
       onWarning: (message) => warnings.push(message),
@@ -374,10 +406,52 @@ await check("desync (C.10): reordered same-set warns and replays in RECORDED ord
 
 await check("desync (C.11): empty history yields an empty ResolvedSchema, no database touched", async () => {
   const schema = await buildShadowSchema(
-    { recorded: [], onDisk: [], read: () => { throw new Error("read() must not be called for empty history"); } },
+    {
+      recorded: [],
+      onDisk: [],
+      read: () => { throw new Error("read() must not be called for empty history"); },
+      checksum: () => { throw new Error("checksum() must not be called for empty history"); },
+      recordedChecksums: {},
+    },
     { createShadow: neverCalledCreateShadow },
   );
   deepStrictEqual(schema, { tables: [], enums: [], tableGroups: [] });
+});
+
+await check("desync (C.12): recorded id with drifted on-disk checksum refuses, naming the drifted id", async () => {
+  await assertShadowReplayError(
+    () =>
+      buildShadowSchema(
+        {
+          recorded: ["0001_a", "0002_b"],
+          onDisk: ["0001_a", "0002_b"],
+          read: (id) => `-- ${id}`,
+          checksum: (id) => (id === "0002_b" ? "checksum-0002_b-EDITED" : "checksum-0001_a"),
+          recordedChecksums: { "0001_a": "checksum-0001_a", "0002_b": "checksum-0002_b" },
+        },
+        { createShadow: neverCalledCreateShadow },
+      ),
+    ["0002_b"],
+  );
+});
+
+await check("desync (C.13): matching checksums replay clean; a null stored checksum skips comparison", async () => {
+  const fakeDb = {
+    exec: async () => {},
+    query: async () => ({ rows: [] }),
+    close: async () => {},
+  };
+  const result = await buildShadowSchema(
+    {
+      recorded: ["0001_a", "0002_b"],
+      onDisk: ["0001_a", "0002_b"],
+      read: () => "-- sql",
+      checksum: (id) => `checksum-${id}`,
+      recordedChecksums: { "0001_a": "checksum-0001_a", "0002_b": null },
+    },
+    { createShadow: async () => fakeDb },
+  );
+  deepStrictEqual(result, { tables: [], enums: [], tableGroups: [] });
 });
 
 if (failures > 0) {

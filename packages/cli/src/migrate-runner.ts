@@ -3,7 +3,14 @@
  *
  * Manages versioned migrations on disk (`migrations/<timestamp>_<name>/migration.sql`),
  * a schema snapshot used to diff the next migration (`migrations/.snapshot.json`),
- * and a `_indigo_migrations` history table in the database.
+ * and a `_indigo_migrations` history table in the database. The history table
+ * also carries a sha256 `checksum` per row (`migrationChecksum`, `node:crypto`),
+ * enforced two ways: `dev` refuses via shadow-replay's 4th desync rule
+ * (`buildShadowSchema`/`ShadowReplayError`) when a recorded migration's
+ * on-disk content has drifted, and `deploy` runs its own `checksumPreflight`
+ * before applying any pending migration, refusing (no throw, `process.exitCode
+ * = 1`) on the same drift. `status` reports drift too, but only as a
+ * non-fatal diagnostic (`⚠ modified`) — it never sets `process.exitCode`.
  *
  * `dev` creates + applies a migration from the current schema; `deploy` applies
  * pending migration files (for CI/production); `status` lists applied/pending.
@@ -156,25 +163,64 @@ async function appliedMigrations(client: MigrationClient): Promise<Set<string>> 
 }
 
 /**
- * Ordered migration names, in the order `_indigo_migrations` actually
- * recorded them (`ORDER BY id`) — this is `buildShadowSchema`'s `recorded`
- * input, distinct from `appliedMigrations`'s unordered `Set` (which
- * `migrateDeploy`/`migrateStatus` still use for membership checks only).
+ * Recomputes + compares checksums for every already-recorded migration
+ * against its current on-disk `migration.sql`, BEFORE `migrateDeploy` applies
+ * any pending migration. A `null` stored checksum (legacy, unbackfilled)
+ * skips comparison for that id. Returns the drifted ids, if any — empty
+ * means clean. Missing on-disk files are not this function's concern (they
+ * would already fail to read when the id is later replayed/read elsewhere);
+ * this only compares ids whose file it can read.
  */
-async function recordedMigrations(client: MigrationClient): Promise<string[]> {
-  const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}" ORDER BY id`);
-  return result.rows.map((r: { name: string }) => r.name);
+async function checksumPreflight(client: MigrationClient, cwd: string): Promise<string[]> {
+  const { recorded, checksums } = await recordedMigrations(client);
+  const drifted: string[] = [];
+  for (const id of recorded) {
+    const stored = checksums[id];
+    if (stored == null) continue;
+    const file = join(migrationsRoot(cwd), id, "migration.sql");
+    if (!existsSync(file)) continue;
+    const current = migrationChecksum(readFileSync(file, "utf-8"));
+    if (current !== stored) drifted.push(id);
+  }
+  return drifted;
+}
+
+/**
+ * Ordered migration names + their recorded checksums, in the order
+ * `_indigo_migrations` actually recorded them (`ORDER BY id`). `recorded` is
+ * `buildShadowSchema`'s `recorded` input, distinct from `appliedMigrations`'s
+ * unordered `Set` (which `migrateDeploy`/`migrateStatus` still use for
+ * membership checks only). `checksums` maps each recorded id to its stored
+ * checksum — `null` for a legacy row not yet backfilled.
+ */
+async function recordedMigrations(
+  client: MigrationClient,
+): Promise<{ recorded: string[]; checksums: Record<string, string | null> }> {
+  const result = await client.query(`SELECT name, checksum FROM "${HISTORY_TABLE}" ORDER BY id`);
+  const rows = result.rows as { name: string; checksum: string | null }[];
+  const checksums: Record<string, string | null> = {};
+  for (const row of rows) checksums[row.name] = row.checksum;
+  return { recorded: rows.map((r) => r.name), checksums };
 }
 
 /**
  * Builds `buildShadowSchema`'s I/O-injection seam from the real filesystem:
- * `onDisk` from `listMigrationDirs()`, `read` from `migrations/<id>/migration.sql`.
+ * `onDisk` from `listMigrationDirs()`, `read`/`checksum` from
+ * `migrations/<id>/migration.sql`'s current on-disk bytes, `recordedChecksums`
+ * from the history table (stored, possibly stale) checksums.
  */
-function fsMigrationSource(recorded: string[], cwd: string): MigrationSource {
+function fsMigrationSource(
+  recorded: string[],
+  recordedChecksums: Record<string, string | null>,
+  cwd: string,
+): MigrationSource {
+  const readFile = (id: string) => readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
   return {
     recorded,
     onDisk: listMigrationDirs(cwd),
-    read: (id: string) => readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8"),
+    read: readFile,
+    checksum: (id: string) => migrationChecksum(readFile(id)),
+    recordedChecksums,
   };
 }
 
@@ -221,8 +267,8 @@ async function resolvePrevSchema(client: MigrationClient, cwd: string): Promise<
   if (process.env.INDIGODB_MIGRATE_PREV === "snapshot") {
     return loadSnapshot(cwd);
   }
-  const recorded = await recordedMigrations(client);
-  const source = fsMigrationSource(recorded, cwd);
+  const { recorded, checksums } = await recordedMigrations(client);
+  const source = fsMigrationSource(recorded, checksums, cwd);
   return buildShadowSchema(source, {
     onWarning: (message) => console.warn(`⚠️  ${message}`),
   });
@@ -298,6 +344,16 @@ export async function migrateDeploy(connectionString: string, seams: RunnerSeams
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   try {
     await ensureHistory(client, cwd);
+
+    const drifted = await checksumPreflight(client, cwd);
+    if (drifted.length > 0) {
+      console.error(
+        `❌ migrate deploy refused: ${drifted.length} already-applied migration(s) no longer match their on-disk content: ${drifted.join(", ")}`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     const applied = await appliedMigrations(client);
     const pending = dirs.filter((d) => !applied.has(d));
     if (pending.length === 0) {
@@ -325,7 +381,13 @@ export async function migrateDeploy(connectionString: string, seams: RunnerSeams
   }
 }
 
-/** Lists migrations and whether each has been applied. */
+/**
+ * Lists migrations and whether each has been applied, is pending, or has
+ * drifted (`⚠ modified` — recorded checksum no longer matches the on-disk
+ * file). Drift is a non-fatal diagnostic here: unlike `migrateDeploy`'s
+ * preflight, `migrateStatus` never sets `process.exitCode` — it always
+ * exits 0, reporting rather than refusing.
+ */
 export async function migrateStatus(connectionString: string, seams: RunnerSeams = {}): Promise<void> {
   const cwd = seams.cwd ?? process.cwd();
   const dirs = listMigrationDirs(cwd);
@@ -337,8 +399,10 @@ export async function migrateStatus(connectionString: string, seams: RunnerSeams
   try {
     await ensureHistory(client, cwd);
     const applied = await appliedMigrations(client);
+    const drifted = new Set(await checksumPreflight(client, cwd));
     for (const id of dirs) {
-      console.log(`  ${applied.has(id) ? "✓ applied" : "· pending"}  ${id}`);
+      const state = drifted.has(id) ? "⚠ modified" : applied.has(id) ? "✓ applied" : "· pending";
+      console.log(`  ${state}  ${id}`);
     }
     const pending = dirs.filter((d) => !applied.has(d)).length;
     console.log(`\n${dirs.length} migration(s), ${pending} pending.`);
