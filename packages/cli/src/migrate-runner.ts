@@ -17,6 +17,7 @@ import {
   readdirSync,
   rmSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import pg from "pg";
 import {
@@ -33,19 +34,46 @@ const MIGRATIONS_DIR = "migrations";
 const SNAPSHOT_FILE = ".snapshot.json";
 const HISTORY_TABLE = "_indigo_migrations";
 
-function migrationsRoot(): string {
-  return resolve(process.cwd(), MIGRATIONS_DIR);
+/**
+ * A live database connection sufficient to run the migration runner's DDL,
+ * history bookkeeping and migration SQL. Satisfied by a thin wrapper around
+ * `pg.Client` (the default `createClient`), or by any test double a caller
+ * injects via `RunnerSeams.createClient` — e.g. a PGlite adapter in
+ * `migrate-harness.mjs`, mirroring `@indigodb/migrator`'s `ShadowDb` seam.
+ */
+export interface MigrationClient {
+  query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;
+  /** Multi-statement body (no params) — e.g. a migration file's transactional block. */
+  exec(sql: string): Promise<unknown>;
+  end(): Promise<void>;
 }
 
-function loadSnapshot(): ResolvedSchema | null {
-  const p = join(migrationsRoot(), SNAPSHOT_FILE);
+/**
+ * Injectable seams: `createClient` overrides how the runner obtains a
+ * connected `MigrationClient` (defaults to a real, connected `pg.Client`);
+ * `cwd` overrides where `migrations/` is resolved from (defaults to
+ * `process.cwd()`). Threaded through `migrateDev`'s `DevOptions`,
+ * `migrateDeploy` and `migrateStatus` so tests never need `process.chdir`
+ * or a real Postgres connection.
+ */
+export interface RunnerSeams {
+  createClient?: () => Promise<MigrationClient>;
+  cwd?: string;
+}
+
+function migrationsRoot(cwd: string): string {
+  return resolve(cwd, MIGRATIONS_DIR);
+}
+
+function loadSnapshot(cwd: string): ResolvedSchema | null {
+  const p = join(migrationsRoot(cwd), SNAPSHOT_FILE);
   if (!existsSync(p)) return null;
   return JSON.parse(readFileSync(p, "utf-8")) as ResolvedSchema;
 }
 
-function saveSnapshot(schema: ResolvedSchema): void {
-  mkdirSync(migrationsRoot(), { recursive: true });
-  writeFileSync(join(migrationsRoot(), SNAPSHOT_FILE), JSON.stringify(schema, null, 2));
+function saveSnapshot(schema: ResolvedSchema, cwd: string): void {
+  mkdirSync(migrationsRoot(cwd), { recursive: true });
+  writeFileSync(join(migrationsRoot(cwd), SNAPSHOT_FILE), JSON.stringify(schema, null, 2));
 }
 
 function timestamp(): string {
@@ -58,8 +86,8 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "migration";
 }
 
-function listMigrationDirs(): string[] {
-  const root = migrationsRoot();
+function listMigrationDirs(cwd: string): string[] {
+  const root = migrationsRoot(cwd);
   if (!existsSync(root)) return [];
   return readdirSync(root, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -67,17 +95,62 @@ function listMigrationDirs(): string[] {
     .sort();
 }
 
-async function ensureHistory(client: pg.Client): Promise<void> {
+/** sha256 hex of `migration.sql`'s exact bytes — no newline/whitespace normalization. */
+export function migrationChecksum(sql: string): string {
+  return createHash("sha256").update(sql).digest("hex");
+}
+
+async function defaultCreateClient(connectionString: string): Promise<MigrationClient> {
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  return {
+    query: (sql: string, params?: unknown[]) => client.query(sql, params),
+    exec: (sql: string) => client.query(sql),
+    end: () => client.end(),
+  };
+}
+
+/**
+ * Idempotent DDL + silent legacy upgrade. Fresh install: creates the full
+ * 5-column shape in one statement. Existing (pre-checksum) table: the two
+ * `ADD COLUMN IF NOT EXISTS` statements are no-ops on a fresh table and
+ * upgrade a legacy one in place. Backfill then hashes every unbackfilled
+ * row's on-disk `migration.sql` (silently, no prompt/output) — a row whose
+ * file is missing is left `NULL`, deferred to the existing shadow-replay
+ * desync rules rather than guessed at here. A second call is a no-op: the
+ * `WHERE checksum IS NULL` selection is empty once backfill has run once.
+ */
+async function ensureHistory(client: MigrationClient, cwd: string): Promise<void> {
   await client.query(
     `CREATE TABLE IF NOT EXISTS "${HISTORY_TABLE}" (
        id serial PRIMARY KEY,
        name text NOT NULL UNIQUE,
-       applied_at timestamptz NOT NULL DEFAULT now()
+       applied_at timestamptz NOT NULL DEFAULT now(),
+       checksum text,
+       success boolean NOT NULL DEFAULT true
      );`,
   );
+  await client.query(`ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS checksum text;`);
+  await client.query(
+    `ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS success boolean NOT NULL DEFAULT true;`,
+  );
+
+  const root = migrationsRoot(cwd);
+  const { rows } = await client.query(
+    `SELECT name FROM "${HISTORY_TABLE}" WHERE checksum IS NULL ORDER BY id`,
+  );
+  for (const row of rows as { name: string }[]) {
+    const file = join(root, row.name, "migration.sql");
+    if (!existsSync(file)) continue; // left NULL — existing desync rules own missing files
+    const checksum = migrationChecksum(readFileSync(file, "utf-8"));
+    await client.query(
+      `UPDATE "${HISTORY_TABLE}" SET checksum = $1 WHERE name = $2 AND checksum IS NULL`,
+      [checksum, row.name],
+    );
+  }
 }
 
-async function appliedMigrations(client: pg.Client): Promise<Set<string>> {
+async function appliedMigrations(client: MigrationClient): Promise<Set<string>> {
   const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}"`);
   return new Set(result.rows.map((r: { name: string }) => r.name));
 }
@@ -88,7 +161,7 @@ async function appliedMigrations(client: pg.Client): Promise<Set<string>> {
  * input, distinct from `appliedMigrations`'s unordered `Set` (which
  * `migrateDeploy`/`migrateStatus` still use for membership checks only).
  */
-async function recordedMigrations(client: pg.Client): Promise<string[]> {
+async function recordedMigrations(client: MigrationClient): Promise<string[]> {
   const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}" ORDER BY id`);
   return result.rows.map((r: { name: string }) => r.name);
 }
@@ -97,11 +170,11 @@ async function recordedMigrations(client: pg.Client): Promise<string[]> {
  * Builds `buildShadowSchema`'s I/O-injection seam from the real filesystem:
  * `onDisk` from `listMigrationDirs()`, `read` from `migrations/<id>/migration.sql`.
  */
-function fsMigrationSource(recorded: string[]): MigrationSource {
+function fsMigrationSource(recorded: string[], cwd: string): MigrationSource {
   return {
     recorded,
-    onDisk: listMigrationDirs(),
-    read: (id: string) => readFileSync(join(migrationsRoot(), id, "migration.sql"), "utf-8"),
+    onDisk: listMigrationDirs(cwd),
+    read: (id: string) => readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8"),
   };
 }
 
@@ -109,6 +182,8 @@ export interface DevOptions {
   resolved: ResolvedSchema;
   name: string;
   connectionString: string;
+  createClient?: () => Promise<MigrationClient>;
+  cwd?: string;
 }
 
 /**
@@ -116,17 +191,19 @@ export interface DevOptions {
  * caller to record history and commit.
  *
  * Statements marked pre-transaction run first, each as its own `query()`
- * call: `pg`'s simple query protocol wraps a multi-statement string in an
- * implicit transaction, so batching them would put `ALTER TYPE ... ADD VALUE`
- * back inside a transaction and defeat the split. A file carrying no marker
- * yields no pre-transaction statements, so migrations written before this
- * existed keep behaving exactly as they did.
+ * call: batching them would put `ALTER TYPE ... ADD VALUE` back inside a
+ * transaction and defeat the split. The transactional body runs through
+ * `exec()` rather than `query()` — it may itself be a multi-statement
+ * string, which `MigrationClient.query`'s single-statement `$n`-param
+ * contract does not promise to support (PGlite, notably, does not). A file
+ * carrying no marker yields no pre-transaction statements, so migrations
+ * written before this existed keep behaving exactly as they did.
  */
-async function applyMigrationSql(client: pg.Client, sql: string): Promise<void> {
+async function applyMigrationSql(client: MigrationClient, sql: string): Promise<void> {
   const { preTransaction, transactional } = splitMigrationSql(sql);
   for (const statement of preTransaction) await client.query(statement);
   await client.query("BEGIN");
-  if (transactional.trim().length > 0) await client.query(transactional);
+  if (transactional.trim().length > 0) await client.exec(transactional);
 }
 
 /**
@@ -140,12 +217,12 @@ async function applyMigrationSql(client: pg.Client, sql: string): Promise<void> 
  * exist, history is empty — a case shadow replay legitimately refuses,
  * since it has no migration to replay to reach that state).
  */
-async function resolvePrevSchema(client: pg.Client): Promise<ResolvedSchema | null> {
+async function resolvePrevSchema(client: MigrationClient, cwd: string): Promise<ResolvedSchema | null> {
   if (process.env.INDIGODB_MIGRATE_PREV === "snapshot") {
-    return loadSnapshot();
+    return loadSnapshot(cwd);
   }
   const recorded = await recordedMigrations(client);
-  const source = fsMigrationSource(recorded);
+  const source = fsMigrationSource(recorded, cwd);
   return buildShadowSchema(source, {
     onWarning: (message) => console.warn(`⚠️  ${message}`),
   });
@@ -153,14 +230,14 @@ async function resolvePrevSchema(client: pg.Client): Promise<ResolvedSchema | nu
 
 /** Creates a migration from schema changes and applies it. */
 export async function migrateDev(options: DevOptions): Promise<void> {
-  const client = new pg.Client({ connectionString: options.connectionString });
+  const cwd = options.cwd ?? process.cwd();
+  const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
-    await client.connect();
-    await ensureHistory(client);
+    await ensureHistory(client, cwd);
 
     let prev: ResolvedSchema | null;
     try {
-      prev = await resolvePrevSchema(client);
+      prev = await resolvePrevSchema(client, cwd);
     } catch (error) {
       if (error instanceof ShadowReplayError) {
         console.error(`❌ ${error.message}`);
@@ -187,16 +264,20 @@ export async function migrateDev(options: DevOptions): Promise<void> {
     }
 
     const id = `${timestamp()}_${slugify(options.name)}`;
-    const dir = join(migrationsRoot(), id);
+    const dir = join(migrationsRoot(cwd), id);
     mkdirSync(dir, { recursive: true });
     const sql = renderMigrationSql(plan);
     writeFileSync(join(dir, "migration.sql"), sql);
 
     try {
       await applyMigrationSql(client, sql);
-      await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
+      const checksum = migrationChecksum(sql);
+      await client.query(
+        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [id, checksum, true],
+      );
       await client.query("COMMIT");
-      saveSnapshot(options.resolved);
+      saveSnapshot(options.resolved, cwd);
       console.log(`✅ Migration created and applied: ${id}`);
       console.log(`   ${plan.statements.length} statement(s) → migrations/${id}/migration.sql`);
     } catch (error) {
@@ -211,12 +292,12 @@ export async function migrateDev(options: DevOptions): Promise<void> {
 }
 
 /** Applies all pending migration files (production/CI). */
-export async function migrateDeploy(connectionString: string): Promise<void> {
-  const dirs = listMigrationDirs();
-  const client = new pg.Client({ connectionString });
+export async function migrateDeploy(connectionString: string, seams: RunnerSeams = {}): Promise<void> {
+  const cwd = seams.cwd ?? process.cwd();
+  const dirs = listMigrationDirs(cwd);
+  const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   try {
-    await client.connect();
-    await ensureHistory(client);
+    await ensureHistory(client, cwd);
     const applied = await appliedMigrations(client);
     const pending = dirs.filter((d) => !applied.has(d));
     if (pending.length === 0) {
@@ -224,9 +305,13 @@ export async function migrateDeploy(connectionString: string): Promise<void> {
       return;
     }
     for (const id of pending) {
-      const sql = readFileSync(join(migrationsRoot(), id, "migration.sql"), "utf-8");
+      const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
       await applyMigrationSql(client, sql);
-      await client.query(`INSERT INTO "${HISTORY_TABLE}" (name) VALUES ($1)`, [id]);
+      const checksum = migrationChecksum(sql);
+      await client.query(
+        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [id, checksum, true],
+      );
       await client.query("COMMIT");
       console.log(`  ✓ applied ${id}`);
     }
@@ -241,16 +326,16 @@ export async function migrateDeploy(connectionString: string): Promise<void> {
 }
 
 /** Lists migrations and whether each has been applied. */
-export async function migrateStatus(connectionString: string): Promise<void> {
-  const dirs = listMigrationDirs();
+export async function migrateStatus(connectionString: string, seams: RunnerSeams = {}): Promise<void> {
+  const cwd = seams.cwd ?? process.cwd();
+  const dirs = listMigrationDirs(cwd);
   if (dirs.length === 0) {
     console.log("No migrations yet. Run `indigodb migrate dev --name init`.");
     return;
   }
-  const client = new pg.Client({ connectionString });
+  const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   try {
-    await client.connect();
-    await ensureHistory(client);
+    await ensureHistory(client, cwd);
     const applied = await appliedMigrations(client);
     for (const id of dirs) {
       console.log(`  ${applied.has(id) ? "✓ applied" : "· pending"}  ${id}`);
