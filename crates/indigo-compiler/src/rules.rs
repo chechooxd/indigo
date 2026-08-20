@@ -71,6 +71,12 @@ pub enum ArgShape {
     Default,
     /// Named args only, keys checked against `RELATION_ARG_KEYS`.
     Relation,
+    /// `@@allow(action, condition)`: positional 0 is a bare reference
+    /// (`read`) or a reference array (`[create, update]`); positional 1 is
+    /// a single equality `Comparison`. No named args. `validate.rs` owns
+    /// the deep checks (action vocabulary, claim vocabulary, path shape);
+    /// this shape only gates arity + the coarse argument kind.
+    Allow,
 }
 
 /// `(target, attribute name, shape)` — every attribute recognized anywhere
@@ -87,8 +93,29 @@ pub const ATTRIBUTE_RULES: &[(AttributeTarget, &str, ArgShape)] = &[
     (AttributeTarget::Model, "note", ArgShape::OneString),
     (AttributeTarget::Model, "index", ArgShape::Index),
     (AttributeTarget::Model, "unique", ArgShape::Index),
+    (AttributeTarget::Model, "allow", ArgShape::Allow),
     (AttributeTarget::EnumValue, "map", ArgShape::OneString),
 ];
+
+/// Closed `@@allow` action vocabulary, 1:1 with INSERT/SELECT/UPDATE/DELETE
+/// (proposal Scope; design Interfaces).
+pub const ALLOW_ACTIONS: [&str; 4] = ["create", "read", "update", "delete"];
+
+/// Sugar actions that expand to their canonical set at resolve time
+/// (design decision 6): `write` = create/update/delete, `all` = every
+/// action, both in declaration order.
+pub const ALLOW_ALIASES: [(&str, &[&str]); 2] =
+    [("write", &["create", "update", "delete"]), ("all", &ALLOW_ACTIONS)];
+
+/// Closed `auth.<claim>` vocabulary — `auth.userId` only in this slice
+/// (design decision 9 / proposal resolved question 6). Any other claim is a
+/// hard, located compiler error.
+pub const AUTH_CLAIMS: [&str; 1] = ["userId"];
+
+/// The single Postgres `current_setting` key `auth.userId` binds to, set by
+/// `$auth({ userId })` via `set_config('app.user_id', $1, true)` (design
+/// decision 15).
+pub const AUTH_SETTING: &str = "app.user_id";
 
 /// `None` means `name` is not recognized on `target` at all.
 pub fn attribute_rule(target: AttributeTarget, name: &str) -> Option<ArgShape> {
@@ -251,5 +278,33 @@ mod tests {
         assert!(default_literal_matches("String", &AttributeValue::String { value: "x".into() }));
         assert!(default_literal_matches("Int", &AttributeValue::Number { value: 1.0 }));
         assert!(!default_literal_matches("Int", &AttributeValue::String { value: "nope".into() }));
+    }
+
+    #[test]
+    fn attribute_rules_carries_allow_on_model_with_allow_arg_shape() {
+        assert_eq!(attribute_rule(AttributeTarget::Model, "allow"), Some(ArgShape::Allow));
+    }
+
+    #[test]
+    fn allow_actions_are_the_closed_crud_vocabulary() {
+        assert_eq!(ALLOW_ACTIONS, ["create", "read", "update", "delete"]);
+    }
+
+    #[test]
+    fn allow_aliases_expand_write_and_all() {
+        let write = ALLOW_ALIASES.iter().find(|(name, _)| *name == "write").expect("write alias");
+        assert_eq!(write.1, &["create", "update", "delete"]);
+        let all = ALLOW_ALIASES.iter().find(|(name, _)| *name == "all").expect("all alias");
+        assert_eq!(all.1, &ALLOW_ACTIONS);
+    }
+
+    #[test]
+    fn auth_claims_is_closed_to_user_id() {
+        assert_eq!(AUTH_CLAIMS, ["userId"]);
+    }
+
+    #[test]
+    fn auth_setting_is_app_user_id() {
+        assert_eq!(AUTH_SETTING, "app.user_id");
     }
 }

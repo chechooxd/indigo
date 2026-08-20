@@ -1,0 +1,45 @@
+// `@@allow` accepted forms (realtime-rls-allow-rule, PR A). Every model here
+// parses AND validates cleanly. PR A deliberately leaves resolve.rs
+// untouched: the IR for these models must show NO `allow` key yet — that's
+// PR B's job.
+
+// Bare single action, field-vs-claim equality.
+Table Post {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+
+// Comma-combined action array.
+Table Comment {
+  id      String @id
+  ownerId Int
+  @@allow([create, update], auth.userId == this.ownerId)
+}
+
+// `write` / `all` sugar actions (expansion happens in PR B's resolve.rs;
+// PR A only has to accept the syntax).
+Table Attachment {
+  id      String @id
+  ownerId Int
+  @@allow(write, auth.userId == this.ownerId)
+  @@allow(all, auth.userId == this.ownerId)
+}
+
+// Multiple rules on the same action — Postgres ORs them natively, no
+// combination logic in the compiler.
+Table Article {
+  id       String  @id
+  ownerId  Int
+  isPublic Boolean
+  @@allow(read, auth.userId == this.ownerId)
+  @@allow(read, this.isPublic == true)
+}
+
+// A String owner key — the cast is derived from the field's scalar type in
+// PR C's migrator, but the grammar/validation must accept it here.
+Table Doc {
+  id      String @id
+  ownerId String
+  @@allow(read, auth.userId == this.ownerId)
+}

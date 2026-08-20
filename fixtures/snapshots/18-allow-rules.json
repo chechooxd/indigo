@@ -1,0 +1,594 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Post",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Comment",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "create"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "update"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Attachment",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "write"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "all"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Article",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "isPublic",
+            "type": {
+              "name": "Boolean",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "isPublic"
+                    ]
+                  },
+                  "right": {
+                    "kind": "boolean",
+                    "value": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Doc",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Post",
+        "dbName": "Post",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "Comment",
+        "dbName": "Comment",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "Attachment",
+        "dbName": "Attachment",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "Article",
+        "dbName": "Article",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "isPublic",
+            "dbName": "isPublic",
+            "type": "Boolean",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "Doc",
+        "dbName": "Doc",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

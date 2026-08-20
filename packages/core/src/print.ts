@@ -80,6 +80,16 @@ function printAttributeValue(value: AttributeValue): string {
       return `${value.name}(${value.args.map(printAttributeValue).join(", ")})`;
     case "array":
       return `[${value.values.map(printAttributeValue).join(", ")}]`;
+    case "path":
+    case "comparison":
+      // `@@allow` values (realtime-rls-allow-rule PR A) never reach this
+      // function today — printSchema only calls it for `datasource.url` and
+      // its own recursive `function`/`array` args, neither of which can
+      // carry a path/comparison. Throwing (not silently printing a guess)
+      // matches this module's contract if that ever changes.
+      throw new IndigoPrintError(
+        `Cannot print an "@@allow" ${value.kind} value — printSchema does not support it yet.`,
+      );
   }
 }
 

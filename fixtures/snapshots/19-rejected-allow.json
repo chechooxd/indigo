@@ -1,0 +1,1022 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "WrongArity",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnknownAction",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "select"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnknownClaim",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "role",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "role"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "role"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "BadPathRoot",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "post",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnknownField",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "owner"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ClaimVsLiteral",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "string",
+                    "value": "42"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ConstantPredicate",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "boolean",
+                    "value": true
+                  },
+                  "right": {
+                    "kind": "boolean",
+                    "value": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "PolicyNameTooLong",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "map",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "string",
+                  "value": "a_very_long_table_name_that_pushes_the_generated_policy_name_past_the_postgres_limit"
+                }
+              }
+            ]
+          },
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "RealtimeAndAllow",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": []
+          },
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "NamedArgsRejected",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "x"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "WrongArity",
+        "dbName": "WrongArity",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "UnknownAction",
+        "dbName": "UnknownAction",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "UnknownClaim",
+        "dbName": "UnknownClaim",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "role",
+            "dbName": "role",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "BadPathRoot",
+        "dbName": "BadPathRoot",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "UnknownField",
+        "dbName": "UnknownField",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "ClaimVsLiteral",
+        "dbName": "ClaimVsLiteral",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "ConstantPredicate",
+        "dbName": "ConstantPredicate",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "PolicyNameTooLong",
+        "dbName": "a_very_long_table_name_that_pushes_the_generated_policy_name_past_the_postgres_limit",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "RealtimeAndAllow",
+        "dbName": "RealtimeAndAllow",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true
+      },
+      {
+        "name": "NamedArgsRejected",
+        "dbName": "NamedArgsRejected",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Attribute \"@@allow\" on model \"WrongArity\" requires an action and a single equality condition.",
+      "model": "WrongArity"
+    },
+    {
+      "message": "Invalid @@allow action \"select\" on model \"UnknownAction\". Allowed: create, read, update, delete, write, all.",
+      "model": "UnknownAction"
+    },
+    {
+      "message": "Unknown auth claim \"auth.role\" in @@allow on model \"UnknownClaim\". Only auth.userId is supported.",
+      "model": "UnknownClaim"
+    },
+    {
+      "message": "Invalid path \"post.ownerId\" in @@allow on model \"BadPathRoot\". Each side must be this.<field>, auth.userId or a literal.",
+      "model": "BadPathRoot"
+    },
+    {
+      "message": "@@allow references unknown or non-scalar field \"owner\" on model \"UnknownField\".",
+      "model": "UnknownField"
+    },
+    {
+      "message": "auth.userId in @@allow on model \"ClaimVsLiteral\" must be compared against a this.<field> reference.",
+      "model": "ClaimVsLiteral"
+    },
+    {
+      "message": "@@allow condition on model \"ConstantPredicate\" references neither a field nor auth.userId.",
+      "model": "ConstantPredicate"
+    },
+    {
+      "message": "Generated policy name for model \"PolicyNameTooLong\" exceeds 63 bytes; shorten the model or @@map name.",
+      "model": "PolicyNameTooLong"
+    },
+    {
+      "message": "Unsupported \"name\" argument on @@allow on model \"NamedArgsRejected\".",
+      "model": "NamedArgsRejected"
+    },
+    {
+      "message": "Model \"RealtimeAndAllow\" cannot be both @@realtime and @@allow — realtime fan-out has no row-level filter yet.",
+      "model": "RealtimeAndAllow"
+    }
+  ]
+}

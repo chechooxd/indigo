@@ -294,7 +294,20 @@ impl<'a> Parser<'a> {
             name = self.advance().text.clone();
             self.advance(); // :
         }
-        let value = self.parse_attribute_value()?;
+        let mut value = self.parse_attribute_value()?;
+        // Arg-level equality comparison (design decision 2): parse a value,
+        // then if `==` follows, consume it and wrap. Generic at the parser
+        // level — every attribute *parses* it, only `@@allow`'s ArgShape
+        // *accepts* it (rules.rs).
+        if self.at(TokenKind::EqEq) {
+            self.advance();
+            let right = self.parse_attribute_value()?;
+            value = AttributeValue::Comparison {
+                op: "==".to_string(),
+                left: Box::new(value),
+                right: Box::new(right),
+            };
+        }
         Some(AttributeArg { name, value })
     }
 
@@ -346,6 +359,17 @@ impl<'a> Parser<'a> {
 
     fn parse_function_call_or_reference(&mut self) -> Option<AttributeValue> {
         let name = self.advance().text.clone();
+        if self.at(TokenKind::Dot) {
+            // Dotted path (`this.ownerId`, `auth.userId`) — design decision 3.
+            // A string carrying structure would re-invite the accept/reject
+            // divergence rules.rs exists to kill, so this is a real AST node.
+            let mut segments = vec![name];
+            while self.at(TokenKind::Dot) {
+                self.advance();
+                segments.push(self.expect_identifier("a path segment after '.'")?);
+            }
+            return Some(AttributeValue::Path { segments });
+        }
         if self.at(TokenKind::LParen) {
             self.advance();
             let mut args = Vec::new();
@@ -541,6 +565,90 @@ Table User {
         assert_eq!(attr.namespace, None);
         assert_eq!(attr.name, "unique");
         assert!(attr.args.is_empty());
+    }
+
+    fn model_attrs(source: &str, model: &str) -> Vec<crate::ast::Attribute> {
+        let schema = crate::parse_source(source).expect("source should parse without errors");
+        let m = schema.models.iter().find(|m| m.name == model).expect("model not found");
+        m.attributes.clone()
+    }
+
+    #[test]
+    fn dotted_path_parses_to_path_node() {
+        let source = r#"
+Table Post {
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#;
+        let attrs = model_attrs(source, "Post");
+        let allow = attrs.iter().find(|a| a.name == "allow").expect("allow attr");
+        assert_eq!(allow.args.len(), 2);
+        match &allow.args[1].value {
+            AttributeValue::Comparison { op, left, right } => {
+                assert_eq!(op, "==");
+                assert!(matches!(
+                    left.as_ref(),
+                    AttributeValue::Path { segments } if segments == &vec!["auth".to_string(), "userId".to_string()]
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    AttributeValue::Path { segments } if segments == &vec!["this".to_string(), "ownerId".to_string()]
+                ));
+            }
+            other => panic!("expected a comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn equality_comparison_wraps_at_arg_level() {
+        let source = r#"
+Table Post {
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#;
+        let attrs = model_attrs(source, "Post");
+        let allow = attrs.iter().find(|a| a.name == "allow").expect("allow attr");
+        assert!(matches!(allow.args[1].value, AttributeValue::Comparison { .. }));
+    }
+
+    #[test]
+    fn bare_reference_still_parses_unchanged() {
+        let source = r#"
+Table Post {
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#;
+        let attrs = model_attrs(source, "Post");
+        let allow = attrs.iter().find(|a| a.name == "allow").expect("allow attr");
+        assert!(matches!(
+            allow.args[0].value,
+            AttributeValue::Reference { ref value } if value == "read"
+        ));
+    }
+
+    #[test]
+    fn action_array_still_parses_unchanged() {
+        let source = r#"
+Table Post {
+  ownerId Int
+  @@allow([create, update], auth.userId == this.ownerId)
+}
+"#;
+        let attrs = model_attrs(source, "Post");
+        let allow = attrs.iter().find(|a| a.name == "allow").expect("allow attr");
+        match &allow.args[0].value {
+            AttributeValue::Array { values } => {
+                assert_eq!(values.len(), 2);
+                assert!(matches!(
+                    values[0],
+                    AttributeValue::Reference { ref value } if value == "create"
+                ));
+            }
+            other => panic!("expected an array, got {other:?}"),
+        }
     }
 
     #[test]

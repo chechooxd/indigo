@@ -25,6 +25,14 @@ pub enum AttributeValue {
     Reference { value: String },
     Function { name: String, args: Vec<AttributeValue> },
     Array { values: Vec<AttributeValue> },
+    /// Dotted path (`this.ownerId`, `auth.userId`). Produced by
+    /// `parse_function_call_or_reference` when a `Dot` follows the
+    /// identifier (design decision 3).
+    Path { segments: Vec<String> },
+    /// A single equality comparison, wrapped at arg level by
+    /// `parse_attribute_arg` (design decision 2). `op` is always `"=="` in
+    /// this slice; kept as a string for a future non-equality comparator.
+    Comparison { op: String, left: Box<AttributeValue>, right: Box<AttributeValue> },
 }
 
 impl AttributeValue {
@@ -203,5 +211,30 @@ mod tests {
         let attrs = vec![Attribute { namespace: None, name: "map".into(), args: vec![] }];
         assert!(has_attr(&attrs, "map"));
         assert!(get_attr(&attrs, "map").is_some());
+    }
+
+    #[test]
+    fn path_serializes_with_kind_path() {
+        let value = AttributeValue::Path { segments: vec!["this".into(), "ownerId".into()] };
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(json, r#"{"kind":"path","segments":["this","ownerId"]}"#);
+    }
+
+    #[test]
+    fn comparison_serializes_with_kind_comparison() {
+        let value = AttributeValue::Comparison {
+            op: "==".into(),
+            left: Box::new(AttributeValue::Path {
+                segments: vec!["auth".into(), "userId".into()],
+            }),
+            right: Box::new(AttributeValue::Path {
+                segments: vec!["this".into(), "ownerId".into()],
+            }),
+        };
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"comparison","op":"==","left":{"kind":"path","segments":["auth","userId"]},"right":{"kind":"path","segments":["this","ownerId"]}}"#
+        );
     }
 }
