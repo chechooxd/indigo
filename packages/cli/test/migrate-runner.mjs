@@ -19,6 +19,7 @@ import {
   migrateDev,
   migrateDeploy,
   migrateStatus,
+  migrateResolve,
   migrationChecksum,
   MIGRATION_LOCK_KEY,
 } from "../dist/migrate-runner.js";
@@ -1276,6 +1277,457 @@ await check("migrate dev without --create-only remains atomic (regression guard)
     }
   });
 });
+
+// ─── migrate resolve ─────────────────────────────────────────────────────────
+
+/** Writes a migration.sql for `id` under `cwd`'s migrations root, returning its full path. */
+function writeMigrationFile(cwd, id, sql) {
+  const dir = join(cwd, "migrations", id);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "migration.sql");
+  writeFileSync(file, sql);
+  return file;
+}
+
+/**
+ * Like `historyRows`, but tolerates the case where `_indigo_migrations` was
+ * never created — an unknown/traversal-shaped id is refused BEFORE
+ * `ensureHistory` ever runs, so the table may genuinely not exist yet.
+ */
+async function safeHistoryRows(db) {
+  try {
+    return await historyRows(db);
+  } catch (err) {
+    if (/does not exist/.test(String(err.message ?? err))) return [];
+    throw err;
+  }
+}
+
+async function tableExists(db, name) {
+  const result = await db.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_name = $1`,
+    [name],
+  );
+  return result.rows.length > 0;
+}
+
+await check("resolve --applied records the row without executing migration SQL", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      const file = writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, `expected exactly one history row, got:\n${JSON.stringify(rows)}`);
+      strictEqual(rows[0].name, id);
+      strictEqual(rows[0].checksum, migrationChecksum(readFileSync(file, "utf-8")));
+      strictEqual(rows[0].success, true);
+
+      ok(!(await tableExists(db, "foo")), "migration SQL must NOT have been executed");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve --applied is an idempotent no-op on an already-recorded, non-drifted id", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", applied: id, createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      ok(exitCode !== 1, "an idempotent no-op must not set process.exitCode = 1");
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, "must still have exactly one row");
+      ok(
+        lines.some((l) => /Already recorded/.test(l)),
+        `expected an "Already recorded" line, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve --applied refuses on checksum drift and leaves the row unchanged", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      const file = writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const originalChecksum = migrationChecksum(readFileSync(file, "utf-8"));
+      const createClient = async () => createMigrationClient(db);
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+      writeFileSync(file, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n-- drifted edit\n`);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", applied: id, createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "drift must set process.exitCode = 1");
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].checksum, originalChecksum, "the stored checksum must stay the ORIGINAL value");
+      ok(
+        errors.some((l) => l.includes(id)),
+        `expected an error naming ${id}, got:\n${errors.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve --applied makes status report applied and deploy skip it", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+
+      const statusLines = await captureLogs(() => migrateStatus("unused", { createClient, cwd }));
+      ok(
+        statusLines.some((l) => /✓ applied/.test(l) && l.includes(id)),
+        `expected an "✓ applied" line for ${id}, got:\n${statusLines.join("\n")}`,
+      );
+
+      const deployLines = await captureLogs(() => migrateDeploy("unused", { createClient, cwd }));
+      ok(
+        deployLines.some((l) => /No pending migrations\./.test(l)),
+        `expected "No pending migrations.", got:\n${deployLines.join("\n")}`,
+      );
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, "deploy must not have applied any DDL for the resolved id");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve --rolled-back deletes the recorded row", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const inner = createMigrationClient(db);
+      const { client, queries } = spyMigrationClient(inner);
+      const createClient = async () => client;
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+      queries.length = 0;
+
+      const lines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: id, createClient, cwd }),
+      );
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 0, "the row must be deleted");
+      ok(
+        lines.some((l) => /record removed/.test(l)),
+        `expected a "record removed" line, got:\n${lines.join("\n")}`,
+      );
+      ok(!(await tableExists(db, "foo")), "no migration SQL statement must have run");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve --rolled-back on an absent row is a clean no-op", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: id, createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      // See migrateStatus's regression test above: PGlite's WASM-instance GC
+      // can asynchronously normalize `undefined` to `0` by this point in the
+      // suite — what matters is that a clean no-op never *gates* (never `1`).
+      ok(exitCode !== 1, "must not set process.exitCode = 1 on an absent-row no-op");
+      strictEqual(errors.length, 0, `expected no error output, got:\n${errors.join("\n")}`);
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve refuses an unknown migration id (--applied)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const createClient = async () => createMigrationClient(db);
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", applied: "nonexistent_id", createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1);
+      ok(
+        errors.some((l) => l.includes("nonexistent_id")),
+        `expected an error naming nonexistent_id, got:\n${errors.join("\n")}`,
+      );
+      const rows = await safeHistoryRows(db);
+      strictEqual(rows.length, 0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve refuses an unknown migration id (--rolled-back)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const seededId = "20250101000000_foo";
+      writeMigrationFile(cwd, seededId, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+      await migrateResolve({ connectionString: "unused", applied: seededId, createClient, cwd });
+      const before = await historyRows(db);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: "nonexistent_id", createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1);
+      ok(errors.some((l) => l.includes("nonexistent_id")));
+      const after = await historyRows(db);
+      strictEqual(JSON.stringify(after), JSON.stringify(before), "pre-existing row must stay untouched");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check(
+  "resolve refuses a path-traversal-shaped id without touching the filesystem or ledger",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const inner = createMigrationClient(db);
+
+        for (const opts of [
+          { applied: "../../etc/passwd" },
+          { rolledBack: "../outside" },
+        ]) {
+          const { client, queries } = spyMigrationClient(inner);
+          const createClient = async () => client;
+
+          const savedExitCode = process.exitCode;
+          process.exitCode = undefined;
+          const errors = await captureErrors(() =>
+            migrateResolve({ connectionString: "unused", ...opts, createClient, cwd }),
+          );
+          const exitCode = process.exitCode;
+          process.exitCode = savedExitCode;
+
+          strictEqual(exitCode, 1, `expected exitCode 1 for ${JSON.stringify(opts)}`);
+          ok(errors.length > 0, "expected a refusal message");
+          strictEqual(queries.length, 0, "createClient's client must never be queried for a traversal-shaped id");
+        }
+
+        const rows = await safeHistoryRows(db);
+        strictEqual(rows.length, 0);
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("resolve binds <id> as a parameter, never interpolates it", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+      const inner = createMigrationClient(db);
+
+      const { client: appliedClient, queries: appliedQueries } = spyMigrationClient(inner);
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => appliedClient,
+        cwd,
+      });
+      for (const q of appliedQueries) {
+        if (!q.sql.includes("_indigo_migrations")) continue;
+        ok(!q.sql.includes(id), `query must not interpolate the id, got sql:\n${q.sql}`);
+        if (q.params) ok(q.params.includes(id), `expected id as a bound param in:\n${JSON.stringify(q.params)}`);
+      }
+
+      const { client: rolledBackClient, queries: rolledBackQueries } = spyMigrationClient(inner);
+      await migrateResolve({
+        connectionString: "unused",
+        rolledBack: id,
+        createClient: async () => rolledBackClient,
+        cwd,
+      });
+      const deleteQueries = rolledBackQueries.filter(
+        (q) => q.sql.includes("_indigo_migrations") && /DELETE/i.test(q.sql),
+      );
+      ok(deleteQueries.length > 0, "expected at least one DELETE query");
+      for (const q of deleteQueries) {
+        ok(!q.sql.includes(id), `DELETE must not interpolate the id, got sql:\n${q.sql}`);
+        ok(q.params?.includes(id), `expected id as a bound param in:\n${JSON.stringify(q.params)}`);
+      }
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const injectionId = "20240101_x'); DROP TABLE _indigo_migrations;--";
+      const { client: injectionClient, queries: injectionQueries } = spyMigrationClient(inner);
+      const errors = await captureErrors(() =>
+        migrateResolve({
+          connectionString: "unused",
+          applied: injectionId,
+          createClient: async () => injectionClient,
+          cwd,
+        }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a metacharacter-shaped unknown id must be refused");
+      ok(errors.length > 0);
+      strictEqual(injectionQueries.length, 0, "must never reach a query for an unknown id");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("resolve refuses both flags and refuses neither flag", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_foo";
+      writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+
+      let createClientCalls = 0;
+      const createClient = async () => {
+        createClientCalls++;
+        return createMigrationClient(db);
+      };
+
+      const savedExitCode = process.exitCode;
+
+      process.exitCode = undefined;
+      const bothErrors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", applied: id, rolledBack: id, createClient, cwd }),
+      );
+      strictEqual(process.exitCode, 1, "both flags must refuse");
+      ok(bothErrors.some((l) => /mutually exclusive/.test(l)));
+
+      process.exitCode = undefined;
+      const neitherErrors = await captureErrors(() =>
+        migrateResolve({ connectionString: "unused", createClient, cwd }),
+      );
+      strictEqual(process.exitCode, 1, "neither flag must refuse");
+      ok(neitherErrors.some((l) => /required/.test(l)));
+
+      process.exitCode = savedExitCode;
+      strictEqual(createClientCalls, 0, "createClient must never be invoked for an invalid flag combination");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check(
+  "resolve opens no transaction, takes no lock, leaves .snapshot.json byte-identical",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const id = "20250101000000_foo";
+        writeMigrationFile(cwd, id, `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`);
+        const snapshotPath = join(cwd, "migrations", ".snapshot.json");
+        const snapshotContent = JSON.stringify({ arbitrary: "content" });
+        writeFileSync(snapshotPath, snapshotContent);
+
+        const inner = createMigrationClient(db);
+        const { client: appliedClient, queries: appliedQueries } = spyMigrationClient(inner);
+        await migrateResolve({
+          connectionString: "unused",
+          applied: id,
+          createClient: async () => appliedClient,
+          cwd,
+        });
+        const { client: rolledBackClient, queries: rolledBackQueries } = spyMigrationClient(inner);
+        await migrateResolve({
+          connectionString: "unused",
+          rolledBack: id,
+          createClient: async () => rolledBackClient,
+          cwd,
+        });
+
+        for (const queries of [appliedQueries, rolledBackQueries]) {
+          for (const q of queries) {
+            ok(!/^BEGIN$/i.test(q.sql.trim()), "must not open a transaction");
+            ok(!/^COMMIT$/i.test(q.sql.trim()), "must not commit a transaction");
+            ok(!/pg_try_advisory_lock/i.test(q.sql), "must not take the advisory lock");
+            ok(!/pg_advisory_unlock/i.test(q.sql), "must not release the advisory lock");
+          }
+        }
+
+        strictEqual(
+          readFileSync(snapshotPath, "utf-8"),
+          snapshotContent,
+          ".snapshot.json must be byte-identical",
+        );
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
 
 if (failures > 0) {
   console.error(`\ncli migrate-runner: ${failures} failure(s)`);

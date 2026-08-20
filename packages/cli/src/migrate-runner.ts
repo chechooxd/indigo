@@ -15,7 +15,10 @@
  * `dev` creates + applies a migration from the current schema; `deploy` applies
  * pending migration files (for CI/production); `status` lists applied/pending.
  * `deploy` also serializes concurrent runs against the same database via a
- * session-level `pg_try_advisory_lock`, deploy-only.
+ * session-level `pg_try_advisory_lock`, deploy-only. `resolve` manually
+ * reconciles `_indigo_migrations` (`--applied <id>` / `--rolled-back <id>`)
+ * without ever executing migration SQL or touching `.snapshot.json`, and
+ * takes no advisory lock (deploy-only lock, unaffected).
  */
 
 import {
@@ -263,6 +266,21 @@ export interface DeployOptions extends RunnerSeams {
 }
 
 /**
+ * `migrateResolve`'s seams: a connection string plus exactly one of
+ * `applied`/`rolledBack`, both mutually exclusive. `applied` records a
+ * migration as applied (INSERT, checksum computed from on-disk bytes, no SQL
+ * executed); `rolledBack` removes its recorded row (DELETE, idempotent
+ * no-op if absent).
+ */
+export interface ResolveOptions extends RunnerSeams {
+  connectionString: string;
+  /** Migration id (the `migrations/<id>` directory name) to record as applied. */
+  applied?: string;
+  /** Migration id whose recorded row should be removed. Mutually exclusive with `applied`. */
+  rolledBack?: string;
+}
+
+/**
  * Prints the shared `❌ … refused: … destructive statement(s).` + bulleted
  * `impacts` + `Re-run with --force to apply them.` shape both `migrateDev`
  * and `migrateDeploy` use — byte-identical between the two commands (Q3).
@@ -503,6 +521,86 @@ export async function migrateStatus(connectionString: string, seams: RunnerSeams
     }
     const pending = dirs.filter((d) => !applied.has(d)).length;
     console.log(`\n${dirs.length} migration(s), ${pending} pending.`);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Reconciles `_indigo_migrations` manually — without executing any migration
+ * SQL, without touching `.snapshot.json`, and without opening a transaction
+ * or taking the deploy-only advisory lock. `--applied <id>` INSERTs a row
+ * (checksum from on-disk bytes, `success = true`), is an idempotent no-op if
+ * an identical row already exists, and REFUSES (row untouched) if a recorded
+ * row's checksum has drifted from disk — resolve never silently re-baselines
+ * a drift, it only records or removes ledger entries. `--rolled-back <id>`
+ * DELETEs the row, a no-op if absent. Exactly one of the two flags is
+ * required; the id is validated against `listMigrationDirs(cwd)` — an exact
+ * membership check, so a path-traversal-shaped id is refused before
+ * `createClient` is ever invoked.
+ */
+export async function migrateResolve(options: ResolveOptions): Promise<void> {
+  if (options.applied && options.rolledBack) {
+    console.error("❌ migrate resolve refused: --applied and --rolled-back are mutually exclusive.");
+    process.exitCode = 1;
+    return;
+  }
+  if (!options.applied && !options.rolledBack) {
+    console.error(
+      "❌ migrate resolve refused: one of --applied <id> or --rolled-back <id> is required.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const cwd = options.cwd ?? process.cwd();
+  const id = (options.applied ?? options.rolledBack) as string;
+  const file = join(migrationsRoot(cwd), id, "migration.sql");
+  if (!listMigrationDirs(cwd).includes(id) || !existsSync(file)) {
+    console.error(
+      `❌ migrate resolve refused: unknown migration id "${id}" — no migrations/${id}/migration.sql on disk.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
+  try {
+    await ensureHistory(client, cwd);
+
+    if (options.applied) {
+      const { rows } = await client.query(
+        `SELECT checksum FROM "${HISTORY_TABLE}" WHERE name = $1`,
+        [id],
+      );
+      const stored = (rows[0] as { checksum: string | null } | undefined)?.checksum;
+      const computed = migrationChecksum(readFileSync(file, "utf-8"));
+      if (stored == null) {
+        await client.query(
+          `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
+          [id, computed, true],
+        );
+        console.log(`✅ Migration recorded as applied: ${id}`);
+        console.log("   No SQL was executed — _indigo_migrations only.");
+      } else if (stored === computed) {
+        console.log(`✅ Already recorded as applied: ${id} — nothing to do.`);
+      } else {
+        console.error(`❌ migrate resolve refused: ${id} no longer matches its recorded checksum.`);
+        console.error("   Revert the on-disk file, or reconcile with --rolled-back first.");
+        process.exitCode = 1;
+      }
+    } else {
+      const { rows } = await client.query(
+        `DELETE FROM "${HISTORY_TABLE}" WHERE name = $1 RETURNING name`,
+        [id],
+      );
+      if (rows.length > 0) {
+        console.log(`✅ Migration record removed: ${id}`);
+        console.log("   No SQL was executed — _indigo_migrations only.");
+      } else {
+        console.log(`✅ Not recorded as applied: ${id} — nothing to do.`);
+      }
+    }
   } finally {
     await client.end();
   }

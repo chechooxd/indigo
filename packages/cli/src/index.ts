@@ -24,7 +24,7 @@ import {
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
-import { migrateDev, migrateDeploy, migrateStatus } from "./migrate-runner.js";
+import { migrateDev, migrateDeploy, migrateStatus, migrateResolve } from "./migrate-runner.js";
 import { createServer } from "node:http";
 import { RealtimeEngine, REALTIME_PATH } from "@indigodb/realtime";
 
@@ -181,6 +181,21 @@ migrate
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     await migrateStatus(resolveConnectionString(resolved));
+  });
+migrate
+  .command("resolve")
+  .description("Reconcile migration history without running SQL.")
+  .option("-s, --schema <path>", "Schema file path", "schema.indigo")
+  .option("--applied <id>", "Record <id> as applied without executing its SQL")
+  .option("--rolled-back <id>", "Remove <id>'s recorded row from history")
+  .action(async (options: { schema: string; applied?: string; rolledBack?: string }) => {
+    loadEnv();
+    const { resolved } = loadSchema(options.schema);
+    await migrateResolve({
+      connectionString: resolveConnectionString(resolved),
+      applied: options.applied,
+      rolledBack: options.rolledBack,
+    });
   });
 
 // ─── realtime ────────────────────────────────────────────────────────────────
