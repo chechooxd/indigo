@@ -971,6 +971,312 @@ await check("migrateStatus never gates and never sets exitCode on a destructive 
   });
 });
 
+// ─── migrate dev --create-only ────────────────────────────────────────────
+
+await check("migrate dev --create-only: writes the migration file, database untouched", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => createMigrationClient(db),
+        cwd,
+        createOnly: true,
+      });
+
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+        d.isDirectory(),
+      );
+      strictEqual(dirs.length, 1, "expected exactly one migration directory to be written");
+      const sqlPath = join(cwd, "migrations", dirs[0].name, "migration.sql");
+      ok(readFileSync(sqlPath, "utf-8").length > 0, "expected migration.sql to be written");
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 0, "no history row should be inserted under --create-only");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrate dev --create-only: distinct success message", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const lines = await captureLogs(() =>
+        migrateDev({
+          resolved: minimalResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: async () => createMigrationClient(db),
+          cwd,
+          createOnly: true,
+        }),
+      );
+      ok(
+        lines.some((l) => /created \(not applied\)/.test(l)),
+        `expected a "created (not applied)" line, got:\n${lines.join("\n")}`,
+      );
+      ok(
+        !lines.some((l) => /created and applied/.test(l)),
+        `expected no "created and applied" line, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrate dev --create-only: no commit-phase SQL is issued", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const { client, queries } = spyMigrationClient(createMigrationClient(db));
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => client,
+        cwd,
+        createOnly: true,
+      });
+
+      const upper = (sql) => (sql ?? "").trim().toUpperCase();
+      ok(
+        !queries.some((q) => upper(q.sql) === "BEGIN"),
+        "expected no BEGIN query under --create-only",
+      );
+      ok(
+        !queries.some((q) => upper(q.sql) === "COMMIT"),
+        "expected no COMMIT query under --create-only",
+      );
+      ok(
+        !queries.some((q) => q.sql.includes(`INSERT INTO "${"_indigo_migrations"}"`)),
+        "expected no history INSERT query under --create-only",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("migrate dev --create-only: diagnostics still refuse before any file is written", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const client = () => createMigrationClient(db);
+
+      // Force a diagnostics-producing plan: a duplicate model name via a
+      // second, colliding minimal schema is unnecessary — instead reuse the
+      // shadow-replay drift mechanism used elsewhere in this suite: seed an
+      // applied migration whose on-disk file is then mutated, so
+      // resolvePrevSchema throws ShadowReplayError, which is the diagnostics-
+      // equivalent refusal path exercised for migrateDev elsewhere in this
+      // file (see "migrateDev refuses when an applied migration's on-disk
+      // file has drifted").
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+      });
+      const [dir] = readdirSync(join(cwd, "migrations"), { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      writeFileSync(
+        join(cwd, "migrations", dir, "migration.sql"),
+        "-- tampered\nCREATE TABLE \"tampered\" (id serial PRIMARY KEY);\n",
+      );
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      await migrateDev({
+        resolved: wideResolved(),
+        name: "add-cols",
+        connectionString: "unused",
+        createClient: client,
+        cwd,
+        createOnly: true,
+      });
+      const refused = process.exitCode === 1;
+      process.exitCode = savedExitCode;
+
+      ok(refused, "expected process.exitCode = 1 refusing on drifted history under --create-only");
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+        d.isDirectory(),
+      );
+      strictEqual(dirs.length, 1, "no new migration directory should be created on refusal");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check(
+  "migrate dev --create-only: a requires-force statement still refuses without --force",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const client = () => createMigrationClient(db);
+
+        await migrateDev({
+          resolved: wideResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+        });
+
+        const savedExitCode = process.exitCode;
+        process.exitCode = undefined;
+        await migrateDev({
+          resolved: minimalResolved(),
+          name: "drop-cols",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+          createOnly: true,
+        });
+        const refused = process.exitCode === 1;
+        process.exitCode = savedExitCode;
+
+        ok(refused, "expected process.exitCode = 1 refusing a destructive plan under --create-only");
+
+        const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+          d.isDirectory(),
+        );
+        strictEqual(dirs.length, 1, "no new migration directory should be created on refusal");
+
+        const rows = await historyRows(db);
+        strictEqual(rows.length, 1, "only the initial migration should be recorded");
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check(
+  "migrate dev --create-only --force: writes a plan containing requires-force statements",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const client = () => createMigrationClient(db);
+
+        await migrateDev({
+          resolved: wideResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+        });
+
+        await migrateDev({
+          resolved: minimalResolved(),
+          name: "drop-cols",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+          createOnly: true,
+          force: true,
+        });
+
+        const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+          d.isDirectory(),
+        );
+        strictEqual(dirs.length, 2, "expected the forced --create-only migration to be written");
+
+        const rows = await historyRows(db);
+        strictEqual(rows.length, 1, "the --create-only run must not be recorded in history");
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check(
+  "migrate dev --create-only: hand-off — migrate status reports pending, migrate deploy applies it",
+  async () => {
+    await withDatabase(async (db) => {
+      const { cwd, cleanup } = createMigrationsRoot();
+      try {
+        const client = () => createMigrationClient(db);
+
+        await migrateDev({
+          resolved: minimalResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: client,
+          cwd,
+          createOnly: true,
+        });
+        const [id] = readdirSync(join(cwd, "migrations"), { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name);
+
+        const statusLines = await captureLogs(() =>
+          migrateStatus("unused", { createClient: client, cwd }),
+        );
+        ok(
+          statusLines.some((l) => l.includes(id) && /· pending/.test(l)),
+          `expected "${id}" to be reported "· pending", got:\n${statusLines.join("\n")}`,
+        );
+
+        await migrateDeploy("unused", { createClient: client, cwd });
+
+        const rows = await historyRows(db);
+        strictEqual(rows.length, 1, "expected exactly one history row after deploy");
+        strictEqual(rows[0].name, id);
+        const sql = readFileSync(join(cwd, "migrations", id, "migration.sql"), "utf-8");
+        strictEqual(rows[0].checksum, migrationChecksum(sql));
+      } finally {
+        cleanup();
+      }
+    });
+  },
+);
+
+await check("migrate dev without --create-only remains atomic (regression guard)", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const lines = await captureLogs(() =>
+        migrateDev({
+          resolved: minimalResolved(),
+          name: "init",
+          connectionString: "unused",
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        }),
+      );
+
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true }).filter((d) =>
+        d.isDirectory(),
+      );
+      strictEqual(dirs.length, 1);
+      const sqlPath = join(cwd, "migrations", dirs[0].name, "migration.sql");
+      ok(readFileSync(sqlPath, "utf-8").length > 0);
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, "the default path must still record one history row");
+      ok(rows[0].success === true);
+
+      ok(
+        lines.some((l) => /created and applied/.test(l)),
+        `expected a "created and applied" line, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 if (failures > 0) {
   console.error(`\ncli migrate-runner: ${failures} failure(s)`);
   process.exit(1);

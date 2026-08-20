@@ -150,11 +150,18 @@ migrate
   .requiredOption("-n, --name <name>", "Migration name")
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
   .option("--force", "Apply destructive (requires-force) statements without refusing")
-  .action(async (options: { name: string; schema: string; force?: boolean }) => {
+  .option("--create-only", "Write the migration file without applying it")
+  .action(async (options: { name: string; schema: string; force?: boolean; createOnly?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
-    await migrateDev({ resolved, name: options.name, connectionString, force: options.force });
+    await migrateDev({
+      resolved,
+      name: options.name,
+      connectionString,
+      force: options.force,
+      createOnly: options.createOnly,
+    });
   });
 migrate
   .command("deploy")

@@ -243,6 +243,13 @@ export interface DevOptions {
   cwd?: string;
   /** Bypasses the requires-force refusal gate — applies destructive statements. */
   force?: boolean;
+  /**
+   * Plan/apply separation: runs the full pre-flight (connect, ensureHistory,
+   * prev resolution, plan, every refusal gate) and writes migration.sql, then
+   * skips apply, the history INSERT, COMMIT and saveSnapshot. Still requires
+   * a live connection — shadow replay reads `_indigo_migrations`.
+   */
+  createOnly?: boolean;
 }
 
 /**
@@ -308,7 +315,11 @@ async function resolvePrevSchema(client: MigrationClient, cwd: string): Promise<
   });
 }
 
-/** Creates a migration from schema changes and applies it. */
+/**
+ * Creates a migration from schema changes and applies it. `options.createOnly`
+ * splits this into a pre-flight phase (write migration.sql) and a commit
+ * phase (apply/history/snapshot), running only the former.
+ */
 export async function migrateDev(options: DevOptions): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
@@ -361,6 +372,13 @@ export async function migrateDev(options: DevOptions): Promise<void> {
     mkdirSync(dir, { recursive: true });
     const sql = renderMigrationSql(plan);
     writeFileSync(join(dir, "migration.sql"), sql);
+
+    if (options.createOnly) {
+      console.log(`✅ Migration created (not applied): ${id}`);
+      console.log(`   ${plan.statements.length} statement(s) → migrations/${id}/migration.sql`);
+      console.log("   Apply it with `indigodb migrate dev` or `indigodb migrate deploy`.");
+      return;
+    }
 
     try {
       await applyMigrationSql(client, sql);
