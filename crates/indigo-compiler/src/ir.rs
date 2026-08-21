@@ -136,6 +136,46 @@ pub struct ResolvedRelation {
     pub inverse: Option<bool>,
 }
 
+/// Canonical `@@allow` action (never the `write`/`all` alias — those are
+/// expanded by `resolve.rs` at resolve time, design decision #6). Serialized
+/// as the bare lowercase name, matching `rules::ALLOW_ACTIONS`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AllowAction {
+    Create,
+    Read,
+    Update,
+    Delete,
+}
+
+/// One side of a resolved `@@allow` equality condition. `Field` always
+/// carries the physical `dbName` (design decision #7), never the logical
+/// field name, so a `@map` rename remaps allow rules for free on the
+/// migrator side (`remapPhysicalNames`). No cast text is emitted here — the
+/// migrator derives it from the referenced column's SQL type (decision #8).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AllowOperand {
+    Field { name: String },
+    /// Always `"userId"` in slice 1 — the closed claim vocabulary
+    /// (`rules::AUTH_CLAIMS`).
+    Claim { name: String },
+    String { value: String },
+    Number { value: f64 },
+    Boolean { value: bool },
+}
+
+/// One resolved `@@allow` rule, already expanded from any `write`/`all`
+/// alias into a single canonical action. Operand order follows declaration
+/// order in the schema — the compiler never normalizes sides.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AllowRule {
+    pub action: AllowAction,
+    pub left: AllowOperand,
+    pub right: AllowOperand,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedTable {
@@ -155,6 +195,12 @@ pub struct ResolvedTable {
     pub color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub group: Option<String>,
+    /// Resolved `@@allow` rules, one entry per canonical action after alias
+    /// expansion. Declared LAST and always omitted (not `null`) when the
+    /// model has no `@@allow`, so every pre-existing fixture snapshot stays
+    /// byte-identical (design.md's IR field-order rule).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub allow: Option<Vec<AllowRule>>,
 }
 
 /// A single enum member, name plus its physical (`@map`) label.
@@ -249,5 +295,51 @@ mod tests {
         assert_eq!(serde_json::to_string(&IndexMethod::Gin).unwrap(), "\"gin\"");
         assert_eq!(serde_json::to_string(&IndexMethod::Gist).unwrap(), "\"gist\"");
         assert_eq!(serde_json::to_string(&IndexMethod::Hash).unwrap(), "\"hash\"");
+    }
+
+    fn table(allow: Option<Vec<AllowRule>>) -> ResolvedTable {
+        ResolvedTable {
+            name: "Post".into(),
+            db_name: "Post".into(),
+            columns: vec![],
+            primary_key: vec![],
+            foreign_keys: vec![],
+            indexes: vec![],
+            relations: vec![],
+            note: None,
+            realtime: None,
+            color: None,
+            group: Some("Content".into()),
+            allow,
+        }
+    }
+
+    #[test]
+    fn allow_is_omitted_not_null_when_absent() {
+        let json = serde_json::to_string(&table(None)).unwrap();
+        assert!(!json.contains("allow"));
+    }
+
+    #[test]
+    fn allow_serializes_after_group_when_present() {
+        let rule = AllowRule {
+            action: AllowAction::Read,
+            left: AllowOperand::Claim { name: "userId".into() },
+            right: AllowOperand::Field { name: "ownerId".into() },
+        };
+        let json = serde_json::to_string(&table(Some(vec![rule]))).unwrap();
+        assert!(json.contains(r#""group":"Content""#));
+        // `allow` must be the LAST key present, declared after `group`.
+        assert!(json.ends_with(
+            r#""allow":[{"action":"read","left":{"kind":"claim","name":"userId"},"right":{"kind":"field","name":"ownerId"}}]}"#
+        ));
+    }
+
+    #[test]
+    fn allow_action_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&AllowAction::Create).unwrap(), "\"create\"");
+        assert_eq!(serde_json::to_string(&AllowAction::Read).unwrap(), "\"read\"");
+        assert_eq!(serde_json::to_string(&AllowAction::Update).unwrap(), "\"update\"");
+        assert_eq!(serde_json::to_string(&AllowAction::Delete).unwrap(), "\"delete\"");
     }
 }

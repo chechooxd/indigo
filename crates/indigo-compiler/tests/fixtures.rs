@@ -675,17 +675,58 @@ fn fixture_18_allow_rules_has_zero_validation_errors() {
 }
 
 #[test]
-fn fixture_18_ir_has_no_allow_key_yet() {
-    // PR A deliberately leaves resolve.rs/ir.rs untouched — `ResolvedTable`
-    // must carry no `allow` field, so every model's serialized IR omits the
-    // key entirely (design's "PR A stops here").
+fn fixture_18_ir_is_populated_in_pr_b() {
+    // PR B: `resolve.rs` now populates `ResolvedTable.allow` — alias
+    // expansion (`write`/`all`), operand resolution to physical `dbName`,
+    // declaration order preserved (design decisions #6/#7).
     let source = fs::read_to_string(fixtures_dir().join("18-allow-rules.indigo")).unwrap();
     let schema = parse_source(&source).unwrap();
     let resolved = resolve::resolve(&schema);
-    for table in &resolved.tables {
-        let json = serde_json::to_string(table).unwrap();
-        assert!(!json.contains("\"allow\""), "{}: IR must not carry `allow` yet: {json}", table.name);
-    }
+    let table = |name: &str| resolved.tables.iter().find(|t| t.name == name).unwrap();
+
+    let post = table("Post");
+    let allow = post.allow.as_ref().expect("Post has allow rules");
+    assert_eq!(allow.len(), 1);
+    assert_eq!(allow[0].action, ir::AllowAction::Read);
+    assert_eq!(allow[0].left, ir::AllowOperand::Claim { name: "userId".into() });
+    assert_eq!(allow[0].right, ir::AllowOperand::Field { name: "ownerId".into() });
+
+    let comment = table("Comment");
+    let allow = comment.allow.as_ref().expect("Comment has allow rules");
+    let actions: Vec<ir::AllowAction> = allow.iter().map(|r| r.action).collect();
+    assert_eq!(actions, vec![ir::AllowAction::Create, ir::AllowAction::Update]);
+
+    let attachment = table("Attachment");
+    let allow = attachment.allow.as_ref().expect("Attachment has allow rules");
+    // `write` -> create, update, delete; `all` -> create, read, update, delete.
+    let actions: Vec<ir::AllowAction> = allow.iter().map(|r| r.action).collect();
+    assert_eq!(
+        actions,
+        vec![
+            ir::AllowAction::Create,
+            ir::AllowAction::Update,
+            ir::AllowAction::Delete,
+            ir::AllowAction::Create,
+            ir::AllowAction::Read,
+            ir::AllowAction::Update,
+            ir::AllowAction::Delete,
+        ]
+    );
+
+    let article = table("Article");
+    let allow = article.allow.as_ref().expect("Article has allow rules");
+    assert_eq!(allow.len(), 2);
+    assert_eq!(allow[0].action, ir::AllowAction::Read);
+    assert_eq!(allow[0].right, ir::AllowOperand::Field { name: "ownerId".into() });
+    assert_eq!(allow[1].action, ir::AllowAction::Read);
+    assert_eq!(allow[1].left, ir::AllowOperand::Field { name: "isPublic".into() });
+    assert_eq!(allow[1].right, ir::AllowOperand::Boolean { value: true });
+
+    // A `String` owner key resolves the same operand shape — cast derivation
+    // from the field's scalar type is a PR C / migrator concern, not IR shape.
+    let doc = table("Doc");
+    let allow = doc.allow.as_ref().expect("Doc has allow rules");
+    assert_eq!(allow[0].right, ir::AllowOperand::Field { name: "ownerId".into() });
 }
 
 #[test]

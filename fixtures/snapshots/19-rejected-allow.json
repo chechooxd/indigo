@@ -746,7 +746,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "role"
+            },
+            "right": {
+              "kind": "field",
+              "name": "role"
+            }
+          }
+        ]
       },
       {
         "name": "BadPathRoot",
@@ -778,7 +791,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        ]
       },
       {
         "name": "UnknownField",
@@ -810,7 +836,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "owner"
+            }
+          }
+        ]
       },
       {
         "name": "ClaimVsLiteral",
@@ -842,7 +881,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "string",
+              "value": "42"
+            }
+          }
+        ]
       },
       {
         "name": "ConstantPredicate",
@@ -874,7 +926,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "boolean",
+              "value": true
+            },
+            "right": {
+              "kind": "boolean",
+              "value": true
+            }
+          }
+        ]
       },
       {
         "name": "PolicyNameTooLong",
@@ -906,7 +971,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       },
       {
         "name": "RealtimeAndAllow",
@@ -939,7 +1017,20 @@
         "foreignKeys": [],
         "indexes": [],
         "relations": [],
-        "realtime": true
+        "realtime": true,
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       },
       {
         "name": "NamedArgsRejected",
@@ -971,7 +1062,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       }
     ],
     "tableGroups": [],

@@ -47,15 +47,15 @@ Chain strategy: feature-branch-chain
 
 ## PR B — Resolve + IR (base = PR A)
 
-- [ ] B1.1 [RED] `resolve.rs`: `write` expands to create/update/delete, `all` to all four, in declaration order; array `[create,update]` and bare single action both expand with no duplicates; `AllowOperand::Field` carries physical `dbName` (not logical name); multiple rules on one action preserve declaration order as distinct entries.
-- [ ] B1.2 [GREEN] implement alias expansion + operand resolution into `ResolvedTable.allow`.
-- [ ] B2.1 [RED] `ir.rs`: `allow` field omitted (not `null`) when absent, declared LAST after `group`.
-- [ ] B2.2 [GREEN] add `AllowRule`/`AllowAction`/`AllowOperand` + `ResolvedTable.allow: Option<Vec<AllowRule>>` per design Interfaces.
-- [ ] B3.1 [GREEN] mirror `AllowRule`/`AllowAction`/`AllowOperand`/`ResolvedTable.allow?` in `packages/core/src/ir.ts`.
-- [ ] B3.2 regenerate fixture 18's snapshot (now carries `allow`); confirm 01–17 and fixture 19 unchanged.
-- [ ] B3.3 [VERIFY] `cargo test` → `build:wasm` (commit) → `regen-snapshots.mjs` (only 18 diffs) → `parity.mjs`.
-- [ ] B3.4 [VERIFY] `pnpm build && pnpm lint` (incl. `@indigodb/core`).
-- [ ] B3.5 [COMMIT] `feat(compiler): resolve @@allow rules into IR`.
+- [x] B1.1 [RED] `resolve.rs`: `write` expands to create/update/delete, `all` to all four, in declaration order; array `[create,update]` and bare single action both expand with no duplicates; `AllowOperand::Field` carries physical `dbName` (not logical name); multiple rules on one action preserve declaration order as distinct entries.
+- [x] B1.2 [GREEN] implement alias expansion + operand resolution into `ResolvedTable.allow`.
+- [x] B2.1 [RED] `ir.rs`: `allow` field omitted (not `null`) when absent, declared LAST after `group`.
+- [x] B2.2 [GREEN] add `AllowRule`/`AllowAction`/`AllowOperand` + `ResolvedTable.allow: Option<Vec<AllowRule>>` per design Interfaces.
+- [x] B3.1 [GREEN] mirror `AllowRule`/`AllowAction`/`AllowOperand`/`ResolvedTable.allow?` in `packages/core/src/ir.ts`.
+- [x] B3.2 regenerate fixture 18's snapshot (now carries `allow`); confirm 01–17 unchanged. (Fixture 19's snapshot also changed — see apply notes: `regen-snapshots.mjs` always resolves regardless of validation errors, same pre-existing behavior as fixtures 09/10/11/15/17; not a regression.)
+- [x] B3.3 [VERIFY] `cargo test` → `build:wasm` (commit) → `regen-snapshots.mjs` (18 and 19 diff, 01–17 zero diff) → `parity.mjs`.
+- [x] B3.4 [VERIFY] `pnpm build && pnpm lint` (incl. `@indigodb/core`); also fixed `packages/core/test/print.mjs`'s round-trip normalizer to drop the new `allow` field (out of `printSchema`'s scope, same pattern as `color`/`group`).
+- [x] B3.5 [COMMIT] `feat(compiler): resolve @@allow rules into IR`.
 
 ## PR C — DDL + Diff + Client (base = PR B)
 

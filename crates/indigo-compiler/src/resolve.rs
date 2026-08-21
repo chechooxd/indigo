@@ -274,6 +274,107 @@ fn resolve_relations(
     (relations, foreign_keys)
 }
 
+/// Extracts the action name(s) from `@@allow`'s first positional argument —
+/// a bare reference (`read`) or a reference/string array (`[create, update]`)
+/// — mirroring `validate.rs::allow_action_names`. By the time `resolve` runs
+/// the schema already passed validation, so any other shape (already
+/// reported there) simply resolves to no rules for this attribute.
+fn allow_action_names(value: &AttributeValue) -> Vec<String> {
+    match value {
+        AttributeValue::Reference { value } => vec![value.clone()],
+        AttributeValue::Array { values } => values
+            .iter()
+            .filter_map(|v| match v {
+                AttributeValue::Reference { value } | AttributeValue::String { value } => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_allow_action(name: &str) -> Option<AllowAction> {
+    match name {
+        "create" => Some(AllowAction::Create),
+        "read" => Some(AllowAction::Read),
+        "update" => Some(AllowAction::Update),
+        "delete" => Some(AllowAction::Delete),
+        _ => None,
+    }
+}
+
+/// Expands one accepted action name (canonical or `write`/`all` alias) to
+/// its canonical action set, in declaration order (design decision #6).
+/// Mirrors `validate.rs::canonical_actions_for`; unrecognized names (already
+/// reported by `validate.rs`) yield no actions.
+fn canonical_allow_actions_for(name: &str) -> Vec<AllowAction> {
+    if let Some(action) = parse_allow_action(name) {
+        return vec![action];
+    }
+    crate::rules::ALLOW_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, expanded)| expanded.iter().filter_map(|a| parse_allow_action(a)).collect())
+        .unwrap_or_default()
+}
+
+/// Resolves one side of a validated `@@allow` equality condition into its
+/// IR operand. `this.<field>` resolves to the physical `dbName` (design
+/// decision #7); `auth.<claim>` resolves to a `Claim`; literals pass through
+/// unchanged. Any other shape cannot occur post-validation.
+fn resolve_allow_operand(value: &AttributeValue, field_to_db: &HashMap<String, String>) -> AllowOperand {
+    match value {
+        AttributeValue::Path { segments } if segments.len() == 2 && segments[0] == "this" => {
+            AllowOperand::Field {
+                name: field_to_db.get(&segments[1]).cloned().unwrap_or_else(|| segments[1].clone()),
+            }
+        }
+        AttributeValue::Path { segments } if segments.len() == 2 && segments[0] == "auth" => {
+            AllowOperand::Claim { name: segments[1].clone() }
+        }
+        AttributeValue::String { value } => AllowOperand::String { value: value.clone() },
+        AttributeValue::Number { value } => AllowOperand::Number { value: *value },
+        AttributeValue::Boolean { value } => AllowOperand::Boolean { value: *value },
+        // Anything else is a `validate.rs` diagnostic, never reached on a
+        // schema that compiled successfully.
+        _ => AllowOperand::String { value: String::new() },
+    }
+}
+
+/// Resolves every `@@allow` attribute on a model into `ResolvedTable.allow`:
+/// alias expansion (`write`/`all`) into canonical actions, operand
+/// resolution to physical `dbName`, declaration order preserved across both
+/// multiple `@@allow` attributes and multiple actions within one attribute
+/// (design decision #6). `None` when the model declares no `@@allow`.
+fn resolve_allow_rules(model: &Model, field_to_db: &HashMap<String, String>) -> Option<Vec<AllowRule>> {
+    let mut rules_out: Vec<AllowRule> = Vec::new();
+
+    for attr in &model.attributes {
+        if attr.namespace.is_some() || attr.name != "allow" {
+            continue;
+        }
+        let positional: Vec<&AttributeArg> = attr.args.iter().filter(|a| a.name.is_empty()).collect();
+        if positional.len() != 2 {
+            continue; // invalid arity — already a validate.rs diagnostic.
+        }
+        let AttributeValue::Comparison { left, right, .. } = &positional[1].value else {
+            continue; // non-comparison condition — already a diagnostic.
+        };
+        let left_op = resolve_allow_operand(left, field_to_db);
+        let right_op = resolve_allow_operand(right, field_to_db);
+
+        for name in allow_action_names(&positional[0].value) {
+            for action in canonical_allow_actions_for(&name) {
+                rules_out.push(AllowRule { action, left: left_op.clone(), right: right_op.clone() });
+            }
+        }
+    }
+
+    if rules_out.is_empty() { None } else { Some(rules_out) }
+}
+
 pub fn resolve(schema: &Schema) -> ResolvedSchema {
     let enum_names: std::collections::HashSet<&str> =
         schema.enums.iter().map(|e| e.name.as_str()).collect();
@@ -335,6 +436,7 @@ pub fn resolve(schema: &Schema) -> ResolvedSchema {
             realtime: if has_attr(&model.attributes, "realtime") { Some(true) } else { None },
             color: group.and_then(|(_, c)| c.map(str::to_string)),
             group: group.map(|(name, _)| name.to_string()),
+            allow: resolve_allow_rules(model, field_to_db),
         });
     }
 
@@ -664,5 +766,109 @@ Table User {
         );
         let idx = index_of(&resolved, "User", &["email"]);
         assert_eq!(idx.index_type, None);
+    }
+
+    fn allow_of<'a>(resolved: &'a ResolvedSchema, table: &str) -> Option<&'a Vec<AllowRule>> {
+        resolved.tables.iter().find(|t| t.name == table).and_then(|t| t.allow.as_ref())
+    }
+
+    #[test]
+    fn allow_write_and_all_expand_in_declaration_order_with_dbname_operand() {
+        let resolved = resolve_source(
+            r#"
+Table Post {
+  id      String @id
+  ownerId Int @map("owner_id")
+  @@allow(write, auth.userId == this.ownerId)
+  @@allow(all, auth.userId == this.ownerId)
+}
+"#,
+        );
+        let allow = allow_of(&resolved, "Post").expect("allow rules resolved");
+        let actions: Vec<AllowAction> = allow.iter().map(|r| r.action).collect();
+        assert_eq!(
+            actions,
+            vec![
+                AllowAction::Create,
+                AllowAction::Update,
+                AllowAction::Delete,
+                AllowAction::Create,
+                AllowAction::Read,
+                AllowAction::Update,
+                AllowAction::Delete,
+            ]
+        );
+        for rule in allow {
+            match &rule.left {
+                AllowOperand::Claim { name } => assert_eq!(name, "userId"),
+                other => panic!("expected claim operand, got {other:?}"),
+            }
+            // Physical dbName (`@map("owner_id")`), not the logical field name.
+            match &rule.right {
+                AllowOperand::Field { name } => assert_eq!(name, "owner_id"),
+                other => panic!("expected field operand carrying dbName, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn allow_array_and_bare_action_expand_without_duplication() {
+        let resolved = resolve_source(
+            r#"
+Table Comment {
+  id      String @id
+  ownerId Int
+  @@allow([create, update], auth.userId == this.ownerId)
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#,
+        );
+        let allow = allow_of(&resolved, "Comment").expect("allow rules resolved");
+        let actions: Vec<AllowAction> = allow.iter().map(|r| r.action).collect();
+        assert_eq!(actions, vec![AllowAction::Create, AllowAction::Update, AllowAction::Read]);
+    }
+
+    #[test]
+    fn allow_multiple_rules_on_one_action_preserve_declaration_order_as_distinct_entries() {
+        let resolved = resolve_source(
+            r#"
+Table Article {
+  id       String  @id
+  ownerId  Int
+  isPublic Boolean
+  @@allow(read, auth.userId == this.ownerId)
+  @@allow(read, this.isPublic == true)
+}
+"#,
+        );
+        let allow = allow_of(&resolved, "Article").expect("allow rules resolved");
+        assert_eq!(allow.len(), 2);
+        assert_eq!(allow[0].action, AllowAction::Read);
+        assert_eq!(allow[1].action, AllowAction::Read);
+        match &allow[0].right {
+            AllowOperand::Field { name } => assert_eq!(name, "ownerId"),
+            other => panic!("expected field operand, got {other:?}"),
+        }
+        match &allow[1].left {
+            AllowOperand::Field { name } => assert_eq!(name, "isPublic"),
+            other => panic!("expected field operand, got {other:?}"),
+        }
+        match &allow[1].right {
+            AllowOperand::Boolean { value } => assert!(*value),
+            other => panic!("expected boolean literal operand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn model_without_allow_has_no_allow_field() {
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id
+}
+"#,
+        );
+        let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
+        assert!(table.allow.is_none());
     }
 }
