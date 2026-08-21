@@ -1,0 +1,79 @@
+// `@@allow` rejected forms (realtime-rls-allow-rule, PR A). One instance per
+// diagnostic class from design.md's Diagnostics table. Not under
+// `fixtures/errors/`, since every diagnostic here comes from validation, not
+// a parse failure — same convention as 15-rejected-native-types.indigo and
+// 17-rejected-index-args.indigo. Each table is isolated so its diagnostic
+// can be pinned independently by the golden snapshot.
+
+// Wrong arity (missing the condition argument).
+Table WrongArity {
+  id      String @id
+  ownerId Int
+  @@allow(read)
+}
+
+// Unknown action.
+Table UnknownAction {
+  id      String @id
+  ownerId Int
+  @@allow(select, auth.userId == this.ownerId)
+}
+
+// Unknown auth claim.
+Table UnknownClaim {
+  id   String @id
+  role String
+  @@allow(read, auth.role == this.role)
+}
+
+// Bad path root (neither `this` nor `auth`).
+Table BadPathRoot {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == post.ownerId)
+}
+
+// Unknown / non-scalar field reference.
+Table UnknownField {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.owner)
+}
+
+// `auth.userId` compared against a literal instead of a `this.<field>`.
+Table ClaimVsLiteral {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == "42")
+}
+
+// Constant predicate — always true, an authorization bypass.
+Table ConstantPredicate {
+  id      String @id
+  ownerId Int
+  @@allow(read, true == true)
+}
+
+// Generated policy name would exceed 63 bytes.
+Table PolicyNameTooLong {
+  id      String @id
+  ownerId Int
+  @@map("a_very_long_table_name_that_pushes_the_generated_policy_name_past_the_postgres_limit")
+  @@allow(read, auth.userId == this.ownerId)
+}
+
+// `@@realtime` + `@@allow` co-declared — realtime fan-out has no row-level
+// filter yet.
+Table RealtimeAndAllow {
+  id      String @id
+  ownerId Int
+  @@realtime
+  @@allow(read, auth.userId == this.ownerId)
+}
+
+// Named args are not accepted on `@@allow`.
+Table NamedArgsRejected {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId, name: "x")
+}

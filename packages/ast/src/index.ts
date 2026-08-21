@@ -39,7 +39,14 @@ export type AttributeValue =
   | { kind: "boolean"; value: boolean }
   | { kind: "reference"; value: string }
   | { kind: "function"; name: string; args: AttributeValue[] }
-  | { kind: "array"; values: AttributeValue[] };
+  | { kind: "array"; values: AttributeValue[] }
+  /** Dotted path (`this.ownerId`, `auth.userId`), used by `@@allow`. */
+  | { kind: "path"; segments: string[] }
+  /**
+   * A single equality comparison (`auth.userId == this.ownerId`), used by
+   * `@@allow`. `op` is always `"=="` in this slice.
+   */
+  | { kind: "comparison"; op: string; left: AttributeValue; right: AttributeValue };
 
 // ─── Attributes ──────────────────────────────────────────────────────────────
 

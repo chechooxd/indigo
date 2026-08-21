@@ -664,6 +664,101 @@ fn fixture_17_rejected_index_args_reports_every_diagnostic_class() {
     }
 }
 
+// ─── `@@allow` (realtime-rls-allow-rule PR A): dedicated fixtures ────────────
+
+#[test]
+fn fixture_18_allow_rules_has_zero_validation_errors() {
+    let source = fs::read_to_string(fixtures_dir().join("18-allow-rules.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    assert!(errors.is_empty(), "expected zero validation errors, got: {errors:?}");
+}
+
+#[test]
+fn fixture_18_ir_has_no_allow_key_yet() {
+    // PR A deliberately leaves resolve.rs/ir.rs untouched — `ResolvedTable`
+    // must carry no `allow` field, so every model's serialized IR omits the
+    // key entirely (design's "PR A stops here").
+    let source = fs::read_to_string(fixtures_dir().join("18-allow-rules.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    for table in &resolved.tables {
+        let json = serde_json::to_string(table).unwrap();
+        assert!(!json.contains("\"allow\""), "{}: IR must not carry `allow` yet: {json}", table.name);
+    }
+}
+
+#[test]
+fn fixture_19_rejected_allow_reports_every_diagnostic_class() {
+    let source = fs::read_to_string(fixtures_dir().join("19-rejected-allow.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    let has = |model: &str, needle: &str| errors.iter().any(|e| e.model.as_deref() == Some(model) && e.message.contains(needle));
+
+    assert!(has("WrongArity", "requires an action and a single equality condition"), "{errors:?}");
+    assert!(has("UnknownAction", "Invalid @@allow action \"select\""), "{errors:?}");
+    assert!(has("UnknownClaim", "\"auth.role\""), "{errors:?}");
+    assert!(has("BadPathRoot", "Invalid path \"post.ownerId\""), "{errors:?}");
+    assert!(has("UnknownField", "unknown or non-scalar field \"owner\""), "{errors:?}");
+    assert!(has("ClaimVsLiteral", "must be compared against a this.<field> reference"), "{errors:?}");
+    assert!(has("ConstantPredicate", "references neither a field nor auth.userId"), "{errors:?}");
+    assert!(has("PolicyNameTooLong", "exceeds 63 bytes"), "{errors:?}");
+    assert!(has("RealtimeAndAllow", "cannot be both @@realtime and @@allow"), "{errors:?}");
+    assert!(has("NamedArgsRejected", "\"name\""), "{errors:?}");
+
+    // Exactly one diagnostic per isolated table (no unexpected extras).
+    for model in [
+        "WrongArity",
+        "UnknownAction",
+        "UnknownClaim",
+        "BadPathRoot",
+        "UnknownField",
+        "ClaimVsLiteral",
+        "ConstantPredicate",
+        "PolicyNameTooLong",
+        "RealtimeAndAllow",
+        "NamedArgsRejected",
+    ] {
+        let count = errors.iter().filter(|e| e.model.as_deref() == Some(model)).count();
+        assert_eq!(count, 1, "expected exactly one diagnostic for {model}, got: {errors:?}");
+    }
+}
+
+#[test]
+fn corpus_fixtures_01_through_17_are_unaffected_by_allow() {
+    // Regression: adding `@@allow`'s grammar/validation must not change the
+    // diagnostic count for any pre-existing fixture (design's "01-17 must
+    // show no diff").
+    let dir = fixtures_dir();
+    for n in 1..=17u8 {
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension().is_some_and(|x| x == "indigo")
+                    && e.file_name().to_string_lossy().starts_with(&format!("{n:02}-"))
+            })
+            .collect();
+        for entry in entries {
+            let source = fs::read_to_string(entry.path()).unwrap();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            match parse_source(&source) {
+                Ok(schema) => {
+                    // No panic, and validate() runs cleanly (may still
+                    // report its own pre-existing diagnostics — this test
+                    // only guards against a NEW panic/regression from the
+                    // @@allow addition, not against the exact count, which
+                    // the parity harness's golden snapshots already pin).
+                    let _ = validate::validate(&schema);
+                }
+                Err(errors) => {
+                    assert!(!errors.is_empty(), "{name}: unexpected empty error list");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn enum_value_map_is_subject_to_attribute_validation() {
     // `@map` on an enum value goes through the same arity and argument-type

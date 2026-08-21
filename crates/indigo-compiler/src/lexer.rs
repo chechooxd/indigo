@@ -41,6 +41,8 @@ enum RawToken {
     QuestionMark,
     #[token("=")]
     Equals,
+    #[token("==")]
+    EqEq,
     #[regex(r#""([^"\\]|\\.)*""#)]
     StringLiteral,
     #[regex(r"-?[0-9]+(\.[0-9]+)?")]
@@ -64,6 +66,7 @@ pub enum TokenKind {
     Colon,
     QuestionMark,
     Equals,
+    EqEq,
     StringLiteral,
     NumberLiteral,
     Identifier,
@@ -93,6 +96,7 @@ impl TokenKind {
             TokenKind::Colon => "':'",
             TokenKind::QuestionMark => "'?'",
             TokenKind::Equals => "'='",
+            TokenKind::EqEq => "'=='",
             TokenKind::StringLiteral => "a string",
             TokenKind::NumberLiteral => "a number",
             TokenKind::Identifier => "an identifier",
@@ -249,6 +253,7 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                     RawToken::Colon => TokenKind::Colon,
                     RawToken::QuestionMark => TokenKind::QuestionMark,
                     RawToken::Equals => TokenKind::Equals,
+                    RawToken::EqEq => TokenKind::EqEq,
                     RawToken::StringLiteral => unreachable!("handled above"),
                     RawToken::NumberLiteral => TokenKind::NumberLiteral,
                     RawToken::Identifier => keyword_for(text).unwrap_or(TokenKind::Identifier),
@@ -304,5 +309,29 @@ mod tests {
     #[test]
     fn dot_token_describe_is_quoted_dot() {
         assert_eq!(TokenKind::Dot.describe(), "'.'");
+    }
+
+    #[test]
+    fn double_equals_lexes_to_a_single_eqeq_token() {
+        let (tokens, errors) = tokenize("==");
+        assert!(errors.is_empty());
+        assert_eq!(tokens[0].kind, TokenKind::EqEq);
+        assert_eq!(tokens[0].text, "==");
+        // Only one token before Eof — logos' longest-match must not split it
+        // into two Equals tokens.
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn single_equals_still_lexes_to_equals() {
+        let (tokens, errors) = tokenize("=");
+        assert!(errors.is_empty());
+        assert_eq!(tokens[0].kind, TokenKind::Equals);
+        assert_eq!(tokens[0].text, "=");
+    }
+
+    #[test]
+    fn eqeq_token_describe_is_quoted_double_equals() {
+        assert_eq!(TokenKind::EqEq.describe(), "'=='");
     }
 }

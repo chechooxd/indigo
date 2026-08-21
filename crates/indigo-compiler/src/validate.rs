@@ -3,7 +3,7 @@
 //! counterpart). Original message strings are part of the parity contract —
 //! do not reword; new Phase 3 messages are pinned by `tests/fixtures.rs`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::ir::ValidationError;
@@ -76,6 +76,19 @@ pub fn validate(schema: &Schema) -> Vec<ValidationError> {
             errors.push(ValidationError {
                 message: format!(
                     "Model \"{}\" is @@realtime but has no @id primary key.",
+                    model.name
+                ),
+                model: Some(model.name.clone()),
+                field: None,
+            });
+        }
+
+        // @@realtime + @@allow: the realtime fan-out has no row-level filter
+        // yet, so combining both would leak RLS-hidden rows (design decision 4).
+        if get_attr(&model.attributes, "realtime").is_some() && has_attr(&model.attributes, "allow") {
+            errors.push(ValidationError {
+                message: format!(
+                    "Model \"{}\" cannot be both @@realtime and @@allow — realtime fan-out has no row-level filter yet.",
                     model.name
                 ),
                 model: Some(model.name.clone()),
@@ -298,10 +311,12 @@ fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_
         for attr in &model.attributes {
             match rules::attribute_rule(AttributeTarget::Model, &attr.name) {
                 None => push_unknown(errors, AttributeTarget::Model, &attr.name, &location, Some(model.name.clone()), None),
+                Some(ArgShape::Allow) => validate_allow(errors, model, attr),
                 Some(shape) => check_shape(errors, shape, &attr.name, attr, &location, Some(model.name.clone()), None),
             }
         }
         validate_index_args(errors, model);
+        validate_allow_policy_names(errors, model);
     }
     for e in &schema.enums {
         for value in &e.values {
@@ -609,6 +624,285 @@ fn validate_relation_args(
     }
 }
 
+// ─── `@@allow` (realtime-rls-allow-rule PR A) ────────────────────────────────
+//
+// `rules.rs`'s `ArgShape::Allow` only gates coarse shape (handled generically
+// by `check_shape` for every other shape); `@@allow` needs deep, structural
+// diagnostics (action vocabulary, closed claim vocabulary, path shape, field
+// existence/scalar-ness, claim-vs-literal, constant predicate, policy-name
+// length) that don't fit `check_shape`'s uniform table, so it gets its own
+// pass — mirroring how `Default`/`Relation` already bypass `check_shape`.
+// `resolve.rs`/`ir.rs` are deliberately untouched here (PR B).
+
+const ALLOW_ALLOWED_ACTIONS_TEXT: &str = "create, read, update, delete, write, all";
+
+/// Renders any `AttributeValue` for a diagnostic message when it doesn't fit
+/// the expected shape (e.g. a number where a path/action was expected).
+fn describe_value(value: &AttributeValue) -> String {
+    match value {
+        AttributeValue::String { value } => format!("\"{value}\""),
+        AttributeValue::Number { value } => value.to_string(),
+        AttributeValue::Boolean { value } => value.to_string(),
+        AttributeValue::Reference { value } => value.clone(),
+        AttributeValue::Function { name, .. } => format!("{name}(...)"),
+        AttributeValue::Array { .. } => "[...]".to_string(),
+        AttributeValue::Path { segments } => segments.join("."),
+        AttributeValue::Comparison { .. } => "<comparison>".to_string(),
+    }
+}
+
+/// `@@allow`'s action argument: a bare reference (`read`) or a reference/
+/// string array (`[create, update]`). `None` for anything else (design
+/// decision 5 — arrays and bare references already parse, no third grammar).
+fn allow_action_names(value: &AttributeValue) -> Option<Vec<String>> {
+    match value {
+        AttributeValue::Reference { value } => Some(vec![value.clone()]),
+        AttributeValue::Array { values } => {
+            let mut names = Vec::with_capacity(values.len());
+            for v in values {
+                match v {
+                    AttributeValue::Reference { value } | AttributeValue::String { value } => {
+                        names.push(value.clone());
+                    }
+                    _ => return None,
+                }
+            }
+            Some(names)
+        }
+        _ => None,
+    }
+}
+
+/// Expands one accepted action name (canonical or alias) to its canonical
+/// set, in declaration order (design decision 6). `None` if `name` isn't a
+/// known action at all — callers only use this after `allow_action_names`
+/// entries are already known-valid.
+fn canonical_actions_for(name: &str) -> Option<Vec<&'static str>> {
+    if let Some(action) = rules::ALLOW_ACTIONS.iter().find(|a| **a == name) {
+        return Some(vec![*action]);
+    }
+    rules::ALLOW_ALIASES.iter().find(|(alias, _)| *alias == name).map(|(_, expanded)| expanded.to_vec())
+}
+
+enum AllowOperandKind {
+    Field,
+    Claim,
+    Literal,
+}
+
+/// Validates one side of a `@@allow` equality condition: it must be a
+/// `this.<field>` path to a known scalar (non-list) field, an `auth.userId`
+/// path, or a literal. Pushes exactly one diagnostic and returns `None` on
+/// any other shape.
+fn validate_allow_operand(
+    errors: &mut Vec<ValidationError>,
+    model: &Model,
+    model_name: &str,
+    value: &AttributeValue,
+) -> Option<AllowOperandKind> {
+    let bad_path = |errors: &mut Vec<ValidationError>, rendered: String| {
+        errors.push(ValidationError {
+            message: format!(
+                "Invalid path \"{rendered}\" in @@allow on model \"{model_name}\". Each side must be this.<field>, auth.userId or a literal."
+            ),
+            model: Some(model_name.to_string()),
+            field: None,
+        });
+    };
+
+    match value {
+        AttributeValue::Path { segments } => {
+            if segments.len() != 2 {
+                bad_path(errors, segments.join("."));
+                return None;
+            }
+            let root = segments[0].as_str();
+            let name = segments[1].as_str();
+            match root {
+                "this" => match model.fields.iter().find(|f| f.name == name) {
+                    Some(f) if is_scalar(&f.field_type.name) && !f.field_type.list => Some(AllowOperandKind::Field),
+                    _ => {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "@@allow references unknown or non-scalar field \"{name}\" on model \"{model_name}\"."
+                            ),
+                            model: Some(model_name.to_string()),
+                            field: None,
+                        });
+                        None
+                    }
+                },
+                "auth" => {
+                    if rules::AUTH_CLAIMS.contains(&name) {
+                        Some(AllowOperandKind::Claim)
+                    } else {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "Unknown auth claim \"auth.{name}\" in @@allow on model \"{model_name}\". Only auth.userId is supported."
+                            ),
+                            model: Some(model_name.to_string()),
+                            field: None,
+                        });
+                        None
+                    }
+                }
+                _ => {
+                    bad_path(errors, segments.join("."));
+                    None
+                }
+            }
+        }
+        AttributeValue::String { .. } | AttributeValue::Number { .. } | AttributeValue::Boolean { .. } => {
+            Some(AllowOperandKind::Literal)
+        }
+        other => {
+            bad_path(errors, describe_value(other));
+            None
+        }
+    }
+}
+
+/// Deep validation of one `@@allow(action, condition)` attribute: arity,
+/// action vocabulary, condition shape/operator, operand shapes, claim-vs-
+/// literal, and constant-predicate rejection. Policy-name-length is a
+/// separate, cross-attribute pass (`validate_allow_policy_names`) because it
+/// depends on every `@@allow` on the model, not just this one.
+fn validate_allow(errors: &mut Vec<ValidationError>, model: &Model, attr: &Attribute) {
+    let model_name = model.name.clone();
+
+    for arg in &attr.args {
+        if !arg.name.is_empty() {
+            errors.push(ValidationError {
+                message: format!(
+                    "Unsupported \"{}\" argument on @@allow on model \"{model_name}\".",
+                    arg.name
+                ),
+                model: Some(model_name.clone()),
+                field: None,
+            });
+        }
+    }
+
+    let positional: Vec<&AttributeArg> = attr.args.iter().filter(|a| a.name.is_empty()).collect();
+    let arity_error = |errors: &mut Vec<ValidationError>| {
+        errors.push(ValidationError {
+            message: format!(
+                "Attribute \"@@allow\" on model \"{model_name}\" requires an action and a single equality condition."
+            ),
+            model: Some(model_name.clone()),
+            field: None,
+        });
+    };
+    if positional.len() != 2 {
+        arity_error(errors);
+        return;
+    }
+
+    match allow_action_names(&positional[0].value) {
+        None => arity_error(errors),
+        Some(names) => {
+            for name in &names {
+                let known = rules::ALLOW_ACTIONS.contains(&name.as_str())
+                    || rules::ALLOW_ALIASES.iter().any(|(alias, _)| alias == name);
+                if !known {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Invalid @@allow action \"{name}\" on model \"{model_name}\". Allowed: {ALLOW_ALLOWED_ACTIONS_TEXT}."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+            }
+        }
+    }
+
+    match &positional[1].value {
+        AttributeValue::Comparison { op, left, right } => {
+            if op != "==" {
+                errors.push(ValidationError {
+                    message: format!(
+                        "Unsupported operator \"{op}\" in @@allow on model \"{model_name}\". Only \"==\" is supported."
+                    ),
+                    model: Some(model_name.clone()),
+                    field: None,
+                });
+                return;
+            }
+            let left_kind = validate_allow_operand(errors, model, &model_name, left);
+            let right_kind = validate_allow_operand(errors, model, &model_name, right);
+            let (Some(left_kind), Some(right_kind)) = (left_kind, right_kind) else {
+                return;
+            };
+            match (&left_kind, &right_kind) {
+                (AllowOperandKind::Claim, AllowOperandKind::Literal)
+                | (AllowOperandKind::Literal, AllowOperandKind::Claim) => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "auth.userId in @@allow on model \"{model_name}\" must be compared against a this.<field> reference."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+                (AllowOperandKind::Literal, AllowOperandKind::Literal) => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "@@allow condition on model \"{model_name}\" references neither a field nor auth.userId."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        _ => arity_error(errors),
+    }
+}
+
+/// Cross-attribute pass: recomputes each rule's would-be Postgres policy
+/// name (`indigo_p_<dbName>_<action>_<ordinal>`, design decision 11) and
+/// rejects any model where one exceeds `MAX_IDENTIFIER_BYTES` — Postgres
+/// silently truncates rather than erroring, so this is checked at compile
+/// time. Only counts rules that already passed arity/action validation;
+/// `validate_allow` already reported anything else.
+fn validate_allow_policy_names(errors: &mut Vec<ValidationError>, model: &Model) {
+    let table_db_name = crate::resolve::table_db_name(model);
+    let mut ordinals: HashMap<&'static str, usize> = HashMap::new();
+    let mut reported = false;
+
+    for attr in &model.attributes {
+        if attr.namespace.is_some() || attr.name != "allow" {
+            continue;
+        }
+        let positional: Vec<&AttributeArg> = attr.args.iter().filter(|a| a.name.is_empty()).collect();
+        if positional.len() != 2 {
+            continue;
+        }
+        let Some(action_names) = allow_action_names(&positional[0].value) else { continue };
+        for name in &action_names {
+            let Some(canonical) = canonical_actions_for(name) else { continue };
+            for action in canonical {
+                let ordinal = ordinals.entry(action).or_insert(0);
+                let policy_name = format!("indigo_p_{table_db_name}_{action}_{ordinal}");
+                if !reported && policy_name.len() > rules::MAX_IDENTIFIER_BYTES {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Generated policy name for model \"{}\" exceeds 63 bytes; shorten the model or @@map name.",
+                            model.name
+                        ),
+                        model: Some(model.name.clone()),
+                        field: None,
+                    });
+                    reported = true;
+                }
+                *ordinal += 1;
+            }
+        }
+    }
+}
+
 // ─── Implicit many-to-many rejection (Phase 3) ───────────────────────────────
 
 /// A list field holding a FK isn't the implicit-many-to-many shape.
@@ -702,7 +996,14 @@ fn validate_relation_ambiguity(errors: &mut Vec<ValidationError>, schema: &Schem
 
     let mut reported_ambiguous: HashSet<(String, String)> = HashSet::new();
 
-    for ((a, b), candidates) in &groups {
+    // `HashMap` iteration order is process-random (SipHash), so diagnostics
+    // pushed while iterating `groups` directly would reorder nondeterministically
+    // across builds/runs — including across WASM rebuilds, which breaks golden
+    // snapshot stability. Sort by key first so diagnostic order is deterministic.
+    let mut sorted_groups: Vec<(&(String, String), &Vec<Candidate>)> = groups.iter().collect();
+    sorted_groups.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    for ((a, b), candidates) in sorted_groups {
         // Named relation with no counterpart declaring the same name: always
         // reported, independent of the ambiguity threshold below.
         for &c in candidates {
@@ -1133,5 +1434,232 @@ Table User {
         assert_eq!(errors[0].model.as_deref(), Some("User"));
         assert_eq!(errors[0].field.as_deref(), Some("bio"));
         assert!(errors[0].message.contains("orm.hint"));
+    }
+
+    // ─── @@allow (realtime-rls-allow-rule, PR A) ─────────────────────────────
+
+    #[test]
+    fn allow_wrong_arity_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].model.as_deref(), Some("Post"));
+        assert!(errors[0].message.contains("requires an action and a single equality condition"));
+    }
+
+    #[test]
+    fn allow_non_comparison_condition_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, 123)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("requires an action and a single equality condition"));
+    }
+
+    #[test]
+    fn allow_unknown_action_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(select, auth.userId == this.ownerId)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Invalid @@allow action \"select\""));
+    }
+
+    #[test]
+    fn allow_unknown_claim_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  role String
+  @@allow(read, auth.role == this.role)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("\"auth.role\""));
+        assert!(errors[0].message.contains("Only auth.userId is supported"));
+    }
+
+    #[test]
+    fn allow_bad_path_root_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, auth.userId == post.ownerId)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Invalid path \"post.ownerId\""));
+    }
+
+    #[test]
+    fn allow_unknown_or_non_scalar_field_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.owner)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("unknown or non-scalar field \"owner\""));
+    }
+
+    #[test]
+    fn allow_claim_vs_literal_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, auth.userId == "42")
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("must be compared against a this.<field> reference"));
+    }
+
+    #[test]
+    fn allow_constant_predicate_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, true == true)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("references neither a field nor auth.userId"));
+    }
+
+    #[test]
+    fn allow_policy_name_over_63_bytes_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@map("a_very_long_table_name_that_pushes_the_generated_policy_name_past_the_postgres_limit")
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#,
+        );
+        assert!(errors.iter().any(|e| e.message.contains("exceeds 63 bytes")), "errors: {errors:?}");
+    }
+
+    #[test]
+    fn allow_realtime_conflict_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@realtime
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#,
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("cannot be both @@realtime and @@allow"));
+    }
+
+    #[test]
+    fn allow_bare_single_action_accepted() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn allow_action_array_accepted() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow([create, update], auth.userId == this.ownerId)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn allow_field_vs_literal_accepted() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  isPublic Boolean
+  @@allow(read, this.isPublic == true)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn allow_multiple_rules_on_one_action_accepted() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  isPublic Boolean
+  @@allow(read, auth.userId == this.ownerId)
+  @@allow(read, this.isPublic == true)
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn allow_named_args_are_rejected() {
+        let errors = validate_source(
+            r#"
+Table Post {
+  id String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId, name: "x")
+}
+"#,
+        );
+        assert!(errors.iter().any(|e| e.message.contains("\"name\"")), "errors: {errors:?}");
     }
 }

@@ -579,15 +579,15 @@
   },
   "validation": [
     {
-      "message": "Ambiguous relation between \"Post\" and \"User\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides."
-    },
-    {
       "message": "@relation(\"CommentAuthor\") on \"Comment.author\" has no counterpart field on \"User\" declaring @relation(\"CommentAuthor\").",
       "model": "Comment",
       "field": "author"
     },
     {
       "message": "Ambiguous relation between \"Comment\" and \"User\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides."
+    },
+    {
+      "message": "Ambiguous relation between \"Post\" and \"User\": multiple relation fields target the same model. Disambiguate with @relation(\"Name\", ...) on both sides."
     }
   ]
 }

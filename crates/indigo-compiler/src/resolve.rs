@@ -53,6 +53,9 @@ fn resolve_default(field: &Field) -> Option<ResolvedDefault> {
             value: LiteralValue::String(value.clone()),
         }),
         AttributeValue::Array { .. } => None,
+        // `@default` never carries a path or comparison; only `@@allow`
+        // accepts those (validated in `validate.rs`).
+        AttributeValue::Path { .. } | AttributeValue::Comparison { .. } => None,
     }
 }
 
