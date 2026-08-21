@@ -446,7 +446,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       },
       {
         "name": "Comment",
@@ -478,7 +491,31 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "create",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "update",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       },
       {
         "name": "Attachment",
@@ -510,7 +547,86 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "create",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "update",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "delete",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "create",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "update",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "delete",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       },
       {
         "name": "Article",
@@ -552,7 +668,31 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          },
+          {
+            "action": "read",
+            "left": {
+              "kind": "field",
+              "name": "isPublic"
+            },
+            "right": {
+              "kind": "boolean",
+              "value": true
+            }
+          }
+        ]
       },
       {
         "name": "Doc",
@@ -584,7 +724,20 @@
         ],
         "foreignKeys": [],
         "indexes": [],
-        "relations": []
+        "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
       }
     ],
     "tableGroups": [],

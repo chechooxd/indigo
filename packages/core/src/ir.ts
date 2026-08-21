@@ -145,6 +145,42 @@ export interface ResolvedRelation {
   inverse?: true;
 }
 
+// ─── Row-level security (`@@allow`) ─────────────────────────────────────────
+
+/**
+ * Canonical `@@allow` action — never the `write`/`all` alias, which the
+ * compiler's `resolve.rs` expands into these four at resolve time (design
+ * decision #6).
+ */
+export type AllowAction = "create" | "read" | "update" | "delete";
+
+/**
+ * One side of a resolved `@@allow` equality condition. `field` always
+ * carries the physical `dbName` (design decision #7), never the logical
+ * field name, so a `@map` rename remaps allow rules for free via
+ * `remapPhysicalNames`. No cast text is carried here — `@indigodb/migrator`
+ * derives the Postgres cast from the referenced column's SQL type
+ * (decision #8), not the compiler.
+ */
+export type AllowOperand =
+  | { kind: "field"; name: string }
+  /** Always `"userId"` in slice 1 — the closed claim vocabulary. */
+  | { kind: "claim"; name: string }
+  | { kind: "string"; value: string }
+  | { kind: "number"; value: number }
+  | { kind: "boolean"; value: boolean };
+
+/**
+ * One resolved `@@allow` rule, already expanded from any `write`/`all`
+ * alias into a single canonical action. Operand order follows declaration
+ * order in the schema — the compiler never normalizes sides.
+ */
+export interface AllowRule {
+  action: AllowAction;
+  left: AllowOperand;
+  right: AllowOperand;
+}
+
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
 export interface ResolvedTable {
@@ -170,6 +206,12 @@ export interface ResolvedTable {
   color?: string;
   /** Name of the `TableGroup` this table belongs to, if any. */
   group?: string;
+  /**
+   * Resolved `@@allow` rules, one entry per canonical action after alias
+   * expansion. Declared LAST and absent (not `null`) when the model has no
+   * `@@allow`, so every pre-existing `.snapshot.json` stays byte-identical.
+   */
+  allow?: AllowRule[];
 }
 
 /** A single enum member: its schema name plus its physical (`@map`) label. */

@@ -517,6 +517,10 @@ const UNPRINTABLE_FIXTURES = new Set(["05-relations.indigo"]);
  *    original array order. This is the printer's fixed emission order
  *    working as designed, not a bug, so the "expected" side is re-bucketed
  *    identically for comparison.
+ * 4. `@@allow`: out of the printer's scope (`realtime-rls-allow-rule` only
+ *    added grammar/validation/resolve — `print.ts` was not touched by that
+ *    change), so a reprinted schema never carries `@@allow` and re-resolving
+ *    it always yields `allow: undefined`. Dropped on both sides.
  *
  * NOTE on the design doc's identity-column caveat ("introspect.ts emits
  * `{autoincrement:true}` with no `default`, while resolve.rs emits
@@ -533,7 +537,7 @@ function normalizeForRoundTrip(resolved) {
     ...resolved,
     tableGroups: [],
     tables: resolved.tables.map((t) => {
-      const { color, group, ...rest } = t;
+      const { color, group, allow, ...rest } = t;
       const indexes = [...t.indexes.filter((i) => i.unique), ...t.indexes.filter((i) => !i.unique)];
       return { ...rest, indexes, foreignKeys: [], relations: [] };
     }),
