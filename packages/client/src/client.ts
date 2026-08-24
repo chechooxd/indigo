@@ -235,6 +235,59 @@ export class IndigoClientBase {
     return this.$withSession(fn);
   }
 
+  /**
+   * Runs `fn` inside a Row-Level Security auth context: sets the `app.user_id`
+   * Postgres setting `@@allow`-generated policies read (`current_setting
+   * ('app.user_id', true)`), scoped to one exclusive session/transaction via
+   * `$withSession`, then delegates to `fn`.
+   *
+   * Built on `$withSession` (design decision #16), never a reimplemented
+   * BEGIN/COMMIT: `$withSession` already owns transaction lifecycle and the
+   * nesting guard, so `set_config(..., is_local: true)` — transaction-local
+   * by definition — dies at the same `COMMIT`/`ROLLBACK` that closes the
+   * session. That is the STRUCTURAL guarantee behind "no identity leak
+   * across a recycled pooled connection": there is no code path where the
+   * setting could outlive the transaction, because it was never set outside
+   * one.
+   *
+   * `set_config('app.user_id', $1, true)`, NEVER `SET LOCAL app.user_id =
+   * $1` (design decision #15): `SET` does not accept bind parameters, so
+   * `SET LOCAL` would force string-interpolating `ctx.userId` into SQL text
+   * — exactly the injection surface `set_config`'s bound `$1` avoids.
+   * `String(ctx.userId)` — `set_config`'s value parameter is text; the
+   * RLS policy predicate casts it to the referenced field's actual SQL type
+   * (`@indigodb/migrator`'s `renderPolicy`), so no cast decision is made
+   * here.
+   *
+   * DELIBERATELY named `$authSession`, NOT `$auth` (deviation from
+   * design.md's literal Interfaces section, discovered during apply):
+   * design proposed the generated `IndigoClient` exposing a typed `$auth`
+   * by overRIDING this method with a narrower callback parameter
+   * (`(tx: TransactionClient) => Promise<T>` instead of `(exec: Executor)
+   * => Promise<T>`). That does NOT type-check under `strict` — verified in
+   * isolation: TypeScript's class-member-override compatibility check is
+   * contravariant on method parameters regardless of method-vs-property
+   * syntax (no bivariance escape for a plain override), and `TransactionClient`
+   * is not a supertype of `Executor`. `$transaction`'s existing override
+   * only compiles because it is declared as an OVERLOAD SET including a
+   * generic-constrained array-form signature, which happens to make
+   * TypeScript skip the override check — an accidental compiler quirk this
+   * change does not want to depend on for a brand-new, single-shape method.
+   * Naming this method `$authSession` instead removes the override
+   * relationship entirely: the generated `IndigoClient.$auth` (see
+   * `generator/src/client.ts`) is then a genuinely NEW public method, not
+   * an override, so no contravariance conflict is possible.
+   */
+  protected async $authSession<T>(
+    ctx: { userId: string | number },
+    fn: (exec: Executor) => Promise<T>,
+  ): Promise<T> {
+    return this.$withSession(async (exec) => {
+      await exec("SELECT set_config('app.user_id', $1, true)", [String(ctx.userId)]);
+      return fn(exec);
+    });
+  }
+
   /** Closes the connection pool (or injected executor) and any open realtime subscriptions. */
   async $disconnect(): Promise<void> {
     this.realtimeManager?.close();
