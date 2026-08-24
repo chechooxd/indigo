@@ -1,0 +1,7 @@
+Table Post {
+  id      Int    @id @default(autoincrement())
+  ownerId Int
+  title   String
+  @@allow(read, auth.userId == this.ownerId)
+  @@allow(create, auth.userId == this.ownerId)
+}

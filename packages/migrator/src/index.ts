@@ -19,6 +19,13 @@ export {
   quoteIdent,
   indexName,
   renderIndexDdl,
+  namedAllowRules,
+  columnSqlType,
+  policyName,
+  renderPolicy,
+  renderRlsBlock,
+  renderDisableRls,
+  AUTH_SETTING,
 } from "./postgres.js";
 
 // Versioned migration diff engine (`indigodb migrate`).

@@ -17,6 +17,8 @@ import type {
   ResolvedEnumMember,
   ForeignKey,
   ResolvedIndex,
+  AllowRule,
+  AllowOperand,
 } from "@indigodb/core";
 
 /** A member's schema name plus the PostgreSQL label it must render as; falls
@@ -122,6 +124,23 @@ export function renderDefaultClause(column: ResolvedColumn, enums: ResolvedEnum[
 function renderNativeType(n: NonNullable<ResolvedColumn["nativeType"]>): string {
   const sql = { VarChar: "VARCHAR", Uuid: "UUID", Numeric: "NUMERIC" }[n.name];
   return n.args.length ? `${sql}(${n.args.join(",")})` : sql!;
+}
+
+/**
+ * A column's PostgreSQL SQL type, WITHOUT `NOT NULL`/`DEFAULT` — the exact
+ * type-selection branch of `renderColumn` (autoincrement IDENTITY base wins,
+ * then `@db.X` native override, then `mapScalarToPg`), extracted so
+ * `renderPolicy` (RLS, design decision #8) can derive a cast that can never
+ * disagree with the column's own DDL. `@indigodb/migrator`'s
+ * `diffPolicies` (`migrate.ts`) reuses this exact function for the same
+ * reason.
+ */
+export function columnSqlType(column: ResolvedColumn): string {
+  if (column.autoincrement) {
+    return column.type === "BigInt" ? "bigint" : "integer";
+  }
+  if (column.nativeType) return renderNativeType(column.nativeType);
+  return mapScalarToPg(column.type);
 }
 
 /** Renders a single column definition line inside CREATE TABLE. */
@@ -288,6 +307,225 @@ export function renderDropTrigger(table: ResolvedTable): string {
   return `DROP TRIGGER IF EXISTS ${quoteIdent(triggerName(table))} ON ${quoteIdent(table.dbName)};`;
 }
 
+// ─── Row-Level Security (@@allow → policies, design decisions 8/11/12/13) ────
+
+/**
+ * The Postgres session/transaction setting `$auth` writes via
+ * `set_config('app.user_id', $1, true)` and every RLS policy predicate
+ * reads via `current_setting`. Single source of truth for the migrator side
+ * — `@indigodb/client`'s `$auth` carries the identical literal (the two
+ * packages do not share a dependency edge, same pattern as
+ * `REALTIME_CHANNEL` not being re-exported to `@indigodb/client`).
+ */
+export const AUTH_SETTING = "app.user_id";
+
+/** Postgres identifier byte limit; names beyond this are silently truncated
+ * rather than rejected, so this is checked instead of trusted (design
+ * decision #11, mirrors the compiler's own `validate_allow_policy_names`). */
+const MAX_IDENTIFIER_BYTES = 63;
+
+/**
+ * `indigo_p_<dbName>_<action>_<ordinal>` — readable in `pg_policies` and
+ * fully derivable from the IR alone (design decision #11). `ordinal` is the
+ * rule's index among this table's rules for `rule.action` — callers
+ * (`renderRlsBlock`, `diffPolicies`) compute it by filtering `table.allow`
+ * to the same action and finding the rule's position, so ordinal
+ * computation can never disagree between the two DDL paths.
+ */
+export function policyName(table: ResolvedTable, rule: AllowRule, ordinal: number): string {
+  const name = `indigo_p_${table.dbName}_${rule.action}_${ordinal}`;
+  if (Buffer.byteLength(name, "utf8") > MAX_IDENTIFIER_BYTES) {
+    throw new Error(
+      `Generated policy name "${name}" for table "${table.dbName}" exceeds ${MAX_IDENTIFIER_BYTES} bytes; shorten the table's @@map name.`,
+    );
+  }
+  return name;
+}
+
+/** Looks up a table's column by physical `dbName` (`AllowOperand.Field.name`
+ * always carries the physical name, design decision #7). */
+function columnByDbName(table: ResolvedTable, dbName: string): ResolvedColumn | undefined {
+  return table.columns.find((c) => c.dbName === dbName);
+}
+
+/**
+ * Renders one side of an `@@allow` condition. `castType` is the SQL type
+ * text (from `columnSqlType`) the OTHER side resolved to, when this side is
+ * not itself a field — `undefined` (no cast text emitted) when this side IS
+ * a field (already typed by its own column DDL) or when neither side of the
+ * rule is a field (an edge case the compiler's validator does not itself
+ * reach in this slice, e.g. two claims). Claim reads are wrapped in
+ * `NULLIF(..., '')` before the cast: PGlite/PostgreSQL leave a residual
+ * empty-string placeholder on a custom GUC (`app.user_id`) once it has been
+ * `set_config`'d and the local transaction later commits — without the
+ * guard, a request that omits `$auth` on a connection that previously used
+ * it would hit an SQL cast ERROR (`invalid input syntax for type integer:
+ * ""`) instead of the intended silent deny (verified live against PGlite,
+ * `C0.1`). Identifiers go through `quoteIdent`, string literals through
+ * `escapeLiteral` — never interpolated raw (threat matrix: SQL injection
+ * via schema-authored identifiers/literals).
+ */
+function renderOperand(op: AllowOperand, table: ResolvedTable, castType: string | undefined): string {
+  const cast = castType ? `::${castType}` : "";
+  switch (op.kind) {
+    case "field":
+      return quoteIdent(op.name);
+    case "claim":
+      return `NULLIF(current_setting('${escapeLiteral(AUTH_SETTING)}', true), '')${cast}`;
+    case "string":
+      return `'${escapeLiteral(op.value)}'${cast}`;
+    case "number":
+      return `${op.value}${cast}`;
+    case "boolean":
+      return `${op.value ? "true" : "false"}${cast}`;
+  }
+}
+
+/**
+ * Renders the shared `left = right` condition text for one `AllowRule`,
+ * operand order following declaration order (the compiler never normalizes
+ * sides). When exactly one side is a `field` operand, the OTHER side casts
+ * to that field's own SQL type (design decision #8) — never the field side,
+ * which is already typed by its column DDL.
+ */
+function renderCondition(table: ResolvedTable, rule: AllowRule): string {
+  const leftField = rule.left.kind === "field" ? columnByDbName(table, rule.left.name) : undefined;
+  const rightField = rule.right.kind === "field" ? columnByDbName(table, rule.right.name) : undefined;
+  const fieldType = leftField ? columnSqlType(leftField) : rightField ? columnSqlType(rightField) : undefined;
+  const left = renderOperand(rule.left, table, leftField ? undefined : fieldType);
+  const right = renderOperand(rule.right, table, rightField ? undefined : fieldType);
+  return `${left} = ${right}`;
+}
+
+/**
+ * Renders one `CREATE POLICY` statement. `PERMISSIVE` (Postgres default —
+ * multiple rules on the same action OR together). Command mapping (design
+ * decision #12): read/delete get `USING` only; create gets `WITH CHECK`
+ * only (Postgres forbids `USING` on `FOR INSERT`); update gets both from
+ * the SAME condition (the `WITH CHECK` half is what stops a row being
+ * updated OUT OF the caller's ownership).
+ */
+export function renderPolicy(table: ResolvedTable, rule: AllowRule, ordinal: number): string {
+  const name = policyName(table, rule, ordinal);
+  const condition = renderCondition(table, rule);
+  const t = quoteIdent(table.dbName);
+  switch (rule.action) {
+    case "read":
+      return `CREATE POLICY ${quoteIdent(name)} ON ${t} AS PERMISSIVE FOR SELECT\n  USING (${condition});`;
+    case "create":
+      return `CREATE POLICY ${quoteIdent(name)} ON ${t} AS PERMISSIVE FOR INSERT\n  WITH CHECK (${condition});`;
+    case "update":
+      return `CREATE POLICY ${quoteIdent(name)} ON ${t} AS PERMISSIVE FOR UPDATE\n  USING (${condition}) WITH CHECK (${condition});`;
+    case "delete":
+      return `CREATE POLICY ${quoteIdent(name)} ON ${t} AS PERMISSIVE FOR DELETE\n  USING (${condition});`;
+  }
+}
+
+/**
+ * Guarded prune loop dropping any `pg_policies` row matching
+ * `indigo_p_<table>_%` that is not in `keepNames` — a plain PL/pgSQL loop,
+ * not a `DO $$ ... EXCEPTION` guard (there is nothing to race: `DROP POLICY`
+ * has no `IF NOT EXISTS`-shaped failure mode here, only "does it still
+ * exist", which the loop's own `pg_policies` query already answers). Shared
+ * by `renderRlsBlock` (rule count > 0) and `renderDisableRls` (rule count
+ * === 0, so `keepNames` is empty and every `indigo_p_<table>_*` policy is
+ * pruned) so push always converges when a rule is removed, not just added
+ * (design decision #13's explicit warning).
+ */
+function renderPruneLoop(table: ResolvedTable, keepNames: string[]): string {
+  const prefix = escapeLiteral(`indigo_p_${table.dbName}_`);
+  // `<> ALL(ARRAY[...]::text[])`, NEVER `NOT IN (...)`: with an empty
+  // `keepNames` (the `renderDisableRls` case — every rule was removed),
+  // `NOT IN (NULL)` is SQL's classic trap — a NULL on the right side of
+  // `IN`/`NOT IN` makes the whole comparison NULL (neither true nor false)
+  // for every row, so the loop would silently prune NOTHING and leave every
+  // stale policy orphaned (exactly the convergence bug design decision #13
+  // warns about). `<> ALL(ARRAY[]::text[])` has no such trap: an empty
+  // array makes the quantified comparison vacuously true for every row.
+  const keepArray = keepNames.map((n) => `'${escapeLiteral(n)}'`).join(", ");
+  return [
+    "DO $$",
+    "DECLARE",
+    "  pol record;",
+    "BEGIN",
+    `  FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = '${escapeLiteral(table.dbName)}' AND policyname LIKE '${prefix}%' AND policyname <> ALL(ARRAY[${keepArray}]::text[])`,
+    "  LOOP",
+    // `%I` on BOTH the policy name AND the table name — an unquoted table
+    // identifier here would case-fold ("Post" -> post), so `DROP POLICY IF
+    // EXISTS ... ON post` would silently no-op against a table that doesn't
+    // exist (verified live against PGlite: the exact failure mode this
+    // comment describes, caught before commit).
+    `    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, '${escapeLiteral(table.dbName)}');`,
+    "  END LOOP;",
+    "END $$;",
+  ].join("\n");
+}
+
+/**
+ * Prune + `DISABLE`/`NO FORCE ROW LEVEL SECURITY` — the zero-rule case
+ * (`table.allow` absent or empty): a table that once had `@@allow` rules
+ * and now has none must lose both its stale policies AND the RLS toggle
+ * itself, or push stops converging.
+ */
+export function renderDisableRls(table: ResolvedTable): string[] {
+  return [
+    renderPruneLoop(table, []),
+    `ALTER TABLE ${quoteIdent(table.dbName)} DISABLE ROW LEVEL SECURITY;`,
+    `ALTER TABLE ${quoteIdent(table.dbName)} NO FORCE ROW LEVEL SECURITY;`,
+  ];
+}
+
+/**
+ * Pairs every `@@allow` rule with its per-action ordinal (the rule's index
+ * among `table.allow`'s rules sharing its `action`, design decision #11)
+ * and its derived `policyName`. Exported so `migrate.ts`'s `diffPolicies`
+ * computes the exact same `(name, ordinal)` pairing `renderRlsBlock` uses
+ * for `db push` — the two DDL paths can never disagree on which rule owns
+ * which name.
+ */
+export function namedAllowRules(
+  table: ResolvedTable,
+): { rule: AllowRule; ordinal: number; name: string }[] {
+  const ordinals = new Map<string, number>();
+  return (table.allow ?? []).map((rule) => {
+    const ordinal = ordinals.get(rule.action) ?? 0;
+    ordinals.set(rule.action, ordinal + 1);
+    return { rule, ordinal, name: policyName(table, rule, ordinal) };
+  });
+}
+
+/**
+ * Renders the full RLS DDL for one table: `[]` when it carries no `@@allow`
+ * rules at all (untouched — never emit RLS DDL for a table that was never
+ * RLS-enabled), `renderDisableRls` when `allow` is present but empty,
+ * otherwise `ENABLE`+`FORCE ROW LEVEL SECURITY` (both idempotent no-ops
+ * when already set — no `DO` guard needed) followed by the prune loop and
+ * one `DROP POLICY IF EXISTS` + `CREATE POLICY` pair per rule (design
+ * decision #13). `FORCE` matters even for the table owner: without it, the
+ * owner role bypasses RLS entirely regardless of `SET ROLE`.
+ */
+export function renderRlsBlock(table: ResolvedTable): string[] {
+  const rules = table.allow;
+  if (rules === undefined) return [];
+  if (rules.length === 0) return renderDisableRls(table);
+
+  const named = namedAllowRules(table);
+
+  const stmts: string[] = [
+    `ALTER TABLE ${quoteIdent(table.dbName)} ENABLE ROW LEVEL SECURITY;`,
+    `ALTER TABLE ${quoteIdent(table.dbName)} FORCE ROW LEVEL SECURITY;`,
+    renderPruneLoop(
+      table,
+      named.map((n) => n.name),
+    ),
+  ];
+  for (const { rule, ordinal, name } of named) {
+    stmts.push(`DROP POLICY IF EXISTS ${quoteIdent(name)} ON ${quoteIdent(table.dbName)};`);
+    stmts.push(renderPolicy(table, rule, ordinal));
+  }
+  return stmts;
+}
+
 /**
  * Renders the full idempotent DDL script that syncs a Postgres database to the
  * given resolved schema. Safe to run repeatedly.
@@ -331,6 +569,12 @@ export function renderPushSql(schema: ResolvedSchema): string {
   if (schema.tables.some((t) => t.realtime)) blocks.push(renderNotifyFunction());
   for (const table of schema.tables) {
     blocks.push(table.realtime ? renderCreateTrigger(table) : renderDropTrigger(table));
+  }
+
+  // 6. Row-Level Security (@@allow → policies). `renderRlsBlock` itself
+  // decides ENABLE+FORCE+policies / DISABLE+prune / nothing per table.
+  for (const table of schema.tables) {
+    blocks.push(...renderRlsBlock(table));
   }
 
   return blocks.join("\n\n") + "\n";
