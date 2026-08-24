@@ -25,7 +25,12 @@ export interface RealtimeEvent<Row = Record<string, unknown>> {
   old?: Row;
   /** Payload exceeded NOTIFY's 8000-byte limit; refetch by `pk`. */
   partial?: boolean;
-  /** v1: `txid_current()`; v2 (WAL): the LSN. */
+  /**
+   * v1 (`PgNotifySource`): `txid_current()`. v2 (`WalSource`): the decimal
+   * transaction id from the pgoutput `begin` message — same *meaning* as v1,
+   * not the LSN. A future slice may add LSN addressing alongside this field;
+   * the commit LSN arrives with the shape log when that lands.
+   */
   txid?: string;
   /** ISO-8601 UTC timestamp taken inside the transaction. */
   ts: string;
@@ -34,8 +39,9 @@ export interface RealtimeEvent<Row = Record<string, unknown>> {
 }
 
 /**
- * A stream of row-change events. The seam for v2: `PgNotifySource` today,
- * a `WalSource` over logical replication tomorrow, same consumers.
+ * A stream of row-change events. `WalSource` (v2, logical replication) is
+ * the default; `PgNotifySource` (v1, LISTEN/NOTIFY) remains available — same
+ * consumers either way.
  */
 export interface RealtimeSource {
   start(

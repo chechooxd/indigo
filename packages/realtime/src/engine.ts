@@ -1,10 +1,12 @@
 /**
  * @indigodb/realtime — Engine
  *
- * Embeddable fan-out hub: consumes a `RealtimeSource` (v1: LISTEN/NOTIFY) and
- * distributes change events to in-process listeners (`on("change")`) and SSE
- * subscribers (`handleRequest`/`attach`). Consumed by the `indigodb realtime`
- * command, embedded in the studio server, and attachable to any user-owned
+ * Embeddable fan-out hub: consumes a `RealtimeSource` (default: `WalSource`,
+ * v2 logical replication; `PgNotifySource`, v1 LISTEN/NOTIFY, remains
+ * constructible via `options.source`) and distributes change events to
+ * in-process listeners (`on("change")`) and SSE subscribers
+ * (`handleRequest`/`attach`). Consumed by the `indigodb realtime` command,
+ * embedded in the studio server, and attachable to any user-owned
  * `node:http` server — no framework, no dependencies beyond `pg`.
  *
  * SSE contract (see protocol.ts): `GET <path>?tables=User,Post` (no param =
@@ -17,12 +19,12 @@ import type { IncomingMessage, ServerResponse, Server } from "node:http";
 import type { ResolvedSchema } from "@indigodb/core";
 import type { RealtimeEvent, RealtimeReady } from "./protocol.js";
 import { REALTIME_PATH, type RealtimeSource } from "./protocol.js";
-import { PgNotifySource } from "./source.js";
+import { WalSource } from "./wal-source.js";
 
 export interface RealtimeEngineOptions {
   connectionString: string;
   schema: ResolvedSchema;
-  /** Event source override — defaults to `PgNotifySource`; v2: a WAL source. */
+  /** Event source override — defaults to `WalSource`. `PgNotifySource` (v1) remains constructible. */
   source?: RealtimeSource;
   /** SSE heartbeat interval. Default 25s (under common 30s proxy idle cuts). */
   heartbeatMs?: number;
@@ -50,7 +52,7 @@ export class RealtimeEngine {
   constructor(options: RealtimeEngineOptions) {
     this.source =
       options.source ??
-      new PgNotifySource(options.connectionString, options.schema);
+      new WalSource(options.connectionString, options.schema);
     this.heartbeatMs = options.heartbeatMs ?? 25_000;
     this.onError = options.onError ?? ((err) => console.error("[indigodb realtime]", err.message));
     this.realtimeModels = new Set(

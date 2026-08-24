@@ -1,5 +1,5 @@
 /**
- * @indigodb/realtime — LISTEN/NOTIFY event source (v1)
+ * @indigodb/realtime — LISTEN/NOTIFY event source (v1, non-default)
  *
  * One dedicated `pg.Client` holding `LISTEN indigo_events` (the channel the
  * `indigo_notify_trigger()` function emitted by the migrator publishes to).
@@ -9,7 +9,9 @@
  *
  * Reconnects with exponential backoff (1s → 30s) and re-issues LISTEN after
  * the connection is lost. NOTIFY delivered while disconnected is gone — that
- * gap is why the SDK surfaces `resync` on reconnect (v2 WAL removes it).
+ * gap is why `WalSource` (v2, logical replication) is now the engine's
+ * default; this source remains exported and constructible via
+ * `RealtimeEngineOptions.source` for callers that still rely on it.
  */
 
 import pg from "pg";
