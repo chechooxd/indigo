@@ -16,6 +16,7 @@ import type {
   ResolvedEnumMember,
   ResolvedIndex,
   ForeignKey,
+  AllowRule,
 } from "@indigodb/core";
 import {
   mapScalarToPg,
@@ -28,6 +29,8 @@ import {
   enumMembers,
   indexName,
   renderIndexDdl,
+  renderPolicy,
+  namedAllowRules,
 } from "./postgres.js";
 import type {
   MigrationDiagnostic,
@@ -329,6 +332,16 @@ function remapPhysicalNames(table: ResolvedTable, renameMap: Map<string, string>
     primaryKey: table.primaryKey.map(remap),
     indexes: table.indexes.map((idx) => ({ ...idx, columns: idx.columns.map(remap) })),
     foreignKeys: table.foreignKeys.map((fk) => ({ ...fk, columns: fk.columns.map(remap) })),
+    // `AllowOperand.Field.name` always carries the physical `dbName`
+    // (design decision #7) — a `@map` rename on an `@@allow`-referenced
+    // column must remap the rule "for free", exactly like a PK/index/FK
+    // column, or `diffPolicies` would see the old rule's field name
+    // disappear and the renamed column's DROP+CREATE for no real reason.
+    allow: table.allow?.map((rule) => ({
+      ...rule,
+      left: rule.left.kind === "field" ? { ...rule.left, name: remap(rule.left.name) } : rule.left,
+      right: rule.right.kind === "field" ? { ...rule.right, name: remap(rule.right.name) } : rule.right,
+    })),
   };
 }
 
@@ -354,6 +367,16 @@ function createTable(table: ResolvedTable, enums: ResolvedEnum[]): MigrationStat
   const stmts = [safe(`CREATE TABLE ${quoteIdent(table.dbName)} (\n${lines.join(",\n")}\n);`)];
   stmts.push(...tableConstraintsNoFk(table));
   if (table.realtime) stmts.push(safe(renderCreateTrigger(table)));
+  // Row-Level Security (@@allow), brand-new table: no prior policies can
+  // exist, so no DROP/prune is needed — just ENABLE+FORCE and one CREATE
+  // POLICY per rule, same ordinal/name formula `renderRlsBlock` uses.
+  if (table.allow && table.allow.length > 0) {
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(table.dbName)} ENABLE ROW LEVEL SECURITY;`));
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(table.dbName)} FORCE ROW LEVEL SECURITY;`));
+    for (const { rule, ordinal } of namedAllowRules(table)) {
+      stmts.push(safe(renderPolicy(table, rule, ordinal)));
+    }
+  }
   return stmts;
 }
 
@@ -580,6 +603,77 @@ function diffTableFks(
   return { drops, adds, renames };
 }
 
+// ─── Row-Level Security policy diff (@@allow, design decision #14) ──────────
+
+/**
+ * Diffs one EXISTING table's `@@allow` policies against its previous state
+ * (`prev` already remapped through `remapPhysicalNames`, so a `@map`
+ * rename on the owner column is invisible to this diff — decision #7/#14).
+ * Unlike `renderRlsBlock`'s idempotent `db push` path, this is EXACT,
+ * ordered DDL from two fully-known schema states, so it never needs a
+ * runtime `pg_policies` catalog query or prune loop (decision #14): a
+ * policy present in `prev` but not in `next` is a plain `DROP POLICY IF
+ * EXISTS`; one present in `next` but not in `prev`, or present in both
+ * under the SAME name with a DIFFERENT rendered definition, is a plain
+ * `CREATE POLICY`.
+ *
+ * Rules are matched by their derived `policyName` (design decision #11),
+ * which already encodes `(table, action, ordinal)` — so a reordered rule
+ * list (same conditions, new positions) is correctly seen as a rename-free
+ * DROP+CREATE pair under the ordinals' new names, and an action change
+ * (`read` -> `update`) is correctly seen as one policy disappearing and a
+ * different one appearing, never an in-place ALTER (Postgres has no `ALTER
+ * POLICY ... FOR <action>`).
+ *
+ * No policy statement here ever destroys row data — adding a policy widens
+ * access, dropping one (with RLS still `FORCE`d) narrows it, the safe
+ * direction (design decision #14) — so every statement is `safe()`.
+ */
+function diffPolicies(prev: ResolvedTable, next: ResolvedTable): MigrationStatement[] {
+  const stmts: MigrationStatement[] = [];
+  const prevNamed = namedAllowRules(prev);
+  const nextNamed = namedAllowRules(next);
+  const prevHadRules = prevNamed.length > 0;
+  const nextHasRules = nextNamed.length > 0;
+
+  // First enablement: this table had no `@@allow` at all, and now does.
+  if (!prevHadRules && nextHasRules) {
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(next.dbName)} ENABLE ROW LEVEL SECURITY;`));
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(next.dbName)} FORCE ROW LEVEL SECURITY;`));
+  }
+
+  const prevByName = new Map(prevNamed.map((n) => [n.name, n]));
+  const nextByName = new Map(nextNamed.map((n) => [n.name, n]));
+
+  // Removed or redefined policies (present in prev, gone or changed in next)
+  // — dropped BEFORE any same-named re-create, so a changed condition never
+  // collides with its own stale definition.
+  for (const { name, rule, ordinal } of prevNamed) {
+    const current = nextByName.get(name);
+    const unchanged = current && renderPolicy(next, current.rule, current.ordinal) === renderPolicy(prev, rule, ordinal);
+    if (!unchanged) {
+      stmts.push(safe(`DROP POLICY IF EXISTS ${quoteIdent(name)} ON ${quoteIdent(next.dbName)};`));
+    }
+  }
+
+  // Added or redefined policies (present in next, absent or changed vs prev).
+  for (const { name, rule, ordinal } of nextNamed) {
+    const before = prevByName.get(name);
+    const unchanged = before && renderPolicy(next, rule, ordinal) === renderPolicy(prev, before.rule, before.ordinal);
+    if (!unchanged) {
+      stmts.push(safe(renderPolicy(next, rule, ordinal)));
+    }
+  }
+
+  // Full disablement: this table had `@@allow` and now has none.
+  if (prevHadRules && !nextHasRules) {
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(next.dbName)} DISABLE ROW LEVEL SECURITY;`));
+    stmts.push(safe(`ALTER TABLE ${quoteIdent(next.dbName)} NO FORCE ROW LEVEL SECURITY;`));
+  }
+
+  return stmts;
+}
+
 // ─── Table diff ──────────────────────────────────────────────────────────────
 
 /**
@@ -764,6 +858,12 @@ function diffTable(
   if ((prev.realtime ?? false) !== (next.realtime ?? false)) {
     stmts.push(safe(next.realtime ? renderCreateTrigger(next) : renderDropTrigger(next)));
   }
+
+  // Row-Level Security policies (@@allow added/removed/changed). `prev` is
+  // already remapped (this function's own `remapPhysicalNames` call above),
+  // so an `@map` rename on an `@@allow`-referenced column never looks like
+  // an unrelated policy change.
+  stmts.push(...diffPolicies(prev, next));
 
   return stmts;
 }

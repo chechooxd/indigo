@@ -59,23 +59,23 @@ Chain strategy: feature-branch-chain
 
 ## PR C — DDL + Diff + Client (base = PR B)
 
-- [ ] C0.1 [SPIKE — MUST run first] `packages/migrator/test/pg-harness.mjs`: confirm PGlite supports `CREATE ROLE ... NOLOGIN` + `SET ROLE`, and that role is actually subject to `FORCE ROW LEVEL SECURITY`. If unsupported, escalate: add a Docker Postgres CI service before continuing.
-- [ ] C1.1 [RED] `postgres.ts`: `columnSqlType` returns the column's SQL type; `policyName` → `indigo_p_<dbName>_<action>_<ordinal>`, rejects >63 bytes; `renderPolicy` — read/delete → `USING`, create → `WITH CHECK` only (no `USING`), update → both from the same condition; cast matches field type (`Int`→`::integer`, `Uuid`→`::UUID`, `String`→none).
-- [ ] C1.2 [RED] `renderRlsBlock`: `ENABLE`+`FORCE ROW LEVEL SECURITY`, prune loop dropping stale `indigo_p_<table>_%`, `DROP POLICY IF EXISTS`+`CREATE POLICY` per rule; zero-rule table → `renderDisableRls` (prune + `DISABLE`/`NO FORCE`); untouched table gets no RLS DDL.
-- [ ] C1.3 [RED — threat: SQL injection via schema identifiers] quote-bearing `@map` name and quote-bearing string literal render safely via `quoteIdent`/`escapeLiteral`, never interpolated raw.
-- [ ] C1.4 [GREEN] implement `columnSqlType`, `policyName`, `renderPolicy`, `renderRlsBlock`, `renderDisableRls`; wire new block 6 into `renderPushSql`.
-- [ ] C2.1 [RED] `migrate.ts`: adding `@@allow` → migration includes `ENABLE`/`FORCE`+`CREATE POLICY`; removing → `DROP POLICY`(+disable); rule added/removed/reordered/action-changed → correct `DROP`+`CREATE`; `@map` rename remaps the owner column via `remapPhysicalNames`; policy statements classified `safe()`.
-- [ ] C2.2 [GREEN] implement `diffPolicies` in `diffTable`, wire `createTable`'s initial policy emission.
-- [ ] C3.1 [RED] `client.ts`: `$auth({userId}, fn)` issues `SELECT set_config('app.user_id', $1, true)` as a bound param before delegating to `fn`.
-- [ ] C3.2 [RED — threat: SQL injection via auth value] `$auth({userId:"1'; DROP TABLE ..."})` leaves the schema intact.
-- [ ] C3.3 [RED] `$auth` built on `$withSession`; identity dies at `COMMIT`/`ROLLBACK` (no leak across recycled pooled connection); models without `@@allow` unaffected.
-- [ ] C3.4 [GREEN] implement `$auth` on `IndigoClientBase` per design Interfaces.
-- [ ] C4.1 [GREEN] `packages/generator/src/client.ts`: emit typed `$auth` override beside `$transaction` + golden/snapshot test.
-- [ ] C5.1 [RED — threat: privilege bypass, PGlite under `SET ROLE` from C0] `$auth({userId:X})` on `@@allow(read, auth.userId==this.ownerId)` sees only X's rows; a different id sees none; no `$auth` sees none; two permissive read rules OR.
-- [ ] C5.2 [GREEN] wire the C0 harness into the suite; confirm C5.1 passes against real Postgres semantics.
-- [ ] C6.1 [VERIFY] `node packages/migrator/test/regen-goldens.mjs` — review diff.
-- [ ] C6.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` + `cd crates && cargo test` (sanity, no crates touched in PR C).
-- [ ] C6.3 [COMMIT] `feat(migrator,client): enforce @@allow via Postgres RLS`.
+- [x] C0.1 [SPIKE — MUST run first] `packages/migrator/test/pg-harness.mjs`: confirm PGlite supports `CREATE ROLE ... NOLOGIN` + `SET ROLE`, and that role is actually subject to `FORCE ROW LEVEL SECURITY`. If unsupported, escalate: add a Docker Postgres CI service before continuing. — CONFIRMED SUPPORTED (verified live: CREATE ROLE, SET ROLE, and the role is genuinely non-superuser and RLS-subject). Proceeded on the enforcement-test path.
+- [x] C1.1 [RED] `postgres.ts`: `columnSqlType` returns the column's SQL type; `policyName` → `indigo_p_<dbName>_<action>_<ordinal>`, rejects >63 bytes; `renderPolicy` — read/delete → `USING`, create → `WITH CHECK` only (no `USING`), update → both from the same condition; cast matches field type (`Int`→`::integer`, `Uuid`→`::UUID`, `String`→none).
+- [x] C1.2 [RED] `renderRlsBlock`: `ENABLE`+`FORCE ROW LEVEL SECURITY`, prune loop dropping stale `indigo_p_<table>_%`, `DROP POLICY IF EXISTS`+`CREATE POLICY` per rule; zero-rule table → `renderDisableRls` (prune + `DISABLE`/`NO FORCE`); untouched table gets no RLS DDL.
+- [x] C1.3 [RED — threat: SQL injection via schema identifiers] quote-bearing `@map` name and quote-bearing string literal render safely via `quoteIdent`/`escapeLiteral`, never interpolated raw.
+- [x] C1.4 [GREEN] implement `columnSqlType`, `policyName`, `renderPolicy`, `renderRlsBlock`, `renderDisableRls`; wire new block 6 into `renderPushSql`. — Found and fixed 2 real bugs via live PGlite verification: (1) prune loop used `NOT IN (NULL)` for an empty keep-list, which never matches, silently orphaning every policy on full removal; (2) the dynamic `EXECUTE format(...)` left the table identifier unquoted, case-folding a PascalCase table name and silently no-op'ing the DROP. Also added a `NULLIF(current_setting(...), '')` guard: PGlite/Postgres leave a residual empty-string GUC placeholder after a prior `set_config` commits, which would otherwise throw a cast error instead of denying.
+- [x] C2.1 [RED] `migrate.ts`: adding `@@allow` → migration includes `ENABLE`/`FORCE`+`CREATE POLICY`; removing → `DROP POLICY`(+disable); rule added/removed/reordered/action-changed → correct `DROP`+`CREATE`; `@map` rename remaps the owner column via `remapPhysicalNames`; policy statements classified `safe()`.
+- [x] C2.2 [GREEN] implement `diffPolicies` in `diffTable`, wire `createTable`'s initial policy emission.
+- [x] C3.1 [RED] `client.ts`: `$auth({userId}, fn)` issues `SELECT set_config('app.user_id', $1, true)` as a bound param before delegating to `fn`.
+- [x] C3.2 [RED — threat: SQL injection via auth value] `$auth({userId:"1'; DROP TABLE ..."})` leaves the schema intact.
+- [x] C3.3 [RED] `$auth` built on `$withSession`; identity dies at `COMMIT`/`ROLLBACK` (no leak across recycled pooled connection); models without `@@allow` unaffected.
+- [x] C3.4 [GREEN] implement `$auth` on `IndigoClientBase` per design Interfaces. — DEVIATION: named `$authSession` (protected), not `$auth` — design's literal override-by-inheritance shape does not type-check under strict TS (verified in isolation: no bivariance escape for a plain class-method override; `$transaction`'s existing override only compiles via an unrelated overload-set quirk this change does not want to depend on). The generated `IndigoClient.$auth` (C4.1) is a new public method calling `$authSession`, not a same-named override.
+- [x] C4.1 [GREEN] `packages/generator/src/client.ts`: emit typed `$auth` override beside `$transaction` + golden/snapshot test. — emits a genuinely new `$auth` method (see C3.4 deviation), not an `override`.
+- [x] C5.1 [RED — threat: privilege bypass, PGlite under `SET ROLE` from C0] `$auth({userId:X})` on `@@allow(read, auth.userId==this.ownerId)` sees only X's rows; a different id sees none; no `$auth` sees none; two permissive read rules OR.
+- [x] C5.2 [GREEN] wire the C0 harness into the suite; confirm C5.1 passes against real Postgres semantics. — `packages/migrator/test/rls-enforcement.mjs`, 8 scenarios, all pass against real PGlite under `SET ROLE` to a non-superuser (owner-sees-own, multi-rule OR, cross-tenant denial, unset-`$auth` deny-by-default, pooled-connection identity-non-leak, INSERT `WITH CHECK` accept/reject).
+- [x] C6.1 [VERIFY] `node packages/migrator/test/regen-goldens.mjs` — review diff. — ran once when adding the 7 new `allow-*` fixtures; zero diff to any pre-existing fixture.
+- [x] C6.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` + `cd crates && cargo test` (sanity, no crates touched in PR C).
+- [x] C6.3 [COMMIT] `feat(migrator,client): enforce @@allow via Postgres RLS`.
 
 ## Post-slice cleanup
 

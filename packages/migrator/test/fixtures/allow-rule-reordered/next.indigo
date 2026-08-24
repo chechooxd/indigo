@@ -1,0 +1,7 @@
+Table Post {
+  id       Int     @id @default(autoincrement())
+  ownerId  Int
+  isPublic Boolean
+  @@allow(read, this.isPublic == true)
+  @@allow(read, auth.userId == this.ownerId)
+}

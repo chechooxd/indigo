@@ -54,6 +54,38 @@ export async function applyPlan(db, migrationSql) {
   return executed;
 }
 
+/**
+ * Creates (idempotently) a `NOLOGIN` non-superuser role and grants it full
+ * DML on every table currently in the `public` schema, then `SET ROLE`s the
+ * session to it. Used by the RLS enforcement suite (`rls-enforcement.mjs`,
+ * design decision #17, C0.1/C5.1) — PGlite's DEFAULT connecting role is a
+ * superuser, and **Postgres superusers bypass RLS even under `FORCE ROW
+ * LEVEL SECURITY`**, so any enforcement assertion made against the default
+ * role would pass while testing nothing. `SET ROLE` (verified live, C0.1)
+ * persists at the PGlite session level across every subsequent `exec`/
+ * `query` call on the SAME instance — there is no separate "connection" to
+ * lose it on, which is exactly what lets this harness model "the
+ * application's own DB connection runs as a restricted role" the way a
+ * real deployment would (the app never connects as the Postgres superuser).
+ *
+ * Grants (not just RLS policies) are required too: a role with no `SELECT`/
+ * `INSERT`/`UPDATE`/`DELETE` grant at all is rejected by Postgres before
+ * RLS is even consulted — RLS narrows an already-permitted operation, it
+ * does not itself grant one.
+ */
+export async function setUpAppRole(db, roleName = "indigo_app") {
+  await db.exec(`
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${roleName}') THEN
+    CREATE ROLE ${roleName} NOLOGIN;
+  END IF;
+END $$;`);
+  await db.exec(`GRANT ALL ON ALL TABLES IN SCHEMA public TO ${roleName};`);
+  await db.exec(`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${roleName};`);
+  await db.exec(`SET ROLE ${roleName};`);
+}
+
 /** Asserts `sql` executes against `db` without throwing. Rethrows with context on failure. */
 export async function assertApplies(db, sql) {
   try {

@@ -481,6 +481,20 @@ export function generateClient(schema: ResolvedSchema): string {
     "    }",
     "    return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));",
     "  }",
+    "",
+    // `$auth` (design.md Decision #16, mirrors `$transaction` above).
+    // Deliberately NOT declared with `override` and NOT overriding a
+    // same-named base member: `IndigoClientBase` exposes the protected
+    // `$authSession` (not `$auth`) for exactly this reason — a real
+    // override with a narrower callback parameter (`(tx: TransactionClient)
+    // => Promise<T>` instead of `(exec: Executor) => Promise<T>`) fails
+    // TypeScript's strict class-override compatibility check (verified: no
+    // bivariance escape for a plain method override). Calling the
+    // differently-named protected helper here means `$auth` is simply a
+    // new public method, so there is no override relationship to conflict.
+    "  $auth<T>(ctx: { userId: string | number }, fn: (tx: TransactionClient) => Promise<T>): Promise<T> {",
+    "    return this.$authSession(ctx, (exec) => fn(__delegates(exec, this.$realtime).tx));",
+    "  }",
   );
   out.push("}", "");
   out.push("export type { IndigoClientOptions, BatchPayload, AggregateResult, GroupByResult };", "");
