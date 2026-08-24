@@ -1,12 +1,14 @@
 # CI floor for IndigoDB.
 #
-# Three jobs, deliberately independent (no `needs:`) so one red job never hides
+# Four jobs, deliberately independent (no `needs:`) so one red job never hides
 # another:
 #
 #   ts          build + lint + test. Installs NO Rust toolchain, on purpose.
 #   rust        cargo test against the pinned toolchain.
 #   wasm-drift  rebuilds the committed WASM artifact. CI IS THE SOURCE OF TRUTH
 #               for its bytes — see below.
+#   postgres    real Postgres (`wal_level=logical`) for @@realtime's WAL
+#               logical-replication suites — see its own header below.
 #
 # Why the TS job must stay Rust-free: `packages/compiler/wasm/` is a committed
 # build artifact precisely so a TypeScript-only contributor never needs cargo or
@@ -207,3 +209,69 @@ jobs:
             echo "or investigate before merging."
           fi
           exit 1
+
+  # Real Postgres with `wal_level=logical` for @@realtime's WAL
+  # logical-replication suites — `packages/realtime`'s `parity`/`resume`
+  # (PR A) plus `packages/migrator`'s replication-DDL tests (PR B), all
+  # gated on `INDIGODB_TEST_DATABASE_URL` so they self-skip everywhere else
+  # (`ts` stays Postgres-free by construction, per that job's own comment).
+  #
+  # Deliberately a `docker run` STEP, not a `services:` container:
+  # `services.<id>.options` maps to `docker create` flags and cannot pass a
+  # container COMMAND, so `-c wal_level=logical` is unreachable from
+  # `services:` — Postgres would default to `wal_level=replica` and every
+  # gated suite would either fail or (correctly) self-skip on a preflight
+  # that never gets exercised. `docker run -d ... -c wal_level=logical`
+  # passes it directly as the container's command argument.
+  postgres:
+    name: PostgreSQL (wal_level=logical)
+    runs-on: ubuntu-latest
+    # No `needs:` — isolated from ts/rust/wasm-drift, mirroring the `rust`
+    # job. Default `permissions: contents: read` from the top of this file;
+    # this job never pushes.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Start Postgres 17 with wal_level=logical
+        run: |
+          docker run -d --name indigo-wal-ci \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=indigo_test \
+            -p 55432:5432 \
+            postgres:17 \
+            -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
+
+      - name: Wait for Postgres to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec indigo-wal-ci pg_isready -U postgres >/dev/null 2>&1; then
+              echo "Postgres is ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Postgres did not become ready within 30s."
+          docker logs indigo-wal-ci
+          exit 1
+
+      - name: Run real-Postgres realtime + migrator replication-DDL suites
+        env:
+          INDIGODB_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:55432/indigo_test
+        run: |
+          pnpm --filter @indigodb/realtime test
+          pnpm --filter @indigodb/migrator test
+
+      - name: Stop Postgres
+        if: always()
+        run: docker rm -f indigo-wal-ci
