@@ -23,9 +23,11 @@ import {
   quoteIdent,
   renderColumn,
   renderDefaultClause,
-  renderNotifyFunction,
-  renderCreateTrigger,
   renderDropTrigger,
+  renderDropLegacyNotify,
+  renderReplicationPreSql,
+  renderPublicationSql,
+  renderReplicaIdentity,
   enumMembers,
   indexName,
   renderIndexDdl,
@@ -366,7 +368,7 @@ function createTable(table: ResolvedTable, enums: ResolvedEnum[]): MigrationStat
   }
   const stmts = [safe(`CREATE TABLE ${quoteIdent(table.dbName)} (\n${lines.join(",\n")}\n);`)];
   stmts.push(...tableConstraintsNoFk(table));
-  if (table.realtime) stmts.push(safe(renderCreateTrigger(table)));
+  if (table.realtime) stmts.push(safe(renderReplicaIdentity(table)));
   // Row-Level Security (@@allow), brand-new table: no prior policies can
   // exist, so no DROP/prune is needed — just ENABLE+FORCE and one CREATE
   // POLICY per rule, same ordinal/name formula `renderRlsBlock` uses.
@@ -854,9 +856,13 @@ function diffTable(
     }
   }
 
-  // Realtime trigger toggled (@@realtime added or removed).
+  // Realtime toggled (@@realtime added or removed): REPLICA IDENTITY follows
+  // suit. Publication membership and legacy-trigger retirement are handled
+  // once, globally, in `computeStatements` (never per-table here) — the
+  // publication statement needs the FULL next-state table list, and legacy
+  // retirement runs whenever ANY table touches realtime, not just this one.
   if ((prev.realtime ?? false) !== (next.realtime ?? false)) {
-    stmts.push(safe(next.realtime ? renderCreateTrigger(next) : renderDropTrigger(next)));
+    stmts.push(safe(renderReplicaIdentity(next)));
   }
 
   // Row-Level Security policies (@@allow added/removed/changed). `prev` is
@@ -946,11 +952,47 @@ function computeStatements(
     }
   }
 
-  // Realtime notify function, before any trigger that references it. Emitted
-  // when realtime first appears; CREATE OR REPLACE makes re-emission harmless.
-  const prevHasRealtime = (prev?.tables ?? []).some((t) => t.realtime);
-  if (!prevHasRealtime && next.tables.some((t) => t.realtime)) {
-    push(stmts, [renderNotifyFunction()]);
+  // Realtime replication (@@realtime → WAL logical replication, design
+  // decisions 1-8). Every statement below is keyed off an ACTUAL change —
+  // never "any realtime table exists" — so `planMigration(introspected,
+  // next)` stays a true no-op when nothing changed (the introspection
+  // round-trip invariant `introspect.mjs` enforces). This still converges a
+  // notify-era database on its first post-upgrade migration WITHOUT needing
+  // an unconditional re-emit: shadow-replay reconstructs `prev` by replaying
+  // OLD (pre-this-PR) migration files, whose trigger-based DDL never created
+  // a publication — so `introspectResolvedSchema` (now publication-based,
+  // `introspect.ts`) reports `realtime: false` for such a table regardless
+  // of its actual on-disk trigger, making it look "newly realtime" the
+  // moment this migrator diffs it, which is exactly the condition that
+  // fires legacy retirement below.
+  //
+  // Slot lifecycle (pre-transaction) cares only about the 0↔1+ boundary.
+  // Publication membership and legacy retirement care about which TABLES
+  // moved, not just the boolean — adding a second `@@realtime` table to an
+  // already-realtime schema must still update `SET TABLE` and drop only
+  // the NEW table's legacy trigger, with no slot statement at all (the slot
+  // already exists). Publication membership is placed AFTER every table
+  // exists (3c, below) since `SET TABLE` names physical tables.
+  const prevRealtimeTables = (prev?.tables ?? []).filter((t) => t.realtime);
+  const nextRealtimeTables = next.tables.filter((t) => t.realtime);
+  const prevRealtimeNames = new Set(prevRealtimeTables.map((t) => t.dbName));
+  const nextRealtimeNames = new Set(nextRealtimeTables.map((t) => t.dbName));
+  const prevHasRealtime = prevRealtimeNames.size > 0;
+  const nextHasRealtime = nextRealtimeNames.size > 0;
+  const membershipChanged =
+    prevRealtimeNames.size !== nextRealtimeNames.size ||
+    [...nextRealtimeNames].some((n) => !prevRealtimeNames.has(n));
+  // Tables becoming realtime THIS diff (absent from `prevRealtimeNames`) —
+  // the only ones that can still be carrying a legacy v1 trigger no earlier
+  // migration would have dropped.
+  const newlyRealtimeTables = nextRealtimeTables.filter((t) => !prevRealtimeNames.has(t.dbName));
+
+  if (prevHasRealtime !== nextHasRealtime) {
+    push(stmts, renderReplicationPreSql(next), "pre-transaction");
+  }
+  if (membershipChanged) {
+    for (const t of newlyRealtimeTables) push(stmts, [renderDropTrigger(t)]);
+    if (newlyRealtimeTables.length > 0) push(stmts, [renderDropLegacyNotify()]);
   }
 
   // Match columns and compute every table's FK drops/adds/renames up front,
@@ -997,6 +1039,16 @@ function computeStatements(
 
   // 3c: add every new/redefined FK constraint, once every table exists.
   stmts.push(...fkAdds);
+
+  // Publication membership: declarative `SET TABLE <next realtime tables>`
+  // (or `DROP PUBLICATION IF EXISTS` when empty) — placed here, not in the
+  // realtime preamble above, because every `next.tables` member it could
+  // name must already physically exist (created in 3b), and none of them
+  // are among the tables about to be DROPped below (disjoint by
+  // construction — `tableMatch.dropped` never overlaps `next.tables`).
+  if (membershipChanged) {
+    push(stmts, renderPublicationSql(next));
+  }
 
   // Dropped tables (after alters so dependent FKs are handled by CASCADE).
   // Uses `tableMatch.dropped` (a consumed set from `matchTables`), never

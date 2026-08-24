@@ -109,6 +109,26 @@ async function defaultCreateShadow(): Promise<ShadowDb> {
 }
 
 /**
+ * PGlite (the default shadow engine) never accepts `wal_level = logical`
+ * (verified live) — `renderReplicationPreSql`'s `pg_create_logical_replication_slot`
+ * pre-transaction statement therefore ALWAYS fails to replay here, on every
+ * shadow rebuild that ever crossed the realtime 0<->1 transition. This is a
+ * SCOPED, DOCUMENTED PGlite limitation, the same posture as the shadow
+ * suite's existing plpgsql-availability note (`shadow.mjs` C.7): the slot's
+ * live replication side effect is irrelevant to what shadow replay actually
+ * reconstructs (table/column/index/FK/publication-membership state, all of
+ * which DOES replay — publication/REPLICA IDENTITY/legacy-trigger-retirement
+ * are ordinary transactional statements PGlite applies fine), so skipping
+ * ONLY this exact, narrowly-matched failure — never a blanket catch — keeps
+ * `migrate dev` usable against a schema history that includes `@@realtime`
+ * without masking any other pre-transaction statement's real failure.
+ */
+function isPgliteLogicalReplicationUnsupported(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /wal_level/i.test(message) && /logical/i.test(message);
+}
+
+/**
  * Applies one migration file's SQL against a `ShadowDb`, mirroring
  * `@indigodb/cli`'s `applyMigrationSql` and `pg-harness.mjs`'s `applyPlan`
  * EXACTLY: pre-transaction statements run first, each as its own call, then
@@ -118,7 +138,13 @@ async function defaultCreateShadow(): Promise<ShadowDb> {
  */
 async function replayOne(db: ShadowDb, sql: string): Promise<void> {
   const { preTransaction, transactional } = splitMigrationSql(sql);
-  for (const statement of preTransaction) await db.exec(statement);
+  for (const statement of preTransaction) {
+    try {
+      await db.exec(statement);
+    } catch (err) {
+      if (!isPgliteLogicalReplicationUnsupported(err)) throw err;
+    }
+  }
   if (transactional.trim().length > 0) {
     await db.exec(`BEGIN;\n${transactional}\nCOMMIT;`);
   }

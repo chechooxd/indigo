@@ -29,6 +29,7 @@ import type {
   ForeignKey,
   ResolvedIndex,
 } from "@indigodb/core";
+import { resolveSlotName } from "./postgres.js";
 
 /**
  * Satisfied by both `pg.Client#query` and `PGlite#query` — the introspection
@@ -270,13 +271,19 @@ JOIN pg_namespace n ON n.oid = t.typnamespace
 WHERE n.nspname = $1
 ORDER BY t.typname, e.enumsortorder;`;
 
-const TRIGGER_SQL = `
-SELECT trel.relname AS table_name, trg.tgname AS trigger_name
-FROM pg_trigger trg
-JOIN pg_class trel ON trel.oid = trg.tgrelid
-JOIN pg_namespace n ON n.oid = trel.relnamespace
-WHERE n.nspname = $1 AND trg.tgname LIKE 'indigo\\_rt\\_%' AND NOT trg.tgisinternal
-ORDER BY trel.relname, trg.tgname;`;
+/**
+ * Realtime detection now follows the WAL publication, not the retired v1
+ * NOTIFY trigger: `pg_publication_tables` lists every table currently a
+ * member of `$2` (the resolved slot/publication name, design decision 6/7),
+ * which `renderPublicationSql`'s declarative `SET TABLE` keeps in exact sync
+ * with `@@realtime`. A `$2` parameter, not string-interpolated, even though
+ * `resolveSlotName` already whitelists the name (defense in depth, same
+ * posture as every other introspection query here).
+ */
+const REALTIME_PUBLICATION_SQL = `
+SELECT tablename AS table_name
+FROM pg_publication_tables
+WHERE schemaname = $1 AND pubname = $2;`;
 
 // ─── Assembly ────────────────────────────────────────────────────────────────
 
@@ -297,14 +304,14 @@ export async function introspectResolvedSchema(
   const schema = options.schema ?? "public";
   const exclude = new Set(options.exclude ?? ["_indigo_migrations"]);
 
-  const [tablesRes, columnsRes, pkRes, fkRes, indexRes, enumRes, triggerRes] = await Promise.all([
+  const [tablesRes, columnsRes, pkRes, fkRes, indexRes, enumRes, publicationRes] = await Promise.all([
     query(TABLES_SQL, [schema]),
     query(COLUMNS_SQL, [schema]),
     query(PK_SQL, [schema]),
     query(FK_SQL, [schema]),
     query(INDEX_SQL, [schema]),
     query(ENUM_SQL, [schema]),
-    query(TRIGGER_SQL, [schema]),
+    query(REALTIME_PUBLICATION_SQL, [schema, resolveSlotName()]),
   ]);
 
   // ── Enums ──
@@ -448,11 +455,9 @@ export async function introspectResolvedSchema(
     table.indexes.push(index);
   }
 
-  // ── Realtime (indigo_rt_* triggers) ──
+  // ── Realtime (WAL publication membership) ──
   const realtimeTables = new Set(
-    (triggerRes.rows as { table_name: string; trigger_name: string }[])
-      .filter((r) => r.trigger_name === `indigo_rt_${r.table_name}`)
-      .map((r) => r.table_name),
+    (publicationRes.rows as { table_name: string }[]).map((r) => r.table_name),
   );
   for (const table of tables.values()) {
     if (realtimeTables.has(table.dbName)) table.realtime = true;

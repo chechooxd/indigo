@@ -40,12 +40,28 @@ export async function withDatabase(fn) {
  * for refusal fixtures without the assertion being satisfied by a silently
  * swallowed error.
  */
+/**
+ * PGlite never accepts `wal_level = logical` (verified live) — the ONE known,
+ * scoped exception to this harness's "count every executed statement"
+ * contract, mirroring `shadow.ts`'s identical, documented tolerance for the
+ * same PGlite limitation. Matched narrowly (never a blanket catch) so any
+ * OTHER pre-transaction statement failure still fails the fixture loudly.
+ */
+export function isPgliteLogicalReplicationUnsupported(err) {
+  const message = err instanceof Error ? err.message : String(err);
+  return /wal_level/i.test(message) && /logical/i.test(message);
+}
+
 export async function applyPlan(db, migrationSql) {
   const { preTransaction, transactional } = splitMigrationSql(migrationSql);
   let executed = 0;
   for (const statement of preTransaction) {
-    await db.exec(statement);
-    executed++;
+    try {
+      await db.exec(statement);
+      executed++;
+    } catch (err) {
+      if (!isPgliteLogicalReplicationUnsupported(err)) throw err;
+    }
   }
   if (transactional.trim().length > 0) {
     await db.exec(`BEGIN;\n${transactional}\nCOMMIT;`);

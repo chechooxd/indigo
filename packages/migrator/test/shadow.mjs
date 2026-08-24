@@ -281,16 +281,19 @@ await check("chain-replay-through-shadow: structurally equals renderPushSql(fina
 
 // ─── C.7: @@realtime chain replay under PGlite ───────────────────────────────
 //
-// Open question from the design: does PGlite 0.5.4's base build ship
-// plpgsql (needed for the `indigo_rt_*` NOTIFY trigger function)? If it
-// does, `realtime` must survive shadow replay via trigger-name detection
-// (`introspect.ts`'s `TRIGGER_SQL`). If it does NOT, this is a SCOPED,
-// EXPLICIT limitation — logged loudly, never silently skipped — matching
-// the design's documented fallback (realtime detection degrades gracefully;
-// migrate-runner's `saveSnapshot` path is unaffected either way since it
-// isn't involved in shadow replay).
+// Superseded by `realtime-wal-source` PR B: `realtime` detection moved from
+// the retired v1 NOTIFY trigger (`indigo_rt_*`, plpgsql-dependent) to WAL
+// publication membership (`pg_publication_tables`, `introspect.ts`) — plain
+// catalog metadata PGlite always supports, no plpgsql question left open.
+// The migration's PRE-TRANSACTION slot-creation statement still can't
+// replay under PGlite (it never accepts `wal_level = logical`) — `shadow.ts`
+// `replayOne` narrowly tolerates exactly that one failure
+// (`isPgliteLogicalReplicationUnsupported`) and continues, since the slot's
+// live replication side effect is irrelevant to what shadow replay
+// reconstructs; the transactional publication/REPLICA IDENTITY/legacy-
+// trigger-retirement statements apply normally.
 
-await check("@@realtime chain replay: plpgsql trigger survives shadow replay, or documented scoped fallback", async () => {
+await check("@@realtime chain replay: realtime flag survives shadow replay via WAL publication membership", async () => {
   const schema1 = resolve(parse(`Table Order {\n  id Int @id @default(autoincrement())\n}\n`));
   const schema2 = resolve(
     parse(`Table Order {\n  id Int @id @default(autoincrement())\n\n  @@realtime\n}\n`),
@@ -306,23 +309,13 @@ await check("@@realtime chain replay: plpgsql trigger survives shadow replay, or
     recordedChecksums: { "0001_init": "checksum-0001_init", "0002_realtime": "checksum-0002_realtime" },
   };
 
-  let shadowResult;
-  try {
-    shadowResult = await buildShadowSchema(source);
-  } catch (err) {
-    console.warn(
-      `  NOTE (scoped, documented limitation): PGlite's base build appears to lack plpgsql support — ` +
-        `@@realtime trigger replay failed during shadow replay: ${err.message}`,
-    );
-    return;
-  }
-
+  const shadowResult = await buildShadowSchema(source);
   const table = shadowResult.tables.find((t) => t.dbName === "Order");
   ok(table, "table Order must be introspected after the realtime chain replay");
   strictEqual(
     table.realtime,
     true,
-    "realtime flag must survive shadow replay via indigo_rt_* trigger detection — PGlite's plpgsql support is confirmed present",
+    "realtime flag must survive shadow replay via WAL publication membership detection",
   );
 });
 

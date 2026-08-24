@@ -247,64 +247,122 @@ function renderEnum(e: ResolvedEnum): string {
   ].join("\n");
 }
 
-// ─── Realtime (@@realtime → pg_notify triggers) ──────────────────────────────
+// ─── Realtime (@@realtime → WAL logical replication) ─────────────────────────
+//
+// v1 (`pg_notify` triggers, `REALTIME_CHANNEL`/`renderNotifyFunction`/
+// `renderCreateTrigger`) is retired — direct cutover, no dual-write path
+// (design decision: closed). `WalSource` (`@indigodb/realtime`) consumes a
+// logical-replication slot + publication instead; `triggerName`/
+// `renderDropTrigger` are kept ONLY to retire any pre-existing legacy
+// trigger object (`renderDropLegacyNotify` below), never to create one.
 
-/** NOTIFY channel every realtime trigger publishes to. */
-export const REALTIME_CHANNEL = "indigo_events";
+/** Default replication slot/publication name; overridden by `INDIGODB_REALTIME_SLOT`. */
+const DEFAULT_SLOT = "indigo_realtime";
+/** Postgres logical replication slot names accept only this alphabet. */
+const SLOT_NAME_PATTERN = /^[a-z0-9_]{1,63}$/;
 
-/** Stable trigger name for a realtime table (kept in sync with migrate.ts). */
+/**
+ * Resolves the replication slot/publication name shared by the migrator's DDL
+ * path (this file, `migrate.ts`), `@indigodb/cli`'s preflight, and
+ * `@indigodb/realtime`'s `WalSource` (design decision 6/7) — one name, one
+ * resolver, imported everywhere it's needed, so the slot created here and the
+ * slot `WalSource` connects to can never drift apart. Validated against a
+ * strict whitelist BEFORE any SQL is built or connection attempted — total,
+ * not a mitigation: Postgres itself accepts only this alphabet for a
+ * replication slot name, so an injection attempt (`x"; DROP TABLE "User`)
+ * fails construction here, never reaching a query.
+ */
+export function resolveSlotName(env: NodeJS.ProcessEnv = process.env): string {
+  const name = env.INDIGODB_REALTIME_SLOT?.trim() || DEFAULT_SLOT;
+  if (!SLOT_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid INDIGODB_REALTIME_SLOT "${name}": replication slot names must ` +
+        `match ${SLOT_NAME_PATTERN} (lowercase letters, digits, underscores, 1-63 chars)`,
+    );
+  }
+  return name;
+}
+
+/** Stable legacy trigger name for a table (kept only to retire it — never re-created). */
 export function triggerName(table: ResolvedTable): string {
   return `indigo_rt_${table.dbName}`;
 }
 
-/**
- * Generic row-change notify function shared by every `@@realtime` trigger.
- * PK columns arrive via TG_ARGV; payloads over NOTIFY's 8000-byte limit degrade
- * to a keyed notification (`partial: true`) so the client can refetch by PK.
- */
-export function renderNotifyFunction(): string {
-  return `CREATE OR REPLACE FUNCTION indigo_notify_trigger() RETURNS trigger AS $indigo$
-DECLARE
-  payload jsonb;
-  pk jsonb := '{}'::jsonb;
-  rec jsonb;
-  col text;
-BEGIN
-  rec := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
-  FOREACH col IN ARRAY TG_ARGV LOOP
-    pk := pk || jsonb_build_object(col, rec -> col);
-  END LOOP;
-  payload := jsonb_build_object(
-    'table', TG_TABLE_NAME,
-    'op',    TG_OP,
-    'pk',    pk,
-    'txid',  txid_current()::text,
-    'ts',    to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-    'new',   CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN to_jsonb(NEW) END,
-    'old',   CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN to_jsonb(OLD) END
-  );
-  IF octet_length(payload::text) > 7800 THEN
-    payload := (payload - 'new' - 'old') || jsonb_build_object('partial', true);
-  END IF;
-  PERFORM pg_notify('${REALTIME_CHANNEL}', payload::text);
-  RETURN NULL;
-END;
-$indigo$ LANGUAGE plpgsql;`;
-}
-
-/** DROP+CREATE trigger pair (idempotent without requiring PG14's OR REPLACE). */
-export function renderCreateTrigger(table: ResolvedTable): string {
-  const args = table.primaryKey.map((c) => `'${escapeLiteral(c)}'`).join(", ");
-  return [
-    renderDropTrigger(table),
-    `CREATE TRIGGER ${quoteIdent(triggerName(table))}`,
-    `  AFTER INSERT OR UPDATE OR DELETE ON ${quoteIdent(table.dbName)}`,
-    `  FOR EACH ROW EXECUTE FUNCTION indigo_notify_trigger(${args});`,
-  ].join("\n");
-}
-
+/** Drops a table's legacy v1 NOTIFY trigger, if any. Idempotent. */
 export function renderDropTrigger(table: ResolvedTable): string {
   return `DROP TRIGGER IF EXISTS ${quoteIdent(triggerName(table))} ON ${quoteIdent(table.dbName)};`;
+}
+
+/**
+ * Drops the legacy shared v1 NOTIFY function. `CASCADE` also drops any
+ * trigger still depending on it, so this is a safety net beyond the explicit
+ * per-table `renderDropTrigger` calls, not a replacement for them (which run
+ * first so the file's intent reads clearly statement-by-statement).
+ */
+export function renderDropLegacyNotify(): string {
+  return "DROP FUNCTION IF EXISTS indigo_notify_trigger() CASCADE;";
+}
+
+/**
+ * Pre-transaction slot lifecycle DDL (design decision 1/2). Postgres rejects
+ * `pg_create_logical_replication_slot` inside a transaction that has already
+ * performed writes, so this MUST run as its own statement, before the main
+ * script/migration transaction begins — never folded into `renderPushSql` or
+ * a `"transaction"`-phase migration statement.
+ *
+ * Idempotency is a guarded `SELECT`, NOT the repo's usual
+ * `DO $$ ... EXCEPTION WHEN duplicate_object` pattern (design decision 3):
+ * `pg_create_logical_replication_slot` raises `object_in_use` on a second
+ * call, not `duplicate_object`, and a guarded `SELECT` performs no write —
+ * which the pre-transaction constraint above depends on.
+ *
+ * Dropping fails loudly on an active slot (design decision 4): the guard
+ * checks only existence, never `AND NOT active`. A `WalSource` still
+ * consuming the slot makes the drop raise `replication slot "…" is active`
+ * instead of silently no-op-ing — silent skip is exactly how a slot orphans
+ * and retains WAL forever.
+ */
+export function renderReplicationPreSql(schema: ResolvedSchema): string[] {
+  const slot = escapeLiteral(resolveSlotName());
+  const hasRealtime = schema.tables.some((t) => t.realtime);
+  return hasRealtime
+    ? [
+        `SELECT pg_create_logical_replication_slot('${slot}', 'pgoutput') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '${slot}');`,
+      ]
+    : [
+        `SELECT pg_drop_replication_slot('${slot}') WHERE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '${slot}');`,
+      ];
+}
+
+/**
+ * Publication membership DDL (design decision 5), transactional (unlike the
+ * slot, `CREATE`/`ALTER PUBLICATION` carry no pre-transaction restriction).
+ * Declarative `SET TABLE <every @@realtime table>` so push and the versioned
+ * diff can never disagree on membership; `DROP PUBLICATION IF EXISTS` when
+ * the set is empty, since `SET TABLE` rejects an empty list.
+ */
+export function renderPublicationSql(schema: ResolvedSchema): string[] {
+  const pub = quoteIdent(resolveSlotName());
+  const realtimeTables = schema.tables.filter((t) => t.realtime);
+  if (realtimeTables.length === 0) {
+    return [`DROP PUBLICATION IF EXISTS ${pub};`];
+  }
+  const tableList = realtimeTables.map((t) => quoteIdent(t.dbName)).join(", ");
+  return [
+    `DO $$ BEGIN\n  CREATE PUBLICATION ${pub};\nEXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    `ALTER PUBLICATION ${pub} SET TABLE ${tableList};`,
+  ];
+}
+
+/**
+ * `REPLICA IDENTITY FULL` on every `@@realtime` table (design decision 8) —
+ * `DEFAULT` restored once a table stops being realtime. Mandatory, not
+ * optional: under the default replica identity, `pgoutput` sends only key
+ * columns in the old tuple, so `WalSource`'s `event.old` on UPDATE/DELETE
+ * would be a PK stub instead of matching `PgNotifySource`'s full row.
+ */
+export function renderReplicaIdentity(table: ResolvedTable): string {
+  return `ALTER TABLE ${quoteIdent(table.dbName)} REPLICA IDENTITY ${table.realtime ? "FULL" : "DEFAULT"};`;
 }
 
 // ─── Row-Level Security (@@allow → policies, design decisions 8/11/12/13) ────
@@ -563,13 +621,17 @@ export function renderPushSql(schema: ResolvedSchema): string {
     for (const fk of table.foreignKeys) blocks.push(renderForeignKey(table, fk));
   }
 
-  // 5. Realtime notify triggers. Unlike data DDL, push DOES drop triggers on
-  // tables that are no longer @@realtime — a trigger is regenerable metadata
-  // and leaving it firing would keep notifying dropped subscriptions.
-  if (schema.tables.some((t) => t.realtime)) blocks.push(renderNotifyFunction());
-  for (const table of schema.tables) {
-    blocks.push(table.realtime ? renderCreateTrigger(table) : renderDropTrigger(table));
-  }
+  // 5. Realtime (@@realtime → WAL logical replication). Publication
+  // membership and REPLICA IDENTITY are transactional; slot lifecycle is
+  // pre-transaction — `renderReplicationPreSql`, executed by the CLI
+  // BEFORE this script (design decision 2), never folded in here. Legacy
+  // v1 NOTIFY trigger/function objects are retired unconditionally so a
+  // notify-era database converges to the WAL-based DDL on its next push
+  // (direct cutover, no dual-write path).
+  blocks.push(...renderPublicationSql(schema));
+  for (const table of schema.tables) blocks.push(renderReplicaIdentity(table));
+  for (const table of schema.tables) blocks.push(renderDropTrigger(table));
+  blocks.push(renderDropLegacyNotify());
 
   // 6. Row-Level Security (@@allow → policies). `renderRlsBlock` itself
   // decides ENABLE+FORCE+policies / DISABLE+prune / nothing per table.

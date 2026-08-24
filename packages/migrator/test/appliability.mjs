@@ -25,7 +25,7 @@ import { deepStrictEqual } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { loadFixture } from "./lib.mjs";
-import { withDatabase, applyPlan, assertApplies, assertRejects } from "./pg-harness.mjs";
+import { withDatabase, applyPlan, assertApplies, assertRejects, isPgliteLogicalReplicationUnsupported } from "./pg-harness.mjs";
 import { planMigration, renderMigrationSql, renderPushSql, splitMigrationSql } from "../dist/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +66,11 @@ async function seedDatabase(db, prev) {
     try {
       await db.exec(stmt.sql);
     } catch (err) {
+      // Same scoped, documented PGlite limitation as `applyPlan`/`shadow.ts`:
+      // PGlite never accepts `wal_level = logical`, so a fixture seeding a
+      // `prev` schema that already carries `@@realtime` always fails this
+      // ONE statement — narrowly matched, never a blanket catch.
+      if (isPgliteLogicalReplicationUnsupported(err)) continue;
       throw new Error(`seeding prev failed on statement:\n${stmt.sql}\n${err.message}`);
     }
   }
