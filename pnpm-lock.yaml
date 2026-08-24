@@ -234,9 +234,6 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@indigodb/client':
-        specifier: workspace:*
-        version: link:../client
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -259,6 +256,9 @@ importers:
       '@indigodb/core':
         specifier: workspace:*
         version: link:../core
+      '@indigodb/migrator':
+        specifier: workspace:*
+        version: link:../migrator
       pg:
         specifier: ^8.13.0
         version: 8.22.0

@@ -13,17 +13,26 @@
  * assert nothing), then drives real `@indigodb/client` `$auth` calls
  * through that restricted role and asserts on the ROWS actually returned.
  *
- * `@indigodb/client` is a devDependency-only edge (not a runtime
- * dependency of `@indigodb/migrator`) — it exists solely so this
- * integration-level proof can exercise the real `$auth` API against real
- * RLS DDL in one place, rather than re-deriving `set_config` by hand here
- * (which would prove nothing about the shipped `$auth` implementation).
+ * `@indigodb/client` is imported by RELATIVE PATH to its built `dist/`,
+ * deliberately NOT a declared `package.json` dependency of
+ * `@indigodb/migrator` (`realtime-wal-source` PR B): `@indigodb/realtime`
+ * now depends on `@indigodb/migrator` (the shared `resolveSlotName`), and
+ * `@indigodb/client` depends on `@indigodb/realtime` (its realtime event
+ * types) — a `migrator -> client` package.json edge would close a
+ * `client -> realtime -> migrator -> client` cycle Turborepo's build graph
+ * genuinely cannot order. This file exists solely so this integration-level
+ * proof can exercise the real `$auth` API against real RLS DDL in one
+ * place, rather than re-deriving `set_config` by hand here (which would
+ * prove nothing about the shipped `$auth` implementation) — the relative
+ * import keeps that value without adding a graph edge. `pnpm build`
+ * (this suite's own `test` task depends on `build`, not `^build`) already
+ * guarantees every workspace package's `dist/` is up to date before any
+ * package's tests run.
  */
 
 import { deepStrictEqual, ok } from "node:assert";
 import { parse, resolve } from "@indigodb/core";
-import { IndigoClientBase } from "@indigodb/client";
-import { createPGliteAdapter } from "@indigodb/client";
+import { IndigoClientBase, createPGliteAdapter } from "../../client/dist/index.js";
 import { renderPushSql } from "../dist/index.js";
 import { withDatabase, setUpAppRole } from "./pg-harness.mjs";
 

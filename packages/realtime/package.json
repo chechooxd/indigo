@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@indigodb/core": "workspace:*",
+    "@indigodb/migrator": "workspace:*",
     "pg": "^8.13.0",
     "pg-logical-replication": "2.5.0"
   },

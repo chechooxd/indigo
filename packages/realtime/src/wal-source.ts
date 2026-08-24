@@ -53,31 +53,14 @@ import {
 type Message = Pgoutput.Message;
 type MessageRelation = Pgoutput.MessageRelation;
 import type { ResolvedSchema } from "@indigodb/core";
+import { resolveSlotName } from "@indigodb/migrator";
 import type { RealtimeEvent, RealtimeOp, RealtimeSource } from "./protocol.js";
 
-/** Default replication slot/publication name; overridden by `INDIGODB_REALTIME_SLOT`. */
-const DEFAULT_SLOT = "indigo_realtime";
-/** Postgres logical replication slot names accept only this alphabet. */
-const SLOT_NAME_PATTERN = /^[a-z0-9_]{1,63}$/;
-
-/**
- * Resolves the replication slot name the same way `@indigodb/migrator`'s DDL
- * path will (design decision 6/7): fixed default, `INDIGODB_REALTIME_SLOT`
- * override, validated before any connection is attempted. PR A owns a local
- * copy — PR B introduces the canonical `resolveSlotName` export in
- * `@indigodb/migrator`; this stays byte-identical to it by construction so
- * PR B can replace this call with an import without behaviour change.
- */
-export function resolveSlotName(env: NodeJS.ProcessEnv = process.env): string {
-  const name = env.INDIGODB_REALTIME_SLOT?.trim() || DEFAULT_SLOT;
-  if (!SLOT_NAME_PATTERN.test(name)) {
-    throw new Error(
-      `Invalid INDIGODB_REALTIME_SLOT "${name}": replication slot names must ` +
-        `match ${SLOT_NAME_PATTERN} (lowercase letters, digits, underscores, 1-63 chars)`,
-    );
-  }
-  return name;
-}
+// `resolveSlotName` is re-exported for `@indigodb/realtime` consumers (and
+// this module's own default below) — canonical implementation now lives in
+// `@indigodb/migrator`'s `postgres.ts` (design decision 6/7: one resolver
+// shared by migrator/CLI/realtime, closing PR A's self-contained local copy).
+export { resolveSlotName };
 
 interface TableNames {
   /** Model name for the wire. */

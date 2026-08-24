@@ -34,7 +34,6 @@
     "@indigodb/core": "workspace:*"
   },
   "devDependencies": {
-    "@indigodb/client": "workspace:*",
     "typescript": "^5.8.0"
   }
 }
