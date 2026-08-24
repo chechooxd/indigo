@@ -13,7 +13,7 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { Command } from "commander";
 import pg from "pg";
 import { generateClient } from "@indigodb/generator";
-import { renderPushSql, introspectResolvedSchema } from "@indigodb/migrator";
+import { renderPushSql, renderReplicationPreSql, introspectResolvedSchema } from "@indigodb/migrator";
 import {
   loadEnv,
   loadSchema,
@@ -21,6 +21,7 @@ import {
   resolveBareConnectionString,
   resolveOutputPath,
   writePulledSchema,
+  assertLogicalReplication,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -89,9 +90,18 @@ db
   .action(async (options: { schema: string; print?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
+    const hasRealtime = resolved.tables.some((t) => t.realtime);
+    // Two-phase: the pre-transaction slot block runs BEFORE the main script
+    // (design decision 2) — Postgres refuses to create a replication slot
+    // inside a transaction that already performed writes, and `db push`
+    // sends `sql` as one implicit transaction.
+    const preSql = hasRealtime ? renderReplicationPreSql(resolved) : [];
     const sql = renderPushSql(resolved);
 
     if (options.print) {
+      // `--print` stays a faithful transcript of what would execute: the
+      // slot block first, then the main script — never folded together.
+      for (const stmt of preSql) console.log(stmt + "\n");
       console.log(sql);
       return;
     }
@@ -100,6 +110,8 @@ db
     const client = new pg.Client({ connectionString });
     try {
       await client.connect();
+      if (hasRealtime) await assertLogicalReplication(client);
+      for (const stmt of preSql) await client.query(stmt);
       await client.query(sql);
       console.log("✅ Database synced.");
       console.log(`   ${resolved.tables.length} tables, ${resolved.enums.length} enums.`);
@@ -171,7 +183,17 @@ migrate
   .action(async (options: { schema: string; force?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
-    await migrateDeploy(resolveConnectionString(resolved), { force: options.force });
+    const connectionString = resolveConnectionString(resolved);
+    if (resolved.tables.some((t) => t.realtime)) {
+      const client = new pg.Client({ connectionString });
+      try {
+        await client.connect();
+        await assertLogicalReplication(client);
+      } finally {
+        await client.end();
+      }
+    }
+    await migrateDeploy(connectionString, { force: options.force });
   });
 migrate
   .command("status")

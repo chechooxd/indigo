@@ -7,6 +7,14 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { parse, resolve, IndigoParseError, validate, printSchema } from "@indigodb/core";
 import type { Schema, ResolvedSchema } from "@indigodb/core";
 
+/**
+ * Minimal query surface `assertLogicalReplication` needs — satisfied by
+ * `pg.Client`, so callers never construct a bespoke shape.
+ */
+export interface ReplicationPreflightClient {
+  query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;
+}
+
 /** Minimal `.env` loader (no dependency). Does not override existing env vars. */
 export function loadEnv(cwd = process.cwd()): void {
   const envPath = resolvePath(cwd, ".env");
@@ -110,6 +118,46 @@ export function resolveBareConnectionString(options: { url?: string }): string {
   if (fromEnv) return fromEnv;
   console.error(`❌ No connection string. Pass --url or set DATABASE_URL.`);
   process.exit(1);
+}
+
+/**
+ * Preflight for `db push`/`migrate deploy` against a schema carrying at
+ * least one `@@realtime` table — checked ONLY then, and BEFORE any
+ * replication DDL is attempted (design's "Interfaces" section). Two checks,
+ * both read-only (`SHOW`, `pg_roles` — never `ALTER SYSTEM`/`ALTER ROLE`,
+ * threat matrix "privilege escalation via preflight"):
+ *
+ * 1. `wal_level = logical` — `pg_create_logical_replication_slot` refuses
+ *    otherwise. Failure names the exact remediation (`ALTER SYSTEM SET
+ *    wal_level = logical` + restart) and that IndigoDB cannot do it itself.
+ * 2. The connecting role carries `REPLICATION` (or is a superuser, which
+ *    implies it) — failure names the exact `ALTER ROLE ... REPLICATION`
+ *    remediation.
+ *
+ * Exits the process (like `loadSchema`/`resolveConnectionString`) rather
+ * than throwing: nothing is applied when either check fails.
+ */
+export async function assertLogicalReplication(client: ReplicationPreflightClient): Promise<void> {
+  const walLevelResult = await client.query("SHOW wal_level;");
+  const walLevel = (walLevelResult.rows[0] as { wal_level?: string } | undefined)?.wal_level;
+  if (walLevel !== "logical") {
+    console.error(`❌ Postgres is not configured for logical replication (wal_level = "${walLevel}").`);
+    console.error(`   @@realtime needs \`wal_level = logical\`. IndigoDB cannot set this for you — run:`);
+    console.error(`     ALTER SYSTEM SET wal_level = logical;`);
+    console.error(`   then RESTART Postgres, and re-run this command. Nothing was applied.`);
+    process.exit(1);
+  }
+
+  const roleResult = await client.query(
+    "SELECT rolsuper OR rolreplication AS ok, current_user AS name FROM pg_roles WHERE rolname = current_user;",
+  );
+  const row = roleResult.rows[0] as { ok?: boolean; name?: string } | undefined;
+  if (!row?.ok) {
+    console.error(`❌ The connecting role${row?.name ? ` "${row.name}"` : ""} lacks the REPLICATION privilege @@realtime needs. Run:`);
+    console.error(`     ALTER ROLE ${row?.name ?? "<user>"} REPLICATION;`);
+    console.error(`   then re-run this command. Nothing was applied.`);
+    process.exit(1);
+  }
 }
 
 /** Determines the client output path (generator block > flag > default). */
