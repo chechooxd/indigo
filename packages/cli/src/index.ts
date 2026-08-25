@@ -27,7 +27,7 @@ import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
 import { migrateDev, migrateDeploy, migrateStatus, migrateResolve } from "./migrate-runner.js";
 import { createServer } from "node:http";
-import { RealtimeEngine, REALTIME_PATH } from "@indigodb/realtime";
+import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
 
 const program = new Command();
 
@@ -230,6 +230,18 @@ program
   .option("-p, --port <port>", "Port", "4477")
   .action(async (options: { schema: string; port: string }) => {
     loadEnv();
+    // Startup preflight (PR A): the daemon now serves the signed-handle log
+    // endpoint (REALTIME_LOG_PATH). An unset secret means every handle
+    // minted or verified against it is unusable/insecure — fail loudly and
+    // immediately rather than silently start a daemon that can never
+    // authenticate a request to that endpoint.
+    if (!process.env.INDIGODB_REALTIME_SECRET) {
+      console.error(
+        `❌ INDIGODB_REALTIME_SECRET is not set. The realtime daemon serves ` +
+          `${REALTIME_LOG_PATH}, which requires it to mint/verify handles. Set it and retry.`,
+      );
+      process.exit(1);
+    }
     const { resolved } = loadSchema(options.schema);
     if (!resolved.tables.some((t) => t.realtime)) {
       console.error("❌ No @@realtime tables in the schema. Mark a Table with @@realtime first.");
@@ -243,6 +255,10 @@ program
       const url = new URL(req.url ?? "/", `http://localhost:${port}`);
       if (url.pathname === REALTIME_PATH) {
         engine.handleRequest(req, res);
+        return;
+      }
+      if (url.pathname === REALTIME_LOG_PATH) {
+        void engine.handleLogRequest(req, res);
         return;
       }
       res.writeHead(404, { "content-type": "application/json" });

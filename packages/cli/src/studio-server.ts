@@ -19,7 +19,7 @@ import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import pg from "pg";
 import type { ResolvedSchema } from "@indigodb/core";
-import { RealtimeEngine, REALTIME_PATH } from "@indigodb/realtime";
+import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
 
 export interface StudioOptions {
   resolved: ResolvedSchema;
@@ -329,6 +329,11 @@ export async function startStudio(
 
       if (path === REALTIME_PATH && engine) {
         engine.handleRequest(req, res);
+        return;
+      }
+
+      if (path === REALTIME_LOG_PATH && engine) {
+        await engine.handleLogRequest(req, res);
         return;
       }
 
