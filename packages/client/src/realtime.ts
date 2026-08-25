@@ -19,6 +19,14 @@ export type Unsubscribe = () => void;
 
 export interface TransportHandlers {
   onEvent: (event: RealtimeEvent) => void;
+  /**
+   * Data-free wake-up frame for `@@allow`-protected models
+   * (`realtime-live-endpoint` delta, `client-live-queries` spec). Optional —
+   * every pre-existing `TransportHandlers` consumer is unaffected; only
+   * `.live()` (via `RealtimeConnectionManager`'s `ChannelListener`) actually
+   * supplies it. `change` frames stay byte-identical either way.
+   */
+  onWake?: () => void;
   /** Fired on every successful (re)connect, with `true` after the first. */
   onOpen: (reconnected: boolean) => void;
   onError: (error: Error) => void;
@@ -108,7 +116,25 @@ export class SseTransport implements RealtimeTransport {
       if (line.startsWith("event:")) event = line.slice(6).trim();
       else if (line.startsWith("data:")) data.push(line.slice(5).trim());
     }
-    if (event !== "change" || data.length === 0) return;
+    if (data.length === 0) return;
+
+    if (event === "wake") {
+      // Data-free wake-up frame (`realtime-live-endpoint` delta): the
+      // frame's JSON body (`{table, op, lsn}`) is parsed only to validate
+      // it, never inspected — `.live()` treats ANY wake as the same
+      // "refetch" trigger (design decision 8), so no field is read out of
+      // it here. A malformed JSON body is skipped, not thrown, same as a
+      // malformed `change` frame below.
+      try {
+        JSON.parse(data.join("\n"));
+      } catch {
+        return;
+      }
+      handlers.onWake?.();
+      return;
+    }
+
+    if (event !== "change") return; // unknown event name — silently dropped
     try {
       handlers.onEvent(JSON.parse(data.join("\n")) as RealtimeEvent);
     } catch {
@@ -124,8 +150,11 @@ interface TableChannel {
   listeners: Set<ChannelListener>;
 }
 
-interface ChannelListener {
+export interface ChannelListener {
   onEvent: (event: RealtimeEvent) => void;
+  /** Data-free wake-up trigger — see `TransportHandlers.onWake`'s doc
+   * comment. Optional; `.subscribe()` never supplies it. */
+  onWake?: () => void;
   onResync?: () => void;
   onError?: (error: Error) => void;
 }
@@ -146,6 +175,9 @@ export class RealtimeConnectionManager {
       const close = this.transport.connect([table], {
         onEvent: (event) => {
           for (const l of listeners) l.onEvent(event);
+        },
+        onWake: () => {
+          for (const l of listeners) l.onWake?.();
         },
         onOpen: (reconnected) => {
           if (!reconnected) return;
