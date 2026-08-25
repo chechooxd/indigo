@@ -10,14 +10,18 @@
  */
 
 export { RealtimeEngine } from "./engine.js";
-export type { RealtimeEngineOptions } from "./engine.js";
+export type { RealtimeEngineOptions, RealtimeLogDb, RealtimeLogQueryResult } from "./engine.js";
 export { PgNotifySource } from "./source.js";
 export { WalSource, resolveSlotName } from "./wal-source.js";
 export type { WalSourceOptions } from "./wal-source.js";
-export { REALTIME_PATH } from "./protocol.js";
+export { REALTIME_PATH, REALTIME_LOG_PATH, REALTIME_LOG_PAGE_SIZE } from "./protocol.js";
 export type {
   RealtimeEvent,
   RealtimeOp,
   RealtimeReady,
   RealtimeSource,
+  RealtimeWakeEvent,
+  RealtimeLogPage,
 } from "./protocol.js";
+export { mintHandle, verifyHandle, DEFAULT_HANDLE_TTL_SECONDS } from "./handle.js";
+export type { HandlePayload } from "./handle.js";

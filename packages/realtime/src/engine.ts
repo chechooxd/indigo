@@ -16,10 +16,12 @@
  */
 
 import type { IncomingMessage, ServerResponse, Server } from "node:http";
+import pg from "pg";
 import type { ResolvedSchema } from "@indigodb/core";
-import type { RealtimeEvent, RealtimeReady } from "./protocol.js";
-import { REALTIME_PATH, type RealtimeSource } from "./protocol.js";
+import type { RealtimeEvent, RealtimeReady, RealtimeLogPage, RealtimeOp } from "./protocol.js";
+import { REALTIME_PATH, REALTIME_LOG_PATH, REALTIME_LOG_PAGE_SIZE, type RealtimeSource } from "./protocol.js";
 import { WalSource } from "./wal-source.js";
+import { verifyHandle } from "./handle.js";
 
 export interface RealtimeEngineOptions {
   connectionString: string;
@@ -30,6 +32,59 @@ export interface RealtimeEngineOptions {
   heartbeatMs?: number;
   /** Called with source errors (connection loss etc.). Default: console.error. */
   onError?: (error: Error) => void;
+  /**
+   * Read-only DB port backing `GET ?handle&offset` (`handleLogRequest`).
+   * Defaults to a lazily-created `pg.Pool` (small `max`) bound to
+   * `connectionString` — created only the first time the log route is hit,
+   * never at construction. Injectable for tests.
+   */
+  logDb?: RealtimeLogDb;
+}
+
+/** Minimal query result shape `RealtimeLogDb.readOnly`'s `query` resolves to. */
+export interface RealtimeLogQueryResult {
+  rows: Array<Record<string, unknown>>;
+}
+
+/**
+ * Narrow DB port `handleLogRequest` depends on. Deliberately NOT
+ * `StudioDb`'s shape (`studio-server.ts`'s `query(sql)`, no bind
+ * parameters) — `offset`, table name and the identity claim are all
+ * attacker-influenced values that MUST be bound parameters, never
+ * string-concatenated into SQL (design decision 5).
+ */
+export interface RealtimeLogDb {
+  /**
+   * Runs `fn` inside one `BEGIN; SET TRANSACTION READ ONLY; ...; ROLLBACK`
+   * transaction (mirrors `StudioDb.readOnly`'s shape). The `set_config`
+   * call and the log `SELECT` MUST run inside the SAME transaction here —
+   * `set_config(..., true)` is transaction-local, so binding it on a
+   * different connection/transaction from the `SELECT` would silently fail
+   * to scope RLS.
+   */
+  readOnly<T>(
+    fn: (query: (sql: string, params: unknown[]) => Promise<RealtimeLogQueryResult>) => Promise<T>,
+  ): Promise<T>;
+}
+
+/** Byte-identical across every failure cause — no distinguishing detail. */
+const OPAQUE_401_BODY = JSON.stringify({ error: "Unauthorized" });
+
+function sendOpaque401(res: ServerResponse): void {
+  res.writeHead(401, { "content-type": "application/json" });
+  res.end(OPAQUE_401_BODY);
+}
+
+interface RealtimeLogRow {
+  id: string;
+  lsn: string | null;
+  txid: string | null;
+  table_name: string;
+  op: RealtimeOp;
+  pk: Record<string, unknown>;
+  new: Record<string, unknown> | null;
+  old: Record<string, unknown> | null;
+  ts: string;
 }
 
 interface Subscriber {
@@ -41,6 +96,7 @@ interface Subscriber {
 
 export class RealtimeEngine {
   private readonly source: RealtimeSource;
+  private readonly connectionString: string;
   private readonly heartbeatMs: number;
   private readonly onError: (error: Error) => void;
   private readonly realtimeModels: Set<string>;
@@ -49,15 +105,24 @@ export class RealtimeEngine {
   private heartbeat: NodeJS.Timeout | null = null;
   private started = false;
 
+  private readonly injectedLogDb: RealtimeLogDb | null;
+  /** Lazily created default `RealtimeLogDb` — never opened unless the log
+   * route is actually hit (design: "small `max`, lazily created only when
+   * the log route is first hit"). */
+  private ownedLogPool: pg.Pool | null = null;
+  private ownedLogDb: RealtimeLogDb | null = null;
+
   constructor(options: RealtimeEngineOptions) {
     this.source =
       options.source ??
       new WalSource(options.connectionString, options.schema);
+    this.connectionString = options.connectionString;
     this.heartbeatMs = options.heartbeatMs ?? 25_000;
     this.onError = options.onError ?? ((err) => console.error("[indigodb realtime]", err.message));
     this.realtimeModels = new Set(
       options.schema.tables.filter((t) => t.realtime).map((t) => t.name),
     );
+    this.injectedLogDb = options.logDb ?? null;
   }
 
   /** Model names served by this engine. */
@@ -77,13 +142,19 @@ export class RealtimeEngine {
   }
 
   async stop(): Promise<void> {
-    if (!this.started) return;
-    this.started = false;
-    if (this.heartbeat) clearInterval(this.heartbeat);
-    this.heartbeat = null;
-    for (const sub of this.subscribers) sub.res.end();
-    this.subscribers.clear();
-    await this.source.stop();
+    if (this.started) {
+      this.started = false;
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.heartbeat = null;
+      for (const sub of this.subscribers) sub.res.end();
+      this.subscribers.clear();
+      await this.source.stop();
+    }
+    if (this.ownedLogPool) {
+      await this.ownedLogPool.end();
+      this.ownedLogPool = null;
+      this.ownedLogDb = null;
+    }
   }
 
   /** In-process listener over every change event. Returns an unsubscribe. */
@@ -132,14 +203,156 @@ export class RealtimeEngine {
   }
 
   /**
-   * Mounts `handleRequest` on a bare `node:http` server at `path`. Requests
-   * outside `path` are left to the server's other listeners.
+   * Mounts `handleRequest` (SSE) AND `handleLogRequest` (the cacheable
+   * `GET ?handle&offset` page) on a bare `node:http` server. Requests
+   * outside both paths are left to the server's other listeners. NOTE: the
+   * standalone `indigodb realtime` daemon and the embedded studio server do
+   * NOT call `attach()` — both route manually (design decision 4) — so this
+   * is `attach()`'s own internal dispatch, for any OTHER host that does use
+   * it, not a substitute for those two hosts' explicit branches.
    */
-  attach(server: Server, path: string = REALTIME_PATH): void {
+  attach(server: Server, path: string = REALTIME_PATH, logPath: string = REALTIME_LOG_PATH): void {
     server.on("request", (req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
-      if (url.pathname === path) this.handleRequest(req, res);
+      if (url.pathname === path) {
+        this.handleRequest(req, res);
+        return;
+      }
+      if (url.pathname === logPath) {
+        void this.handleLogRequest(req, res);
+      }
     });
+  }
+
+  /** Lazily creates the default `pg.Pool`-backed `RealtimeLogDb`, or returns the injected one. */
+  private getLogDb(): RealtimeLogDb {
+    if (this.injectedLogDb) return this.injectedLogDb;
+    if (this.ownedLogDb) return this.ownedLogDb;
+
+    const pool = new pg.Pool({ connectionString: this.connectionString, max: 4 });
+    this.ownedLogPool = pool;
+    this.ownedLogDb = {
+      async readOnly(fn) {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query("SET TRANSACTION READ ONLY");
+          return await fn(async (sql, params) => {
+            const result = await client.query(sql, params);
+            return { rows: result.rows };
+          });
+        } finally {
+          // Always ROLLBACK, never COMMIT — this path only ever reads.
+          await client.query("ROLLBACK").catch(() => {});
+          client.release();
+        }
+      },
+    };
+    return this.ownedLogDb;
+  }
+
+  /**
+   * Serves one page of `_indigo_realtime_log` for a verified handle:
+   * `GET ?handle&offset` → `{events, offset, hasMore}`.
+   *
+   * Failure ordering: method guard (405) → handle verification (opaque
+   * 401, uniform across tampered payload / tampered signature / unknown
+   * version / expired / missing secret / missing-or-malformed handle) →
+   * stale-table check (404 — the caller already proved it signed that
+   * table name, design decision 10) → offset validation (400) → the
+   * read-only query.
+   */
+  async handleLogRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Method not allowed" }));
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const handleParam = url.searchParams.get("handle");
+
+    // Uniform opaque 401 (design decision 9): a request that reached this
+    // point with an unset secret is indistinguishable from every other
+    // verification failure — no distinct status/body for "server
+    // misconfigured" vs. "handle invalid".
+    const secret = process.env.INDIGODB_REALTIME_SECRET;
+    const verified = secret && handleParam ? verifyHandle(handleParam, secret) : null;
+    if (!verified) {
+      sendOpaque401(res);
+      return;
+    }
+
+    if (!this.realtimeModels.has(verified.table)) {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: `Not a realtime table: ${verified.table}` }));
+      return;
+    }
+
+    // Absent offset ≡ "0". `/^\d{1,19}$/` rejects negative numbers,
+    // scientific notation, SQL-injection-shaped strings and >19-digit
+    // overflow BEFORE any SQL is built — bigserial exceeds
+    // Number.MAX_SAFE_INTEGER, so this stays a string, never a JS number.
+    const offsetParam = url.searchParams.get("offset") ?? "0";
+    if (!/^\d{1,19}$/.test(offsetParam)) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid offset" }));
+      return;
+    }
+
+    let rows: RealtimeLogRow[];
+    try {
+      rows = (await this.getLogDb().readOnly(async (query) => {
+        // `set_config(..., true)` is transaction-local — this MUST run on
+        // the same connection/transaction as the SELECT below, or RLS
+        // scoping silently no-ops.
+        await query("SELECT set_config('app.user_id', $1, true)", [verified.userId]);
+        const result = await query(
+          `SELECT id::text AS id, lsn::text AS lsn, txid, table_name, op, pk, "new", "old", ts::text AS ts` +
+            ` FROM "_indigo_realtime_log"` +
+            ` WHERE table_name = $1 AND id > $2::bigint` +
+            // LIMIT is the module constant, never client input (amplification threat).
+            ` ORDER BY id LIMIT ${REALTIME_LOG_PAGE_SIZE}`,
+          [verified.table, offsetParam],
+        );
+        return result.rows;
+      })) as unknown as RealtimeLogRow[];
+    } catch {
+      // Never surface DB error text upstream — defense in depth for the
+      // secret-handling threat and general error-oracle hygiene.
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal error" }));
+      return;
+    }
+
+    // Log rows are already schema-named (`wal-source.ts`) — no
+    // physical→schema translation, straight mapping (design decision 11).
+    const events: RealtimeEvent[] = rows.map((row) => ({
+      table: row.table_name,
+      op: row.op,
+      pk: row.pk,
+      new: row.new ?? undefined,
+      old: row.old ?? undefined,
+      txid: row.txid ?? undefined,
+      lsn: row.lsn ?? undefined,
+      ts: row.ts,
+    }));
+
+    // ONE predicate drives both `hasMore` and the cache header — never two
+    // independently-computed checks that could disagree (design decision
+    // 8). A short/empty page (including zero rows) is head-of-log and MUST
+    // stay `no-store`; only a page that filled the fixed limit is sealed
+    // and immutable.
+    const sealed = events.length === REALTIME_LOG_PAGE_SIZE;
+    const nextOffset = rows.length > 0 ? rows[rows.length - 1].id : offsetParam;
+
+    const page: RealtimeLogPage = { events, offset: nextOffset, hasMore: sealed };
+
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "cache-control": sealed ? "public, max-age=31536000, immutable" : "no-store",
+    });
+    res.end(JSON.stringify(page));
   }
 
   private dispatch(event: RealtimeEvent): void {
