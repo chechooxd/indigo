@@ -12,10 +12,22 @@ export { IndigoDatabaseError, withDatabaseErrors } from "./errors.js";
 export type { DatabaseErrorCode } from "./errors.js";
 export { ModelDelegate, IndigoRelationError, IndigoNestedWriteError } from "./delegate.js";
 export type { SiblingRegistry, RunAtomic, NestedWriteErrorCode } from "./delegate.js";
-export { RealtimeModelDelegate } from "./realtime-delegate.js";
+export { RealtimeModelDelegate, LiveModelDelegate } from "./realtime-delegate.js";
 export type { SubscribeHandlers } from "./realtime-delegate.js";
 export { RealtimeConnectionManager, SseTransport } from "./realtime.js";
-export type { RealtimeTransport, TransportHandlers, Unsubscribe } from "./realtime.js";
+export type { RealtimeTransport, TransportHandlers, Unsubscribe, ChannelListener } from "./realtime.js";
+export { decodeHandlePayload, IndigoLiveHandleError, LIVE_DEBOUNCE_MS } from "./live.js";
+export type {
+  LiveQuery,
+  LiveStatus,
+  LiveHandlers,
+  HandlePayload,
+  HandleFailureReason,
+  HandleInfo,
+  GetHandleFn,
+  RunScoped,
+  ClientRunScoped,
+} from "./live.js";
 export type { RealtimeEvent, RealtimeOp } from "@indigodb/realtime";
 export { currentQueryContext } from "./context.js";
 export { IndigoPromise, isIndigoPromise, defer, runDeferred, IndigoTransactionError } from "./promise.js";

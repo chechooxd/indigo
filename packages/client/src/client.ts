@@ -12,6 +12,7 @@ import type { DriverAdapter, Executor, QueryExtension, TransactionHook } from ".
 import { RealtimeConnectionManager, SseTransport } from "./realtime.js";
 import { createPgAdapter } from "./adapters/pg.js";
 import { IndigoTransactionError } from "./promise.js";
+import { decodeHandlePayload, IndigoLiveHandleError, type HandleInfo } from "./live.js";
 
 export interface RealtimeOptions {
   /**
@@ -19,7 +20,24 @@ export interface RealtimeOptions {
    * engine). Defaults to `process.env.INDIGO_REALTIME_URL`.
    */
   url?: string;
+  /**
+   * App-supplied handle provisioning callback for `.live()` queries
+   * (`client-live-queries` spec, `realtime-live-endpoint` delta's "Handle
+   * provisioning ... pinned to an app-supplied `getHandle` callback"
+   * requirement). The app mints the handle itself, server-side, via
+   * `@indigodb/realtime`'s `mintHandle` after its own authentication.
+   * IndigoDB never exposes an HTTP route that mints a handle on the app's
+   * behalf.
+   */
+  getHandle?: (table: string) => Promise<string>;
 }
+
+/** Safety margin the handle cache re-mints AHEAD of actual expiry (design.md
+ * Handle failure/retry state machine, "Cache miss; now >= exp - 5s skew").
+ * Distinct from — and NOT to be confused with — `live.ts`'s own
+ * `EXP_SKEW_SECONDS`, which allows a token that expired up to 5s AGO to
+ * still decode as valid. The two skews serve opposite directions. */
+const HANDLE_EXPIRY_SKEW_MS = 5_000;
 
 export interface IndigoClientOptions {
   /**
@@ -78,6 +96,12 @@ export class IndigoClientBase {
   private realtimeManager: RealtimeConnectionManager | null = null;
   /** Nesting guard for `$transaction`: `true` while a callback is in flight. */
   private readonly txContext = new AsyncLocalStorage<true>();
+  private readonly getHandleFn: ((table: string) => Promise<string>) | undefined;
+  /** Handle cache + in-flight-mint dedup map (design.md Decision 6):
+   * guarantees `getHandle` is called AT MOST ONCE per table per validity
+   * window even under concurrent same-tick `.live()` calls. */
+  private readonly handleCache = new Map<string, HandleInfo>();
+  private readonly handleInflight = new Map<string, Promise<HandleInfo>>();
 
   /**
    * Parameterized query executor passed to each model delegate.
@@ -121,6 +145,7 @@ export class IndigoClientBase {
     this.extensions = options.extensions ?? [];
     this.realtimeUrl =
       options.realtime?.url ?? process.env.INDIGO_REALTIME_URL;
+    this.getHandleFn = options.realtime?.getHandle;
     this.exec = this.applyExtensions(
       this.wrapLog((sql, params) => this.run(sql, params)),
     );
@@ -142,6 +167,82 @@ export class IndigoClientBase {
       );
     }
     return this.realtimeManager;
+  };
+
+  /**
+   * Synchronous config guard for `.live()` (`live.ts`'s `LiveDeps.requireHandle`,
+   * design.md handle-failure table's "config" row): throws IMMEDIATELY,
+   * mirroring `$realtime()`'s existing missing-config pattern, rather than
+   * surfacing as a rejected promise buried inside the async bootstrap.
+   */
+  protected readonly $requireGetHandle = (): void => {
+    if (!this.getHandleFn) {
+      throw new Error(
+        "IndigoClient: live queries require `realtime.getHandle`. Pass `realtime: { getHandle } }` " +
+          "(an app-supplied `(table) => Promise<string>` that mints a handle server-side via " +
+          "`@indigodb/realtime`'s `mintHandle`).",
+      );
+    }
+  };
+
+  /**
+   * Mints (or reuses) a per-table handle for `.live()` (design.md Decision
+   * 6). `opts.refresh` bypasses BOTH the cache and any in-flight mint,
+   * forcing a fresh `getHandle` call — used by `live.ts`'s retry-once state
+   * machine on a verified handle failure or a provider rejection.
+   *
+   * Without a `refresh`: a cached, unexpired (with `HANDLE_EXPIRY_SKEW_MS`
+   * margin) handle is reused; otherwise an in-flight mint for the same
+   * table is awaited instead of starting a second one — two `.live()` calls
+   * issued in the same tick, before either resolves, therefore call
+   * `getHandle` exactly once (tasks.md 2.1).
+   *
+   * A handle that fails local decode validation (`decodeHandlePayload`)
+   * throws `IndigoLiveHandleError` — `live.ts` classifies this as a
+   * "verified handle failure" distinct from `getHandle` itself rejecting
+   * (a provider failure) — and is never cached.
+   */
+  protected readonly $handle = async (
+    table: string,
+    opts: { refresh?: boolean } = {},
+  ): Promise<HandleInfo> => {
+    this.$requireGetHandle();
+
+    if (!opts.refresh) {
+      const cached = this.handleCache.get(table);
+      if (cached && Date.now() < cached.expiresAtMs - HANDLE_EXPIRY_SKEW_MS) {
+        return cached;
+      }
+      const inflight = this.handleInflight.get(table);
+      if (inflight) return inflight;
+    }
+
+    const mint = (async (): Promise<HandleInfo> => {
+      const token = await this.getHandleFn!(table);
+      const decoded = decodeHandlePayload(token, table);
+      if (!decoded.ok) {
+        throw new IndigoLiveHandleError(
+          decoded.reason,
+          `IndigoDB: the handle minted for "${table}" failed local validation (${decoded.reason}).`,
+        );
+      }
+      const info: HandleInfo = {
+        token,
+        userId: decoded.payload.u,
+        expiresAtMs: decoded.payload.exp * 1000,
+      };
+      this.handleCache.set(table, info);
+      return info;
+    })();
+
+    this.handleInflight.set(table, mint);
+    try {
+      return await mint;
+    } finally {
+      if (this.handleInflight.get(table) === mint) {
+        this.handleInflight.delete(table);
+      }
+    }
   };
 
   /** Wraps an `Executor` with the `log` option's statement logging. */
@@ -292,6 +393,8 @@ export class IndigoClientBase {
   async $disconnect(): Promise<void> {
     this.realtimeManager?.close();
     this.realtimeManager = null;
+    this.handleCache.clear();
+    this.handleInflight.clear();
     await this.closeInjected?.();
   }
 }
