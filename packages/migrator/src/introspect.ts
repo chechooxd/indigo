@@ -47,7 +47,12 @@ export interface IntrospectOptions {
   /**
    * Table names to exclude from the result — IndigoDB's own bookkeeping
    * tables never belong in a replayed/introspected `ResolvedSchema`.
-   * Defaults to `["_indigo_migrations"]`.
+   * Defaults to `["_indigo_migrations", "_indigo_realtime_log"]`. Without
+   * excluding `_indigo_realtime_log` (`realtime-shape-log` design decision
+   * 5), shadow-replay/introspection sees the log as an ordinary user table
+   * and `planMigration` emits `DROP TABLE "_indigo_realtime_log" CASCADE`,
+   * breaking the round-trip no-op invariant `introspect.mjs` enforces — same
+   * reason `_indigo_migrations` is already excluded.
    */
   exclude?: string[];
 }
@@ -302,7 +307,7 @@ export async function introspectResolvedSchema(
   options: IntrospectOptions = {},
 ): Promise<ResolvedSchema> {
   const schema = options.schema ?? "public";
-  const exclude = new Set(options.exclude ?? ["_indigo_migrations"]);
+  const exclude = new Set(options.exclude ?? ["_indigo_migrations", "_indigo_realtime_log"]);
 
   const [tablesRes, columnsRes, pkRes, fkRes, indexRes, enumRes, publicationRes] = await Promise.all([
     query(TABLES_SQL, [schema]),

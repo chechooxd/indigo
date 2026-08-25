@@ -15,6 +15,10 @@ import {
   renderPublicationSql,
   renderReplicaIdentity,
   renderDropLegacyNotify,
+  renderRealtimeLogSql,
+  REALTIME_LOG_TABLE,
+  renderPushSql,
+  planMigration,
   quoteIdent,
 } from "../dist/index.js";
 
@@ -130,6 +134,93 @@ check("renderReplicaIdentity: DEFAULT restored for a non-realtime table", () => 
 
 check("renderDropLegacyNotify: DROP FUNCTION IF EXISTS ... CASCADE (also drops any dependent legacy trigger)", () => {
   strictEqual(renderDropLegacyNotify(), "DROP FUNCTION IF EXISTS indigo_notify_trigger() CASCADE;");
+});
+
+// ─── renderRealtimeLogSql (realtime-shape-log PR A: table + indexes only) ────
+
+check("renderRealtimeLogSql: no realtime tables -> DROP TABLE IF EXISTS", () => {
+  const stmts = renderRealtimeLogSql(noRealtime);
+  deepStrictEqual(stmts, [`DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`]);
+});
+
+check("renderRealtimeLogSql: >=1 realtime table -> idempotent CREATE TABLE with every column", () => {
+  const [createStmt] = renderRealtimeLogSql(oneRealtime);
+  strictEqual(createStmt.includes(`CREATE TABLE IF NOT EXISTS ${quoteIdent(REALTIME_LOG_TABLE)}`), true);
+  for (const fragment of [
+    "id         bigserial PRIMARY KEY",
+    "lsn        pg_lsn      NOT NULL",
+    "txid       text",
+    "table_name text        NOT NULL",
+    "op         text        NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE'))",
+    "pk         jsonb       NOT NULL",
+    '"new"      jsonb',
+    '"old"      jsonb',
+    "ts         timestamptz NOT NULL",
+    "buckets    text[]",
+  ]) {
+    strictEqual(createStmt.includes(fragment), true, `missing fragment: ${fragment}`);
+  }
+});
+
+check("renderRealtimeLogSql: 3 indexes — (lsn,id), (table_name,lsn,id), gin(buckets)", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  strictEqual(stmts.length, 4, "create + 3 indexes");
+  strictEqual(
+    stmts.some((s) => s === `CREATE INDEX IF NOT EXISTS ${quoteIdent("_indigo_realtime_log_lsn_idx")} ON ${quoteIdent(REALTIME_LOG_TABLE)} (lsn, id);`),
+    true,
+  );
+  strictEqual(
+    stmts.some((s) => s === `CREATE INDEX IF NOT EXISTS ${quoteIdent("_indigo_realtime_log_table_idx")} ON ${quoteIdent(REALTIME_LOG_TABLE)} (table_name, lsn, id);`),
+    true,
+  );
+  strictEqual(
+    stmts.some((s) => s === `CREATE INDEX IF NOT EXISTS ${quoteIdent("_indigo_realtime_log_buckets_idx")} ON ${quoteIdent(REALTIME_LOG_TABLE)} USING gin (buckets);`),
+    true,
+  );
+});
+
+check("renderRealtimeLogSql: wired into renderPushSql block 5 — the log table DDL appears in the full push script", () => {
+  const sql = renderPushSql(oneRealtime);
+  strictEqual(sql.includes(`CREATE TABLE IF NOT EXISTS ${quoteIdent(REALTIME_LOG_TABLE)}`), true);
+});
+
+check("renderRealtimeLogSql: no realtime model -> DROP TABLE also appears in the full push script", () => {
+  const sql = renderPushSql(noRealtime);
+  strictEqual(sql.includes(`DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`), true);
+});
+
+// ─── planMigration wiring: create/drop the log table on the 0<->1+ boundary ──
+// (design decision 4/13; task A3.1/A3.2)
+
+const twoRealtime = schemaOf(
+  `Table Post {\n  id Int @id @default(autoincrement())\n\n  @@realtime\n}\n` +
+    `Table Comment {\n  id Int @id @default(autoincrement())\n\n  @@realtime\n}\n`,
+);
+
+check("planMigration: adding the first @@realtime model includes the log table CREATE (safe)", () => {
+  const plan = planMigration(noRealtime, oneRealtime);
+  const createStmt = plan.statements.find(
+    (s) => s.sql.includes(`CREATE TABLE IF NOT EXISTS ${quoteIdent(REALTIME_LOG_TABLE)}`),
+  );
+  strictEqual(!!createStmt, true, "expected a log table CREATE statement");
+  strictEqual(createStmt.risk, "safe");
+});
+
+check("planMigration: removing the last @@realtime model includes a forced() log table DROP with an explicit impact", () => {
+  const plan = planMigration(oneRealtime, noRealtime);
+  const dropStmt = plan.statements.find(
+    (s) => s.sql === `DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`,
+  );
+  strictEqual(!!dropStmt, true, "expected a log table DROP statement");
+  strictEqual(dropStmt.risk, "requires-force");
+  strictEqual(typeof dropStmt.impact, "string");
+  strictEqual(dropStmt.impact.length > 0, true);
+});
+
+check("planMigration: a second @@realtime table added while the log already exists -> no log DDL churn", () => {
+  const plan = planMigration(oneRealtime, twoRealtime);
+  const logStmts = plan.statements.filter((s) => s.sql.includes(REALTIME_LOG_TABLE));
+  deepStrictEqual(logStmts, []);
 });
 
 if (failures > 0) {

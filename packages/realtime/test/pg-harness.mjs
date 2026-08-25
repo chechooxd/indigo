@@ -18,6 +18,7 @@
  *   export INDIGODB_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:55432/indigo_test
  */
 import pg from "pg";
+import { renderRealtimeLogSql } from "@indigodb/migrator";
 
 export function testDatabaseUrl() {
   return process.env.INDIGODB_TEST_DATABASE_URL ?? null;
@@ -72,6 +73,16 @@ export async function withReplicationFixture(url, label, fn) {
       `DO $$ BEGIN CREATE PUBLICATION "${pub}" FOR TABLE "${table}"; ` +
         `EXCEPTION WHEN duplicate_object THEN null; END $$;`,
     );
+    // realtime-shape-log PR A: `WalSource` now writes every commit to
+    // `_indigo_realtime_log` before dispatching, so any fixture that starts
+    // a real `WalSource` needs the table to exist first — `db push`'s job in
+    // production, done by hand here via the same renderer. Idempotent
+    // (`CREATE TABLE IF NOT EXISTS`) and never dropped in teardown: it is
+    // shared, persistent bookkeeping across fixtures/suites, exactly like
+    // production.
+    for (const stmt of renderRealtimeLogSql({ tables: [{ realtime: true }] })) {
+      await admin.query(stmt);
+    }
   });
 
   try {

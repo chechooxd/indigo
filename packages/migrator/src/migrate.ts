@@ -28,6 +28,8 @@ import {
   renderReplicationPreSql,
   renderPublicationSql,
   renderReplicaIdentity,
+  renderRealtimeLogSql,
+  REALTIME_LOG_TABLE,
   enumMembers,
   indexName,
   renderIndexDdl,
@@ -993,6 +995,26 @@ function computeStatements(
   if (membershipChanged) {
     for (const t of newlyRealtimeTables) push(stmts, [renderDropTrigger(t)]);
     if (newlyRealtimeTables.length > 0) push(stmts, [renderDropLegacyNotify()]);
+  }
+
+  // `_indigo_realtime_log` (realtime-shape-log design decisions 4/13): keyed
+  // off the SAME 0<->1+ boundary as the slot above, so a second/third
+  // `@@realtime` table added while the log already exists causes no DDL
+  // churn (`membershipChanged` alone would fire on every table added or
+  // removed — the log's own lifecycle only cares whether ANY table is
+  // realtime, exactly like the slot). Create is `safe` (additive,
+  // idempotent `IF NOT EXISTS`); drop is `forced(...)`, not `safe()` —
+  // dropping the log destroys realtime history, the same data-loss gate
+  // `DROP TABLE` already goes through elsewhere in this file.
+  if (prevHasRealtime !== nextHasRealtime) {
+    if (nextHasRealtime) {
+      push(stmts, renderRealtimeLogSql(next));
+    } else {
+      const [dropSql] = renderRealtimeLogSql(next);
+      stmts.push(
+        forced(dropSql, `DROP TABLE ${REALTIME_LOG_TABLE} (realtime shape log history)`),
+      );
+    }
   }
 
   // Match columns and compute every table's FK drops/adds/renames up front,
