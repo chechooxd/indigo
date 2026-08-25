@@ -1,0 +1,23 @@
+Table Order {
+  id      Int    @id @default(autoincrement())
+  ownerId Int
+  title   String
+
+  @@realtime
+  @@allow(read, auth.userId == this.ownerId)
+  @@allow(create, auth.userId == this.ownerId)
+}
+
+Table Message {
+  id     Int    @id @default(autoincrement())
+  userId Int    @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body   String
+
+  @@realtime
+}
+
+Table User {
+  id   Int    @id @default(autoincrement())
+  name String
+}
