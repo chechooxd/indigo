@@ -373,20 +373,23 @@ export function renderReplicaIdentity(table: ResolvedTable): string {
  * is not unique); canonical read order is `ORDER BY lsn, id`, which holds
  * because there is exactly one writer (the replication slot is exclusive).
  *
- * PR A owns table + indexes only. RLS (`ENABLE`/`FORCE` + policies) is PR
- * B's block, appended by `renderRealtimeLogSql` once decision 6/7's hand
- * -written SQL lands — kept as a single exported entry point so
- * `renderPushSql` never needs to know which PR added which half.
+ * PR A owns table + indexes. PR B appends RLS (`ENABLE`/`FORCE` + the
+ * read/insert policy pair, decisions 6/7) via `renderRealtimeLogRls` —
+ * kept behind this single exported entry point so `renderPushSql` never
+ * needs to know which PR added which half.
  */
 export const REALTIME_LOG_TABLE = "_indigo_realtime_log";
 
 /**
  * `[]` when no table is `@@realtime` (nothing to log) — `renderPushSql`
  * skips this branch entirely, matching how `renderPublicationSql` already
- * treats the empty realtime set. Table + 3 indexes when at least one table
- * is `@@realtime`; DROP when none are (design decision 13, routed through
- * `forced(...)` by `migrate.ts`, not this idempotent push renderer, which
- * only ever emits the safe `IF NOT EXISTS`/`DROP TABLE IF EXISTS` forms).
+ * treats the empty realtime set. Table + 3 indexes + RLS block when at
+ * least one table is `@@realtime`; DROP when none are (design decision 13,
+ * routed through `forced(...)` by `migrate.ts`, not this idempotent push
+ * renderer, which only ever emits the safe `IF NOT EXISTS`/`DROP TABLE IF
+ * EXISTS` forms). RLS on the log is unconditional on any table's own
+ * `@@allow` — it protects `buckets`, which every `@@realtime` row carries
+ * regardless of whether its own model declares `@@allow`.
  */
 export function renderRealtimeLogSql(schema: ResolvedSchema): string[] {
   const t = quoteIdent(REALTIME_LOG_TABLE);
@@ -410,6 +413,10 @@ export function renderRealtimeLogSql(schema: ResolvedSchema): string[] {
     `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_lsn_idx`)} ON ${t} (lsn, id);`,
     `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_table_idx`)} ON ${t} (table_name, lsn, id);`,
     `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_buckets_idx`)} ON ${t} USING gin (buckets);`,
+    // PR B: RLS block (design decisions 6/7) — `ENABLE`+`FORCE` plus the
+    // read/insert policy pair, hand-written by `renderRealtimeLogRls` since
+    // `renderPolicy` cannot express `buckets IS NULL OR ... = ANY(buckets)`.
+    ...renderRealtimeLogRls(),
   ];
 }
 
@@ -525,6 +532,191 @@ export function renderPolicy(table: ResolvedTable, rule: AllowRule, ordinal: num
     case "delete":
       return `CREATE POLICY ${quoteIdent(name)} ON ${t} AS PERMISSIVE FOR DELETE\n  USING (${condition});`;
   }
+}
+
+/**
+ * RLS block for `_indigo_realtime_log` (design decisions 6/7). Hand-written
+ * — NOT a `renderPolicy` call: `renderCondition` only emits `left = right`
+ * against a `ResolvedTable`'s own columns, and the log table has no
+ * `ResolvedTable`. `buckets IS NULL OR ... = ANY(buckets)` is outside that
+ * grammar. The MECHANISM is reused (`AUTH_SETTING`, the
+ * `NULLIF(current_setting(...), '')` empty-string guard, `policyName`'s
+ * `indigo_p_<...>_<action>_<n>` naming shape) — only the renderer is not.
+ *
+ * `ENABLE` + `FORCE ROW LEVEL SECURITY` is mandatory, not optional: under
+ * `FORCE`, the table OWNER also loses the RLS bypass — including
+ * `WalSource`'s own writer connection. WITHOUT the explicit
+ * `FOR INSERT WITH CHECK (true)` policy below, that writer's own `INSERT`
+ * would be rejected by `FORCE` RLS with no matching policy (design decision
+ * 6's RED test, tasks.md B5.1) — this policy is mandatory, not a nice-to-
+ * have. No `UPDATE`/`DELETE` policy is ever emitted — the log is
+ * append-only by construction (design decision 6, tasks.md B4.1/B4.2).
+ */
+function renderRealtimeLogRls(): string[] {
+  const t = quoteIdent(REALTIME_LOG_TABLE);
+  const readPolicy = quoteIdent(`indigo_p_${REALTIME_LOG_TABLE}_read_0`);
+  const createPolicy = quoteIdent(`indigo_p_${REALTIME_LOG_TABLE}_create_0`);
+  // Same claim-read idiom `renderOperand`'s `claim` case uses — reused
+  // verbatim (design decision 7).
+  const claim = `NULLIF(current_setting('${escapeLiteral(AUTH_SETTING)}', true), '')`;
+  return [
+    `ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;`,
+    `ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`,
+    `DROP POLICY IF EXISTS ${readPolicy} ON ${t};`,
+    `CREATE POLICY ${readPolicy} ON ${t}\n  AS PERMISSIVE FOR SELECT\n  USING (buckets IS NULL OR ${claim} = ANY (buckets));`,
+    `DROP POLICY IF EXISTS ${createPolicy} ON ${t};`,
+    `CREATE POLICY ${createPolicy} ON ${t}\n  AS PERMISSIVE FOR INSERT WITH CHECK (true);`,
+  ];
+}
+
+/**
+ * Classifies one `AllowRule` operand pair for `computeBuckets` (design
+ * decision 8: `AllowOperand` is not a closed `field == claim` vocabulary —
+ * it also admits `field == literal`, `field == field` and `claim == claim`,
+ * all of which reach the IR per `validate.rs:837-858`; only `claim ==
+ * literal` is rejected at compile time).
+ *
+ * - `claim-field`: genuinely claim-dependent — contributes a bucket value.
+ * - `field-literal` / `field-field` / `claim-claim` ("constant"): caller-
+ *   INDEPENDENT. These never contribute a bucket VALUE, but a row that
+ *   SATISFIES one is a PERMISSIVE rule granting read to everyone regardless
+ *   of claim, which collapses the whole result to `null` (decision 9,
+ *   PERMISSIVE-OR semantics: multiple PERMISSIVE policies on the same
+ *   action OR together, and "public" ORed with anything is still public).
+ * - `unsupported`: `claim == literal` (either order) — the compiler already
+ *   rejects this combination (`validate.rs:837-858`); defended here rather
+ *   than trusted, but never reached through a real compiled schema.
+ */
+type OperandClassification =
+  | { kind: "claim-field"; field: string }
+  | { kind: "field-literal"; field: string; literal: Extract<AllowOperand, { kind: "string" | "number" | "boolean" }> }
+  | { kind: "field-field"; a: string; b: string }
+  | { kind: "constant"; satisfied: boolean }
+  | { kind: "unsupported" };
+
+function isLiteralOperand(
+  op: AllowOperand,
+): op is Extract<AllowOperand, { kind: "string" | "number" | "boolean" }> {
+  return op.kind === "string" || op.kind === "number" || op.kind === "boolean";
+}
+
+/** Structural equality between two literal operands — different `kind`s
+ * (e.g. the string `"1"` vs the number `1`) are never equal. */
+function literalsEqual(
+  a: Extract<AllowOperand, { kind: "string" | "number" | "boolean" }>,
+  b: Extract<AllowOperand, { kind: "string" | "number" | "boolean" }>,
+): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.value === (b as typeof a).value;
+}
+
+function classifyOperandPair(left: AllowOperand, right: AllowOperand): OperandClassification {
+  if (left.kind === "claim" && right.kind === "field") return { kind: "claim-field", field: right.name };
+  if (left.kind === "field" && right.kind === "claim") return { kind: "claim-field", field: left.name };
+  if (left.kind === "field" && right.kind === "field") return { kind: "field-field", a: left.name, b: right.name };
+  if (left.kind === "field" && isLiteralOperand(right)) return { kind: "field-literal", field: left.name, literal: right };
+  if (isLiteralOperand(left) && right.kind === "field") return { kind: "field-literal", field: right.name, literal: left };
+  if (isLiteralOperand(left) && isLiteralOperand(right)) {
+    return { kind: "constant", satisfied: literalsEqual(left, right) };
+  }
+  if (left.kind === "claim" && right.kind === "claim") return { kind: "constant", satisfied: true };
+  return { kind: "unsupported" };
+}
+
+/** `String(value)` guarding `null`/`undefined` (design decision 10: a NULL
+ * field value contributes NO element — SQL NULL never satisfies `col =
+ * claim`, so emitting it as the literal string `"null"` would be a false
+ * grant). */
+function bucketFieldValue(row: Record<string, unknown>, field: string): string | undefined {
+  const v = row[field];
+  return v === null || v === undefined ? undefined : String(v);
+}
+
+function fieldLiteralSatisfied(
+  row: Record<string, unknown>,
+  field: string,
+  literal: Extract<AllowOperand, { kind: "string" | "number" | "boolean" }>,
+): boolean {
+  const v = bucketFieldValue(row, field);
+  return v !== undefined && v === String(literal.value);
+}
+
+function fieldFieldSatisfied(row: Record<string, unknown>, a: string, b: string): boolean {
+  const va = bucketFieldValue(row, a);
+  const vb = bucketFieldValue(row, b);
+  return va !== undefined && vb !== undefined && va === vb;
+}
+
+/**
+ * Pure computation of one row's `_indigo_realtime_log.buckets` value from
+ * its table's `read` `AllowRule`s (design decisions 8-11; PR B). Evaluated
+ * once by `WalSource` at write time, never re-evaluated per subscriber.
+ *
+ * - `table.allow === undefined` (no `@@allow` block at all): the real table
+ *   has no RLS enabled either -> `null` (public).
+ * - `table.allow` present but with no `action: "read"` rule (e.g. a
+ *   create-only model): the real table DOES have RLS enabled and, with no
+ *   matching `read` policy, denies all reads by default -> `[]` (deny-all —
+ *   the log must never be MORE permissive than the RLS-protected real table
+ *   it mirrors).
+ * - Otherwise: the union of every claim-dependent (`field == claim`) rule's
+ *   field value, from BOTH `row` and `old` (decision 11 — an UPDATE that
+ *   changes ownership must still let the LOSING owner observe the row
+ *   leaving their view). A caller-independent rule (`field == literal`,
+ *   `field == field`, `claim == claim`) satisfied by `row` OR `old`
+ *   collapses the WHOLE result to `null` (decision 9).
+ */
+export function computeBuckets(
+  table: ResolvedTable,
+  row: Record<string, unknown>,
+  old?: Record<string, unknown>,
+): string[] | null {
+  const rules = table.allow;
+  if (rules === undefined) return null;
+
+  const readRules = rules.filter((r) => r.action === "read");
+  if (readRules.length === 0) return [];
+
+  const values = new Set<string>();
+  for (const rule of readRules) {
+    const classification = classifyOperandPair(rule.left, rule.right);
+    switch (classification.kind) {
+      case "claim-field": {
+        const v = bucketFieldValue(row, classification.field);
+        if (v !== undefined) values.add(v);
+        if (old) {
+          const ov = bucketFieldValue(old, classification.field);
+          if (ov !== undefined) values.add(ov);
+        }
+        break;
+      }
+      case "field-literal": {
+        if (
+          fieldLiteralSatisfied(row, classification.field, classification.literal) ||
+          (old && fieldLiteralSatisfied(old, classification.field, classification.literal))
+        ) {
+          return null;
+        }
+        break;
+      }
+      case "field-field": {
+        if (
+          fieldFieldSatisfied(row, classification.a, classification.b) ||
+          (old && fieldFieldSatisfied(old, classification.a, classification.b))
+        ) {
+          return null;
+        }
+        break;
+      }
+      case "constant": {
+        if (classification.satisfied) return null;
+        break;
+      }
+      case "unsupported":
+        break;
+    }
+  }
+  return [...values];
 }
 
 /**

@@ -20,6 +20,7 @@ export {
   renderReplicaIdentity,
   REALTIME_LOG_TABLE,
   renderRealtimeLogSql,
+  computeBuckets,
   mapScalarToPg,
   quoteIdent,
   indexName,
