@@ -52,8 +52,8 @@ import {
 } from "pg-logical-replication";
 type Message = Pgoutput.Message;
 type MessageRelation = Pgoutput.MessageRelation;
-import type { ResolvedSchema } from "@indigodb/core";
-import { resolveSlotName, REALTIME_LOG_TABLE, quoteIdent } from "@indigodb/migrator";
+import type { ResolvedSchema, ResolvedTable } from "@indigodb/core";
+import { resolveSlotName, REALTIME_LOG_TABLE, quoteIdent, computeBuckets } from "@indigodb/migrator";
 import type { RealtimeEvent, RealtimeOp, RealtimeSource } from "./protocol.js";
 
 // `resolveSlotName` is re-exported for `@indigodb/realtime` consumers (and
@@ -69,6 +69,15 @@ interface TableNames {
   columns: Map<string, string>;
   /** Primary key, physical column names (order as declared). */
   primaryKey: string[];
+  /**
+   * The table's own `ResolvedTable`, cached once at construction (`realtime
+   * -shape-log` PR B) so `computeBuckets` never needs to re-resolve the
+   * schema per row — `decodeRow` just reads this reference. `buckets` are
+   * still computed per row (they depend on that row's actual field values,
+   * design decisions 8-11), but the (table -> its `allow` rules) lookup
+   * itself is derived once, here, not per event.
+   */
+  table: ResolvedTable;
 }
 
 /** A single decoded row change, buffered until its transaction commits. */
@@ -78,6 +87,14 @@ interface PendingRow {
   pk: Record<string, unknown>;
   new?: Record<string, unknown>;
   old?: Record<string, unknown>;
+  /**
+   * Pre-evaluated read-authorization buckets (`realtime-shape-log` PR B,
+   * design decisions 8-11) — computed once in `decodeRow` from the RAW
+   * physical-column-keyed pgoutput payload (before `renameKeys` converts it
+   * to schema field names for the wire `RealtimeEvent`), since
+   * `AllowOperand.Field.name` always carries the PHYSICAL column name.
+   */
+  buckets: string[] | null;
 }
 
 export interface WalSourceOptions {
@@ -130,6 +147,7 @@ export class WalSource implements RealtimeSource {
         model: table.name,
         columns,
         primaryKey: table.primaryKey,
+        table,
       });
     }
   }
@@ -412,7 +430,19 @@ export class WalSource implements RealtimeSource {
       }
     }
 
-    const row: PendingRow = { table: names.model, op, pk };
+    // computeBuckets over the RAW, physical-column-keyed tuples — NOT the
+    // renamed (schema-field-keyed) ones below. `AllowOperand.Field.name`
+    // always carries the physical column name (postgres.ts's own
+    // `columnByDbName` comment), so bucket evaluation must happen before
+    // `renameKeys` converts `fresh`/`old` for the wire event. INSERT: only
+    // `fresh` exists, passed as `row`. DELETE: only `old` exists, passed as
+    // `row` (there is no "old" half to union in that case). UPDATE: both
+    // exist, `old` passed as the union half (design decision 11).
+    const primary = fresh ?? old ?? {};
+    const secondary = fresh && old ? old : undefined;
+    const buckets = computeBuckets(names.table, primary, secondary);
+
+    const row: PendingRow = { table: names.model, op, pk, buckets };
     if (fresh) row.new = renameKeys(fresh, names.columns);
     if (old) row.old = renameKeys(old, names.columns);
     return row;
@@ -445,7 +475,9 @@ function formatCommitTime(commitTime: bigint): string {
  * JSON-stringified and cast `::jsonb` in the SQL (same pattern
  * `@indigodb/client`'s `delegate.ts` already uses for jsonb parameters —
  * `pg` does not auto-serialize plain objects for a jsonb column). `buckets`
- * is always `null` in this PR; bucket computation is PR B's job.
+ * (`realtime-shape-log` PR B) was pre-computed per row in `decodeRow` via
+ * `computeBuckets`; `pg` serializes the bound JS array/`null` to the
+ * `text[]` parameter automatically.
  */
 function buildLogInsert(
   batch: PendingRow[],
@@ -479,7 +511,7 @@ function buildLogInsert(
       row.new ? JSON.stringify(row.new) : null,
       row.old ? JSON.stringify(row.old) : null,
       ts,
-      null, // buckets — always NULL in this PR (PR B computes it)
+      row.buckets,
     );
   }
   const sql =

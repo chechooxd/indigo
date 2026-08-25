@@ -15,7 +15,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/wal-source.mjs && node test/pg-harness.mjs && node test/parity.mjs && node test/resume.mjs && node test/log.mjs"
+    "test": "node test/wal-source.mjs && node test/pg-harness.mjs && node test/parity.mjs && node test/resume.mjs && node test/log.mjs && node test/buckets.mjs"
   },
   "dependencies": {
     "@indigodb/core": "workspace:*",

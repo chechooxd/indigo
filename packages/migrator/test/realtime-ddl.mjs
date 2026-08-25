@@ -164,7 +164,6 @@ check("renderRealtimeLogSql: >=1 realtime table -> idempotent CREATE TABLE with 
 
 check("renderRealtimeLogSql: 3 indexes — (lsn,id), (table_name,lsn,id), gin(buckets)", () => {
   const stmts = renderRealtimeLogSql(oneRealtime);
-  strictEqual(stmts.length, 4, "create + 3 indexes");
   strictEqual(
     stmts.some((s) => s === `CREATE INDEX IF NOT EXISTS ${quoteIdent("_indigo_realtime_log_lsn_idx")} ON ${quoteIdent(REALTIME_LOG_TABLE)} (lsn, id);`),
     true,
@@ -177,6 +176,55 @@ check("renderRealtimeLogSql: 3 indexes — (lsn,id), (table_name,lsn,id), gin(bu
     stmts.some((s) => s === `CREATE INDEX IF NOT EXISTS ${quoteIdent("_indigo_realtime_log_buckets_idx")} ON ${quoteIdent(REALTIME_LOG_TABLE)} USING gin (buckets);`),
     true,
   );
+});
+
+// ─── RLS on _indigo_realtime_log (realtime-shape-log PR B, decisions 6/7) ────
+
+check("renderRealtimeLogSql: >=1 realtime table -> exactly 10 statements (create + 3 indexes + 2 ALTER + 2x DROP/CREATE POLICY)", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  strictEqual(stmts.length, 10, "create + 3 indexes + ENABLE + FORCE + read policy drop/create + insert policy drop/create");
+});
+
+check("renderRealtimeLogSql: ENABLE + FORCE ROW LEVEL SECURITY on the log table", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  strictEqual(stmts.some((s) => s === `ALTER TABLE ${quoteIdent(REALTIME_LOG_TABLE)} ENABLE ROW LEVEL SECURITY;`), true);
+  strictEqual(stmts.some((s) => s === `ALTER TABLE ${quoteIdent(REALTIME_LOG_TABLE)} FORCE ROW LEVEL SECURITY;`), true);
+});
+
+check("renderRealtimeLogSql: FOR SELECT policy — buckets IS NULL OR claim = ANY(buckets), NULLIF-guarded", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  const readName = quoteIdent("indigo_p__indigo_realtime_log_read_0");
+  strictEqual(stmts.some((s) => s === `DROP POLICY IF EXISTS ${readName} ON ${quoteIdent(REALTIME_LOG_TABLE)};`), true);
+  const createStmt = stmts.find((s) => s.startsWith(`CREATE POLICY ${readName}`));
+  strictEqual(typeof createStmt, "string", "expected a CREATE POLICY statement for the read policy");
+  strictEqual(createStmt.includes("AS PERMISSIVE FOR SELECT"), true, createStmt);
+  strictEqual(
+    createStmt.includes("USING (buckets IS NULL OR NULLIF(current_setting('app.user_id', true), '') = ANY (buckets));"),
+    true,
+    createStmt,
+  );
+});
+
+check("renderRealtimeLogSql: FOR INSERT WITH CHECK (true) policy — mandatory so the writer's own INSERT isn't blocked by FORCE RLS", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  const createName = quoteIdent("indigo_p__indigo_realtime_log_create_0");
+  strictEqual(stmts.some((s) => s === `DROP POLICY IF EXISTS ${createName} ON ${quoteIdent(REALTIME_LOG_TABLE)};`), true);
+  strictEqual(
+    stmts.some((s) => s.includes(`CREATE POLICY ${createName}`) && s.includes("AS PERMISSIVE FOR INSERT WITH CHECK (true);")),
+    true,
+    stmts.join("\n"),
+  );
+});
+
+check("renderRealtimeLogSql: no UPDATE/DELETE policy is ever emitted for the log table — append-only by construction (decision 6)", () => {
+  const stmts = renderRealtimeLogSql(oneRealtime);
+  strictEqual(stmts.some((s) => s.includes("FOR UPDATE")), false, stmts.join("\n"));
+  strictEqual(stmts.some((s) => s.includes("FOR DELETE")), false, stmts.join("\n"));
+});
+
+check("renderRealtimeLogSql: no realtime tables -> DROP TABLE only, no RLS statements", () => {
+  const stmts = renderRealtimeLogSql(noRealtime);
+  deepStrictEqual(stmts, [`DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`]);
 });
 
 check("renderRealtimeLogSql: wired into renderPushSql block 5 — the log table DDL appears in the full push script", () => {
