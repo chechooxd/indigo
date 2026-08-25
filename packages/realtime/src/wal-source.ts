@@ -53,7 +53,7 @@ import {
 type Message = Pgoutput.Message;
 type MessageRelation = Pgoutput.MessageRelation;
 import type { ResolvedSchema } from "@indigodb/core";
-import { resolveSlotName } from "@indigodb/migrator";
+import { resolveSlotName, REALTIME_LOG_TABLE, quoteIdent } from "@indigodb/migrator";
 import type { RealtimeEvent, RealtimeOp, RealtimeSource } from "./protocol.js";
 
 // `resolveSlotName` is re-exported for `@indigodb/realtime` consumers (and
@@ -97,6 +97,25 @@ export class WalSource implements RealtimeSource {
   private txid: string | undefined;
   private pending: PendingRow[] = [];
 
+  /**
+   * Second, ordinary `pg.Client` connection (design decision, `WalSource`
+   * opens a dedicated log-writer connection): the replication connection
+   * cannot run DML, so `_indigo_realtime_log` INSERTs go through this
+   * separate connection, opened alongside the replication stream in
+   * `connect()` and closed/reopened together with it.
+   */
+  private writer: pg.Client | null = null;
+
+  /**
+   * Serial promise chain enforcing insert -> dispatch -> ack ordering
+   * (design decision 1). `service.on("data")` (the caller of
+   * `handleMessage`) is synchronous and keeps delivering while a write is in
+   * flight, so without this chain two commits' inserts/acks would interleave
+   * and LSN order would be lost — the single largest new failure mode this
+   * slice introduces. `stop()` awaits it.
+   */
+  private chain: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly connectionString: string,
     schema: ResolvedSchema,
@@ -137,15 +156,30 @@ export class WalSource implements RealtimeSource {
     this.retryTimer = null;
     this.txid = undefined;
     this.pending = [];
+    // Let any in-flight insert -> dispatch -> ack sequence settle before
+    // tearing down the connections it depends on.
+    await this.chain.catch(() => {});
     const service = this.service;
     this.service = null;
     if (service) await service.stop().catch(() => {});
+    await this.closeWriter();
+  }
+
+  /** Closes and clears the log-writer connection, if any. Idempotent. */
+  private async closeWriter(): Promise<void> {
+    const writer = this.writer;
+    this.writer = null;
+    if (writer) await writer.end().catch(() => {});
   }
 
   private async connect(
     onEvent: (event: RealtimeEvent) => void,
     onError: (error: Error) => void,
   ): Promise<void> {
+    // Any writer left over from a prior connect()/teardown is stale by
+    // construction — close it defensively before opening a fresh one.
+    await this.closeWriter();
+
     const service = new LogicalReplicationService(
       { connectionString: this.connectionString } as pg.ClientConfig,
       { acknowledge: { auto: false, timeoutSeconds: 0 } },
@@ -153,6 +187,7 @@ export class WalSource implements RealtimeSource {
     this.service = service;
     this.txid = undefined;
     this.pending = [];
+    this.chain = Promise.resolve();
 
     service.on("error", (err) => onError(err));
     // Fires once the replication stream is actually live (after the server
@@ -179,6 +214,19 @@ export class WalSource implements RealtimeSource {
     });
 
     try {
+      // Opened before subscribing so the writer is ready before the first
+      // commit can possibly arrive. Same connection string as the
+      // replication stream; an ordinary connection can run DML where the
+      // replication one cannot.
+      const writer = new pg.Client({ connectionString: this.connectionString } as pg.ClientConfig);
+      await writer.connect();
+      if (this.service !== service) {
+        // Superseded by a newer connect() while the writer was connecting.
+        await writer.end().catch(() => {});
+        return;
+      }
+      this.writer = writer;
+
       await service.subscribe(plugin, this.slot);
       // subscribe() resolves when the stream ends without an error (e.g. our
       // own stop()). If that happened while we intended to keep running,
@@ -242,21 +290,21 @@ export class WalSource implements RealtimeSource {
         const ts = formatCommitTime(message.commitTime as unknown as bigint);
         const txid = this.txid;
         const commitLsn = message.commitLsn;
-        for (const row of this.pending) {
-          const event: RealtimeEvent = {
-            table: row.table,
-            op: row.op,
-            pk: row.pk,
-            ts,
-            txid,
-          };
-          if (row.new) event.new = row.new;
-          if (row.old) event.old = row.old;
-          onEvent(event);
-        }
+        const batch = this.pending;
         this.pending = [];
         this.txid = undefined;
-        if (commitLsn) this.service?.acknowledge(commitLsn).catch(() => {});
+
+        // Capture (batch, commitLsn, txid, ts) synchronously, right here,
+        // then append the insert -> dispatch -> ack sequence to the serial
+        // chain (design decision 1). `handleMessage` itself stays
+        // synchronous and returns immediately — `service.on("data")` keeps
+        // delivering the next message while this settles, exactly the
+        // condition the chain exists to serialize against.
+        this.chain = this.chain
+          .then(() => this.flushCommit(batch, commitLsn, txid, ts, onEvent, onError))
+          .catch((err) => {
+            onError(err instanceof Error ? err : new Error(String(err)));
+          });
         return;
       }
       case "relation":
@@ -273,6 +321,77 @@ export class WalSource implements RealtimeSource {
         onError(new Error(`WalSource: unrecognized pgoutput message tag ${String(unknown.tag)}`));
       }
     }
+  }
+
+  /**
+   * One transaction's insert -> dispatch -> ack sequence (design decisions
+   * 1-3, 12). An empty `batch` (every row change in the transaction touched
+   * a non-@@realtime table) skips the log write entirely and just acks —
+   * there is nothing to redeliver for a transaction that never logged
+   * anything. Runs serialized on `this.chain`; never called directly from
+   * `handleMessage`.
+   */
+  private async flushCommit(
+    batch: PendingRow[],
+    commitLsn: string | null,
+    txid: string | undefined,
+    ts: string,
+    onEvent: (event: RealtimeEvent) => void,
+    onError: (error: Error) => void,
+  ): Promise<void> {
+    if (batch.length > 0) {
+      const writer = this.writer;
+      if (!writer) {
+        onError(new Error("WalSource: log-writer connection unavailable; commit not acknowledged"));
+        await this.teardownAfterLogFailure(onEvent, onError);
+        return;
+      }
+      try {
+        const { sql, params } = buildLogInsert(batch, commitLsn, txid, ts);
+        await writer.query(sql, params);
+      } catch (err) {
+        // A failed insert dispatches nothing and acks nothing (design
+        // decision 2): ack is monotonic, so acking a LATER commit would
+        // implicitly confirm this one too, silently losing the transaction
+        // the redelivery-on-reconnect contract exists to preserve. Tearing
+        // the whole connection down (not "log and continue") is what makes
+        // that redelivery real.
+        onError(err instanceof Error ? err : new Error(String(err)));
+        await this.teardownAfterLogFailure(onEvent, onError);
+        return;
+      }
+    }
+
+    for (const row of batch) {
+      const event: RealtimeEvent = {
+        table: row.table,
+        op: row.op,
+        pk: row.pk,
+        ts,
+        txid,
+      };
+      if (row.new) event.new = row.new;
+      if (row.old) event.old = row.old;
+      if (commitLsn) event.lsn = commitLsn;
+      onEvent(event);
+    }
+
+    if (commitLsn) {
+      const service = this.service;
+      if (service) await service.acknowledge(commitLsn).catch(() => {});
+    }
+  }
+
+  /** Tears the replication + writer connections down and schedules a reconnect (design decision 2). */
+  private async teardownAfterLogFailure(
+    onEvent: (event: RealtimeEvent) => void,
+    onError: (error: Error) => void,
+  ): Promise<void> {
+    const service = this.service;
+    this.service = null;
+    if (service) await service.stop().catch(() => {});
+    await this.closeWriter();
+    if (!this.stopped) this.scheduleReconnect(onEvent, onError);
   }
 
   /** Physical row(s) → wire event fields (schema names), or null to drop (unknown table). */
@@ -315,4 +434,56 @@ function renameKeys(
  * Postgres 2000-01-01 epoch offset) → `YYYY-MM-DDTHH:MM:SS.mmmZ`, matching v1's trigger format. */
 function formatCommitTime(commitTime: bigint): string {
   return new Date(Number(commitTime / 1000n)).toISOString();
+}
+
+/**
+ * Builds one multi-row parameterized `INSERT` for a whole WAL transaction
+ * (design decision 12: one INSERT per commit, never one per row). Every
+ * value — including row payload data — travels as a bound `pg` parameter;
+ * nothing from `batch` is ever concatenated into the SQL text (threat
+ * matrix: SQL injection through logged row data). `pk`/`new`/`old` are
+ * JSON-stringified and cast `::jsonb` in the SQL (same pattern
+ * `@indigodb/client`'s `delegate.ts` already uses for jsonb parameters —
+ * `pg` does not auto-serialize plain objects for a jsonb column). `buckets`
+ * is always `null` in this PR; bucket computation is PR B's job.
+ */
+function buildLogInsert(
+  batch: PendingRow[],
+  commitLsn: string | null,
+  txid: string | undefined,
+  ts: string,
+): { sql: string; params: unknown[] } {
+  const table = quoteIdent(REALTIME_LOG_TABLE);
+  const valueClauses: string[] = [];
+  const params: unknown[] = [];
+  for (const row of batch) {
+    const base = params.length;
+    const placeholders = [
+      `$${base + 1}`,
+      `$${base + 2}`,
+      `$${base + 3}`,
+      `$${base + 4}`,
+      `$${base + 5}::jsonb`,
+      `$${base + 6}::jsonb`,
+      `$${base + 7}::jsonb`,
+      `$${base + 8}`,
+      `$${base + 9}::text[]`,
+    ];
+    valueClauses.push(`(${placeholders.join(", ")})`);
+    params.push(
+      commitLsn,
+      txid ?? null,
+      row.table,
+      row.op,
+      JSON.stringify(row.pk),
+      row.new ? JSON.stringify(row.new) : null,
+      row.old ? JSON.stringify(row.old) : null,
+      ts,
+      null, // buckets — always NULL in this PR (PR B computes it)
+    );
+  }
+  const sql =
+    `INSERT INTO ${table} (lsn, txid, table_name, op, pk, "new", "old", ts, buckets) ` +
+    `VALUES ${valueClauses.join(", ")}`;
+  return { sql, params };
 }

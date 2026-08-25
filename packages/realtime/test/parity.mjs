@@ -83,7 +83,10 @@ $$ LANGUAGE plpgsql;
 
 function maskVolatile(events) {
   return events
-    .map((e) => ({ ...e, ts: undefined, txid: undefined }))
+    // `lsn` is masked too: `WalSource` populates it (realtime-shape-log
+    // design), `PgNotifySource` never does — an additive, source-specific
+    // field, not a parity violation (asserted directly below).
+    .map((e) => ({ ...e, ts: undefined, txid: undefined, lsn: undefined }))
     .sort((a, b) => (a.pk.id ?? 0) - (b.pk.id ?? 0) || a.op.localeCompare(b.op));
 }
 
@@ -135,6 +138,19 @@ await check("parity: insert/update/delete emit deep-equal events (masking ts/txi
     ok(update.old && update.old.name === "a", "UPDATE old must carry the full pre-image, not just pk");
     const del = walEvents.find((e) => e.op === "DELETE");
     ok(del.old && del.old.name === "b", "DELETE old must carry the full pre-image");
+
+    // realtime-shape-log design / realtime-wal-source delta: WalSource events
+    // carry `lsn` (an "X/Y" hex string); PgNotifySource omits it — additive,
+    // not a parity violation (masked out above precisely so the deep-equal
+    // check doesn't treat this legitimate difference as a mismatch).
+    ok(
+      walEvents.every((e) => typeof e.lsn === "string" && /^[0-9A-Fa-f]+\/[0-9A-Fa-f]+$/.test(e.lsn)),
+      "every WalSource event must carry an X/Y hex lsn",
+    );
+    ok(
+      notifyEvents.every((e) => e.lsn === undefined),
+      "PgNotifySource must never populate lsn",
+    );
   });
 });
 

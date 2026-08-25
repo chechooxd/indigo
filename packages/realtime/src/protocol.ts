@@ -28,10 +28,19 @@ export interface RealtimeEvent<Row = Record<string, unknown>> {
   /**
    * v1 (`PgNotifySource`): `txid_current()`. v2 (`WalSource`): the decimal
    * transaction id from the pgoutput `begin` message — same *meaning* as v1,
-   * not the LSN. A future slice may add LSN addressing alongside this field;
-   * the commit LSN arrives with the shape log when that lands.
+   * not the LSN.
    */
   txid?: string;
+  /**
+   * The commit LSN as the `X/Y` hex string PostgreSQL prints for `pg_lsn`
+   * (`realtime-shape-log` design, `WalSource` decision). Populated by
+   * `WalSource` on every event it emits — it always has a commit LSN
+   * available from the `commit` message. `PgNotifySource` does not populate
+   * it: NOTIFY-based delivery has no commit LSN to surface. This is
+   * additive and does not break parity for `table`/`op`/`pk`/`new`/`old`/
+   * `txid`/`ts` — an absent `lsn` is not a contract violation.
+   */
+  lsn?: string;
   /** ISO-8601 UTC timestamp taken inside the transaction. */
   ts: string;
   /** Per-connection monotonic sequence (SSE `id:`), stamped at fan-out. */

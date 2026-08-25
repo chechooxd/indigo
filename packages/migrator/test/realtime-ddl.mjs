@@ -18,6 +18,7 @@ import {
   renderRealtimeLogSql,
   REALTIME_LOG_TABLE,
   renderPushSql,
+  planMigration,
   quoteIdent,
 } from "../dist/index.js";
 
@@ -186,6 +187,40 @@ check("renderRealtimeLogSql: wired into renderPushSql block 5 — the log table 
 check("renderRealtimeLogSql: no realtime model -> DROP TABLE also appears in the full push script", () => {
   const sql = renderPushSql(noRealtime);
   strictEqual(sql.includes(`DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`), true);
+});
+
+// ─── planMigration wiring: create/drop the log table on the 0<->1+ boundary ──
+// (design decision 4/13; task A3.1/A3.2)
+
+const twoRealtime = schemaOf(
+  `Table Post {\n  id Int @id @default(autoincrement())\n\n  @@realtime\n}\n` +
+    `Table Comment {\n  id Int @id @default(autoincrement())\n\n  @@realtime\n}\n`,
+);
+
+check("planMigration: adding the first @@realtime model includes the log table CREATE (safe)", () => {
+  const plan = planMigration(noRealtime, oneRealtime);
+  const createStmt = plan.statements.find(
+    (s) => s.sql.includes(`CREATE TABLE IF NOT EXISTS ${quoteIdent(REALTIME_LOG_TABLE)}`),
+  );
+  strictEqual(!!createStmt, true, "expected a log table CREATE statement");
+  strictEqual(createStmt.risk, "safe");
+});
+
+check("planMigration: removing the last @@realtime model includes a forced() log table DROP with an explicit impact", () => {
+  const plan = planMigration(oneRealtime, noRealtime);
+  const dropStmt = plan.statements.find(
+    (s) => s.sql === `DROP TABLE IF EXISTS ${quoteIdent(REALTIME_LOG_TABLE)};`,
+  );
+  strictEqual(!!dropStmt, true, "expected a log table DROP statement");
+  strictEqual(dropStmt.risk, "requires-force");
+  strictEqual(typeof dropStmt.impact, "string");
+  strictEqual(dropStmt.impact.length > 0, true);
+});
+
+check("planMigration: a second @@realtime table added while the log already exists -> no log DDL churn", () => {
+  const plan = planMigration(oneRealtime, twoRealtime);
+  const logStmts = plan.statements.filter((s) => s.sql.includes(REALTIME_LOG_TABLE));
+  deepStrictEqual(logStmts, []);
 });
 
 if (failures > 0) {
