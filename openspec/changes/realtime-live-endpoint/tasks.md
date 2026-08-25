@@ -28,101 +28,101 @@ Chain strategy: feature-branch-chain
 
 ## PR A — The endpoint (base = tracker)
 
-- [ ] A1.1 [RED] `packages/realtime/src/handle.ts`: `mintHandle({table,userId,ttl},secret)` /
+- [x] A1.1 [RED] `packages/realtime/src/handle.ts`: `mintHandle({table,userId,ttl},secret)` /
   `verifyHandle(token,secret)` round-trip (`{table:"Order",userId:"u1"}` in → out); `ttl` omitted
   defaults `exp` to ~3600s from mint time; `mintHandle` with no way to omit `exp` (mandatory,
   never `undefined`/`0`/absent on the signed payload).
-- [ ] A1.2 [RED — threat: forgery/tamper] tampered payload segment (re-encoded with a different
+- [x] A1.2 [RED — threat: forgery/tamper] tampered payload segment (re-encoded with a different
   `u`, NOT re-signed) → `verifyHandle` returns `null`; tampered signature segment (bit flipped) →
   `null`; unrecognized `v: 2` payload, correctly signed → `null`; expired `exp` (past), valid
   signature → `null`; a **truncated** signature segment (shorter byte length than the real HMAC)
   → `null`, and critically **does not throw** — `timingSafeEqual` throws on unequal-length
   buffers, so the length check MUST run before the compare or this degrades to a 500 instead of a
   401 upstream.
-- [ ] A1.3 [GREEN] implement `mintHandle`/`verifyHandle`: HMAC-SHA256 over the **base64url payload
+- [x] A1.3 [GREEN] implement `mintHandle`/`verifyHandle`: HMAC-SHA256 over the **base64url payload
   segment TEXT** (never re-serialized/canonicalized JSON — design decision 6), `node:crypto`
   (`createHmac`, `timingSafeEqual`), explicit `Buffer.byteLength` check before the timing-safe
   compare, `DEFAULT_HANDLE_TTL_SECONDS = 3600`, `HandlePayload {v:1,t,u,exp}`. Secret read from
   the `secret` argument only — no direct `process.env` read inside `handle.ts` (callers supply
   `INDIGODB_REALTIME_SECRET`).
-- [ ] A2.1 [GREEN] `packages/realtime/src/protocol.ts` (types/constants only — no runtime
+- [x] A2.1 [GREEN] `packages/realtime/src/protocol.ts` (types/constants only — no runtime
   imports, per the file's existing header contract): add `RealtimeWakeEvent
   {table,op,lsn?,seq?}` as a distinct type (NOT a relaxed `RealtimeEvent` — `pk`/`ts` stay
   required on `RealtimeEvent` so `realtime-delegate.ts`'s unconditional `event.pk` dereference
   keeps compiling under `strict`); `RealtimeLogPage {events,offset,hasMore}`;
   `REALTIME_LOG_PATH = "/api/realtime/log"`; `REALTIME_LOG_PAGE_SIZE = 500`.
-- [ ] A3.1 [RED] `packages/realtime/src/engine.ts` — offset validation: `""`, `"-1"`, `"1e3"`,
+- [x] A3.1 [RED] `packages/realtime/src/engine.ts` — offset validation: `""`, `"-1"`, `"1e3"`,
   `"1; DROP TABLE"`, a 20-digit string all rejected **before any SQL is built**; absent `offset`
   is treated as `"0"`; a valid `/^\d{1,19}$/` string is bound as text and cast `id >
   $2::bigint` (never interpolated, never coerced to a JS `number` — `bigserial` exceeds
   `Number.MAX_SAFE_INTEGER`).
-- [ ] A3.2 [GREEN] implement offset parsing/validation per design decision 7 (regex-gate, reject
+- [x] A3.2 [GREEN] implement offset parsing/validation per design decision 7 (regex-gate, reject
   before query construction, response `offset` returned as a string).
-- [ ] A4.1 [RED] `RealtimeLogDb` port shape: `readOnly<T>(fn)` runs `fn` inside `BEGIN; SET
+- [x] A4.1 [RED] `RealtimeLogDb` port shape: `readOnly<T>(fn)` runs `fn` inside `BEGIN; SET
   TRANSACTION READ ONLY; ...; ROLLBACK` (mirrors `StudioDb`'s `readOnly` shape) but — unlike
   `StudioDb.query(sql)` — `query(sql, params)` accepts bind parameters, since `offset`/table/claim
   are all attacker-influenced and MUST be bound, never interpolated (design decision 5, explicit
   divergence from `StudioDb`).
-- [ ] A4.2 [GREEN] implement `RealtimeLogDb` with a lazily-created `pg.Pool` default
+- [x] A4.2 [GREEN] implement `RealtimeLogDb` with a lazily-created `pg.Pool` default
   (`connectionString`-driven, small `max`), injectable for tests (PGlite/fake-port pattern
   mirroring the `StudioDb` test idiom).
-- [ ] A5.1 [RED] `set_config('app.user_id', $1, true)` runs **inside the same read-only
+- [x] A5.1 [RED] `set_config('app.user_id', $1, true)` runs **inside the same read-only
   transaction** as the log `SELECT` — `set_config(..., true)` is transaction-local, so issuing it
   on a different connection/transaction from the `SELECT` silently fails to scope RLS.
-- [ ] A5.2 [RED] identity used for `app.user_id` comes ONLY from the verified handle's `u` claim —
+- [x] A5.2 [RED] identity used for `app.user_id` comes ONLY from the verified handle's `u` claim —
   a request additionally carrying `?userId=`/an `X-User-Id` header alongside a valid handle sees
   no change in the rows returned (threat: identity spoofing via query/header).
-- [ ] A5.3 [GREEN] `handleLogRequest(req,res)`: verify handle → `401` (opaque, uniform body) on
+- [x] A5.3 [GREEN] `handleLogRequest(req,res)`: verify handle → `401` (opaque, uniform body) on
   any of the 4 failure causes (tampered payload / tampered signature / unknown version /
   expired) or on a missing/malformed `handle` param, including when `INDIGODB_REALTIME_SECRET`
   is unset entirely (design decision 9 — uniform `401` at request time, distinct from PR B's
   startup preflight) → else open `readOnly` tx, `set_config` the claim, `SELECT table_name=$1 AND
   id > $2::bigint ORDER BY id LIMIT 500` → map rows straight to `RealtimeEvent` (no
   physical→schema renaming — the log already stores schema-named keys, design decision 11).
-- [ ] A6.1 [RED] a signature-valid handle naming a table that is no longer `@@realtime` (or never
+- [x] A6.1 [RED] a signature-valid handle naming a table that is no longer `@@realtime` (or never
   was) → `404`, matching SSE's existing unknown-table behavior (design decision 10) — not `401`,
   since the caller already proved it signed that table name itself.
-- [ ] A6.2 [GREEN] wire the stale-table 404 branch, reusing SSE's existing unknown-table check.
-- [ ] A7.1 [RED] cache headers: a response whose `events.length === REALTIME_LOG_PAGE_SIZE`
+- [x] A6.2 [GREEN] wire the stale-table 404 branch, reusing SSE's existing unknown-table check.
+- [x] A7.1 [RED] cache headers: a response whose `events.length === REALTIME_LOG_PAGE_SIZE`
   (page filled, `hasMore: true`) → `Cache-Control: public, max-age=31536000, immutable`; a
   response with fewer than `REALTIME_LOG_PAGE_SIZE` events, **including zero** → `Cache-Control:
   no-store` (the inverted-TTL regression guard: an empty head-of-log page must never be
   cacheable) — one predicate (`rows.length === PAGE_SIZE`) drives BOTH `hasMore` and the header,
   never two independently-computed checks that could disagree (design decision 8).
-- [ ] A7.2 [GREEN] implement the sealed/head cache-header branch off the single `rows.length ===
+- [x] A7.2 [GREEN] implement the sealed/head cache-header branch off the single `rows.length ===
   PAGE_SIZE` predicate.
-- [ ] A8.1 [RED — threat: SQL injection] `offset=1;DROP TABLE` and a handle minted with `t = 'x"
+- [x] A8.1 [RED — threat: SQL injection] `offset=1;DROP TABLE` and a handle minted with `t = 'x"
   OR 1=1'` both return no rows / no server error (table name and claim are bound parameters
   sourced only from the verified payload, never string-built into SQL).
-- [ ] A8.2 [RED — threat: amplification via client-tunable page size] `?limit=100000` (or any
+- [x] A8.2 [RED — threat: amplification via client-tunable page size] `?limit=100000` (or any
   limit-shaped param) never returns more than `REALTIME_LOG_PAGE_SIZE` rows — `LIMIT` is the
   module constant, not client input.
-- [ ] A8.3 [RED — threat: routing/method confusion] `POST`/`HEAD` to `REALTIME_LOG_PATH` → `405`;
+- [x] A8.3 [RED — threat: routing/method confusion] `POST`/`HEAD` to `REALTIME_LOG_PATH` → `405`;
   `?handle=` appended to the existing SSE path still serves SSE, never the JSON page (the two
   paths are distinct per design decision 3 — SSE `no-cache` and the log's `immutable` must never
   share a URL).
-- [ ] A8.4 [GREEN] wire method-guard (`405` for non-GET) and confirm route separation.
-- [ ] A9.1 [RED — threat: secret handling] the secret never appears in any response body, error
+- [x] A8.4 [GREEN] wire method-guard (`405` for non-GET) and confirm route separation.
+- [x] A9.1 [RED — threat: secret handling] the secret never appears in any response body, error
   message, or thrown error's `.message` across every failure path exercised above.
-- [ ] A9.2 [GREEN] audit error paths; confirm no interpolation of `secret`/token internals into
+- [x] A9.2 [GREEN] audit error paths; confirm no interpolation of `secret`/token internals into
   user-facing output.
-- [ ] A10.1 [GREEN] `packages/realtime/src/engine.ts`: wire `handleLogRequest` as a second route
+- [x] A10.1 [GREEN] `packages/realtime/src/engine.ts`: wire `handleLogRequest` as a second route
   branch (`attach()` publishes both paths — this is `attach()`'s own internal dispatch, distinct
   from decision 4's finding that the HOST processes don't call `attach()` at all, see A11).
-- [ ] A10.2 [GREEN] `packages/realtime/src/index.ts`: export `handleLogRequest`,
+- [x] A10.2 [GREEN] `packages/realtime/src/index.ts`: export `handleLogRequest`,
   `RealtimeLogDb`, `mintHandle`, `verifyHandle`, `RealtimeWakeEvent`, `RealtimeLogPage`,
   `REALTIME_LOG_PATH`, `REALTIME_LOG_PAGE_SIZE`.
-- [ ] A11.1 [RED] `packages/cli/src/index.ts` (~line 244, the standalone `indigodb realtime`
+- [x] A11.1 [RED] `packages/cli/src/index.ts` (~line 244, the standalone `indigodb realtime`
   daemon's manual routing) and `packages/cli/src/studio-server.ts` (~line 330, the embedded
   server's manual routing): each gets its own explicit `REALTIME_LOG_PATH` branch — confirmed
   necessary because **neither host calls `attach()`** (design finding, decision 4); a request to
   `REALTIME_LOG_PATH` on either host reaches `handleLogRequest`, not a 404.
-- [ ] A11.2 [GREEN] add the explicit branch to both `cli/src/index.ts` and
+- [x] A11.2 [GREEN] add the explicit branch to both `cli/src/index.ts` and
   `cli/src/studio-server.ts`.
-- [ ] A12.1 [RED — real PG] `packages/realtime/test/endpoint.mjs`: cursor correctness — 3 rows in
+- [x] A12.1 [RED — real PG] `packages/realtime/test/endpoint.mjs`: cursor correctness — 3 rows in
   one commit sharing one `lsn` are each returned exactly once, ordered by `id`; paging to
   exhaustion via successive `offset`s eventually returns `hasMore: false`.
-- [ ] A12.2 [RED — real PG, own explicit task per apply prompt — do NOT let this be silently
+- [x] A12.2 [RED — real PG, own explicit task per apply prompt — do NOT let this be silently
   satisfied by a default/superuser connection] **RLS isolation MUST run as a non-superuser,
   non-`BYPASSRLS` role.** `FORCE ROW LEVEL SECURITY` binds the table owner but never a superuser
   connection, so a test asserting isolation over a superuser/`BYPASSRLS` pool proves nothing (top
@@ -132,16 +132,16 @@ Chain strategy: feature-branch-chain
   request returns only its own identity's rows, enforced by the policy, not application code.
   Explicitly document in the test file header that this is a rollback boundary in itself: if this
   test is ever weakened to run as a superuser, it silently stops proving RLS isolation at all.
-- [ ] A12.3 [RED — real PG] byte-identity: the same `(handle, offset)` sealed page re-requested
+- [x] A12.3 [RED — real PG] byte-identity: the same `(handle, offset)` sealed page re-requested
   returns an identical response body.
-- [ ] A12.4 [GREEN] wire `endpoint.mjs` into the same `postgres` CI lane already used by
+- [x] A12.4 [GREEN] wire `endpoint.mjs` into the same `postgres` CI lane already used by
   `log.mjs`/`buckets.mjs` (self-skips when `INDIGODB_TEST_DATABASE_URL` is unset). No CI workflow
   changes needed — `packages/realtime`'s `test` script already runs in that lane.
-- [ ] A13.1 [VERIFY] `pnpm --filter @indigodb/realtime test` (real PG present) and confirm
+- [x] A13.1 [VERIFY] `pnpm --filter @indigodb/realtime test` (real PG present) and confirm
   self-skip when `INDIGODB_TEST_DATABASE_URL` is unset.
-- [ ] A13.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` (workspace-wide; no `crates/` touched
+- [x] A13.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` (workspace-wide; no `crates/` touched
   in this PR — no WASM rebuild, no snapshot regen).
-- [ ] A13.3 [COMMIT] `feat(realtime,cli): add cacheable GET /api/realtime/log endpoint`.
+- [x] A13.3 [COMMIT] `feat(realtime,cli): add cacheable GET /api/realtime/log endpoint`.
 
 ## PR B — Guard removal + SSE wake-up scoping + WASM (base = PR A)
 
