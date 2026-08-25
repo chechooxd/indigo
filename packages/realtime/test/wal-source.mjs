@@ -434,7 +434,7 @@ await check("multi-row batch: one transaction inserting 3 rows produces exactly 
   strictEqual(writer.calls[0].params.length, 27);
 });
 
-await check("buckets is written as NULL for every row in this PR (bucket computation is PR B's job)", async () => {
+await check("buckets is written as NULL when the table declares no @@allow block at all (public — computeBuckets(table.allow===undefined))", async () => {
   const { source, onEvent, onError } = newSource();
   const rel = relation("Post", ["id", "title", "body_text"]);
   const writer = fakeWriter();
@@ -452,7 +452,151 @@ await check("buckets is written as NULL for every row in this PR (bucket computa
   );
   await source["chain"];
   const [{ params }] = writer.calls;
-  strictEqual(params[params.length - 1], null, "buckets column must be NULL in this PR");
+  strictEqual(params[params.length - 1], null, "buckets column must be NULL when the table has no @@allow block");
+});
+
+// ── B3.1 — computeBuckets wiring: WalSource passes its result into the log
+// INSERT's buckets column ────────────────────────────────────────────────
+//
+// Hand-built `ResolvedSchema` fixtures (B1.3's flagged constraint): a
+// `@@realtime` model with `@@allow` rules is unreachable through a compiled
+// `.indigo` source file (`validate.rs:86-97`'s guard) until slice 4, so
+// this wiring is exercised against an in-memory schema, never `testSchema()`.
+
+function schemaWithAllow(allow) {
+  return {
+    tables: [
+      {
+        name: "Post",
+        dbName: "Post",
+        realtime: true,
+        columns: [
+          { name: "id", dbName: "id" },
+          { name: "ownerId", dbName: "ownerId" },
+          { name: "title", dbName: "title" },
+        ],
+        primaryKey: ["id"],
+        allow,
+      },
+    ],
+  };
+}
+
+const claim = { kind: "claim", name: "userId" };
+const field = (name) => ({ kind: "field", name });
+
+await check("B3.1: an INSERT on a table with a field==claim read rule writes a non-NULL buckets array derived from the row", async () => {
+  const source = new WalSource(
+    "postgres://unused/db",
+    schemaWithAllow([{ action: "read", left: field("ownerId"), right: claim }]),
+  );
+  const writer = fakeWriter();
+  source["writer"] = writer;
+  source["service"] = { acknowledge: async () => true };
+  const rel = relation("Post", ["id", "ownerId", "title"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, ownerId: "u1", title: "t" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    (e) => {},
+    (e) => {},
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(params[params.length - 1], ["u1"]);
+});
+
+await check("B3.1: a table with @@allow but no read rule (create-only) writes buckets = [] (deny-all, not NULL)", async () => {
+  const source = new WalSource(
+    "postgres://unused/db",
+    schemaWithAllow([{ action: "create", left: field("ownerId"), right: claim }]),
+  );
+  const writer = fakeWriter();
+  source["writer"] = writer;
+  source["service"] = { acknowledge: async () => true };
+  const rel = relation("Post", ["id", "ownerId", "title"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, ownerId: "u1", title: "t" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    (e) => {},
+    (e) => {},
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(params[params.length - 1], []);
+});
+
+await check("B3.1: UPDATE unions buckets from both new and old (ownership change) — the losing owner still observes the row leaving their view", async () => {
+  const source = new WalSource(
+    "postgres://unused/db",
+    schemaWithAllow([{ action: "read", left: field("ownerId"), right: claim }]),
+  );
+  const writer = fakeWriter();
+  source["writer"] = writer;
+  source["service"] = { acknowledge: async () => true };
+  const rel = relation("Post", ["id", "ownerId", "title"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      {
+        tag: "update",
+        relation: rel,
+        old: { id: 1, ownerId: "u1", title: "t" },
+        new: { id: 1, ownerId: "u2", title: "t" },
+      },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    (e) => {},
+    (e) => {},
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(params[params.length - 1].sort(), ["u1", "u2"]);
+});
+
+await check("B3.1: buckets are computed from the RAW physical-column-keyed row, not the schema-field-renamed wire event", async () => {
+  // `@map`-renamed column: physical `owner_id`, schema field `ownerId`. The
+  // AllowRule's field operand always carries the PHYSICAL name.
+  const source = new WalSource("postgres://unused/db", {
+    tables: [
+      {
+        name: "Post",
+        dbName: "Post",
+        realtime: true,
+        columns: [
+          { name: "id", dbName: "id" },
+          { name: "ownerId", dbName: "owner_id" },
+        ],
+        primaryKey: ["id"],
+        allow: [{ action: "read", left: field("owner_id"), right: claim }],
+      },
+    ],
+  });
+  const writer = fakeWriter();
+  source["writer"] = writer;
+  source["service"] = { acknowledge: async () => true };
+  const rel = relation("Post", ["id", "owner_id"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, owner_id: "u1" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    (e) => {},
+    (e) => {},
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(params[params.length - 1], ["u1"]);
 });
 
 await check("lsn: every emitted event carries the commit LSN as the X/Y hex string pg_lsn prints", async () => {
