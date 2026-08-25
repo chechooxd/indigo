@@ -409,6 +409,75 @@
             ]
           }
         ]
+      },
+      {
+        "name": "RealtimeAllowed",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "ownerId",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": []
+          },
+          {
+            "name": "allow",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "reference",
+                  "value": "read"
+                }
+              },
+              {
+                "name": "",
+                "value": {
+                  "kind": "comparison",
+                  "op": "==",
+                  "left": {
+                    "kind": "path",
+                    "segments": [
+                      "auth",
+                      "userId"
+                    ]
+                  },
+                  "right": {
+                    "kind": "path",
+                    "segments": [
+                      "this",
+                      "ownerId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
       }
     ],
     "enums": [],
@@ -725,6 +794,52 @@
         "foreignKeys": [],
         "indexes": [],
         "relations": [],
+        "allow": [
+          {
+            "action": "read",
+            "left": {
+              "kind": "claim",
+              "name": "userId"
+            },
+            "right": {
+              "kind": "field",
+              "name": "ownerId"
+            }
+          }
+        ]
+      },
+      {
+        "name": "RealtimeAllowed",
+        "dbName": "RealtimeAllowed",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "ownerId",
+            "dbName": "ownerId",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true,
         "allow": [
           {
             "action": "read",
