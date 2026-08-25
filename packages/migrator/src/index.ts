@@ -18,6 +18,8 @@ export {
   renderReplicationPreSql,
   renderPublicationSql,
   renderReplicaIdentity,
+  REALTIME_LOG_TABLE,
+  renderRealtimeLogSql,
   mapScalarToPg,
   quoteIdent,
   indexName,

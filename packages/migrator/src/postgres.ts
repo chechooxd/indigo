@@ -365,6 +365,54 @@ export function renderReplicaIdentity(table: ResolvedTable): string {
   return `ALTER TABLE ${quoteIdent(table.dbName)} REPLICA IDENTITY ${table.realtime ? "FULL" : "DEFAULT"};`;
 }
 
+/**
+ * Shared, LSN-addressed shape log (`realtime-shape-log` design). One table
+ * for every `@@realtime` model, discriminated by `table_name` — same
+ * internal-bookkeeping precedent as `_indigo_migrations`. `id bigserial` is
+ * the PRIMARY KEY (not `lsn`: many rows share one commit LSN, so `lsn` alone
+ * is not unique); canonical read order is `ORDER BY lsn, id`, which holds
+ * because there is exactly one writer (the replication slot is exclusive).
+ *
+ * PR A owns table + indexes only. RLS (`ENABLE`/`FORCE` + policies) is PR
+ * B's block, appended by `renderRealtimeLogSql` once decision 6/7's hand
+ * -written SQL lands — kept as a single exported entry point so
+ * `renderPushSql` never needs to know which PR added which half.
+ */
+export const REALTIME_LOG_TABLE = "_indigo_realtime_log";
+
+/**
+ * `[]` when no table is `@@realtime` (nothing to log) — `renderPushSql`
+ * skips this branch entirely, matching how `renderPublicationSql` already
+ * treats the empty realtime set. Table + 3 indexes when at least one table
+ * is `@@realtime`; DROP when none are (design decision 13, routed through
+ * `forced(...)` by `migrate.ts`, not this idempotent push renderer, which
+ * only ever emits the safe `IF NOT EXISTS`/`DROP TABLE IF EXISTS` forms).
+ */
+export function renderRealtimeLogSql(schema: ResolvedSchema): string[] {
+  const t = quoteIdent(REALTIME_LOG_TABLE);
+  const hasRealtime = schema.tables.some((table) => table.realtime);
+  if (!hasRealtime) {
+    return [`DROP TABLE IF EXISTS ${t};`];
+  }
+  return [
+    `CREATE TABLE IF NOT EXISTS ${t} (\n` +
+      `  id         bigserial PRIMARY KEY,\n` +
+      `  lsn        pg_lsn      NOT NULL,\n` +
+      `  txid       text,\n` +
+      `  table_name text        NOT NULL,\n` +
+      `  op         text        NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),\n` +
+      `  pk         jsonb       NOT NULL,\n` +
+      `  "new"      jsonb,\n` +
+      `  "old"      jsonb,\n` +
+      `  ts         timestamptz NOT NULL,\n` +
+      `  buckets    text[]\n` +
+      `);`,
+    `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_lsn_idx`)} ON ${t} (lsn, id);`,
+    `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_table_idx`)} ON ${t} (table_name, lsn, id);`,
+    `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${REALTIME_LOG_TABLE}_buckets_idx`)} ON ${t} USING gin (buckets);`,
+  ];
+}
+
 // ─── Row-Level Security (@@allow → policies, design decisions 8/11/12/13) ────
 
 /**
@@ -632,6 +680,7 @@ export function renderPushSql(schema: ResolvedSchema): string {
   for (const table of schema.tables) blocks.push(renderReplicaIdentity(table));
   for (const table of schema.tables) blocks.push(renderDropTrigger(table));
   blocks.push(renderDropLegacyNotify());
+  blocks.push(...renderRealtimeLogSql(schema));
 
   // 6. Row-Level Security (@@allow → policies). `renderRlsBlock` itself
   // decides ENABLE+FORCE+policies / DISABLE+prune / nothing per table.

@@ -326,6 +326,40 @@ await check("options.exclude defaults to _indigo_migrations, is filterable", asy
   });
 });
 
+// ─── realtime-shape-log decision 5: _indigo_realtime_log is excluded by default ──
+//
+// RED without the fix: introspectResolvedSchema sees the log as an ordinary
+// user table (it has no ResolvedSchema counterpart), so
+// planMigration(introspected, next) emits a DROP TABLE "_indigo_realtime_log"
+// CASCADE for every schema with an @@realtime model — breaking the
+// round-trip no-op invariant. The full-corpus round-trip loop below already
+// proves this end to end via the realtime-added/-mapped-table/-second-table
+// fixtures (their push SQL now includes the log table); this is the direct,
+// named unit assertion for the same fix.
+
+await check("options.exclude defaults also drop _indigo_realtime_log (decision 5, prevents a false DROP TABLE ... CASCADE)", async () => {
+  await withDatabase(async (db) => {
+    await assertApplies(
+      db,
+      `CREATE TABLE "_indigo_realtime_log" (
+         "id" bigserial PRIMARY KEY,
+         "lsn" pg_lsn NOT NULL,
+         "table_name" text NOT NULL,
+         "op" text NOT NULL,
+         "pk" jsonb NOT NULL,
+         "ts" timestamptz NOT NULL
+       );
+       CREATE TABLE "User" ("id" integer NOT NULL);`,
+    );
+    const schema = await introspectResolvedSchema(queryOf(db));
+    ok(
+      !schema.tables.some((t) => t.dbName === "_indigo_realtime_log"),
+      "_indigo_realtime_log must be excluded by default — otherwise planMigration would emit a false DROP TABLE ... CASCADE",
+    );
+    ok(schema.tables.some((t) => t.dbName === "User"));
+  });
+});
+
 // ─── B.5 / B.10: round-trip over the full fixture corpus ────────────────────
 //
 // For every fixture's `next.indigo`: renderPushSql -> apply to a fresh PGlite
