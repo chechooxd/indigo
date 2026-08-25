@@ -65,5 +65,36 @@ export interface RealtimeReady {
   tables: string[];
 }
 
+/**
+ * A data-free SSE wake-up signal for `@@allow`-protected models (PR B wires
+ * `dispatch()` to emit this — this PR only adds the type). Distinct from
+ * `RealtimeEvent`: `pk`/`ts` are required there and
+ * `realtime-delegate.ts` dereferences `event.pk` unconditionally, so a
+ * wake-up frame — which by design carries no row data — cannot reuse that
+ * shape without relaxing fields `@indigodb/client` depends on being present.
+ */
+export interface RealtimeWakeEvent {
+  table: string;
+  op: RealtimeOp;
+  /** Absent when the source has no commit LSN available (`PgNotifySource`). */
+  lsn?: string;
+  seq?: number;
+}
+
+/** Response body of `GET ?handle&offset`. */
+export interface RealtimeLogPage<Row = Record<string, unknown>> {
+  events: RealtimeEvent<Row>[];
+  /** Next request's cursor — `_indigo_realtime_log.id`, as a decimal string. */
+  offset: string;
+  /** `true` only when the page was filled to `REALTIME_LOG_PAGE_SIZE`. */
+  hasMore: boolean;
+}
+
 /** Default HTTP path the engine serves SSE subscriptions on. */
 export const REALTIME_PATH = "/api/realtime";
+
+/** HTTP path the engine serves the cacheable `GET ?handle&offset` log page on. */
+export const REALTIME_LOG_PATH = "/api/realtime/log";
+
+/** Server-fixed page size for `GET ?handle&offset` — never client-supplied. */
+export const REALTIME_LOG_PAGE_SIZE = 500;
