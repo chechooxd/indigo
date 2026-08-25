@@ -160,6 +160,37 @@ export async function assertLogicalReplication(client: ReplicationPreflightClien
   }
 }
 
+/**
+ * `indigodb realtime` daemon startup preflight: the signing secret is only
+ * required when it will actually be used. The daemon serves `REALTIME_LOG_PATH`
+ * unconditionally, but that endpoint only exists to give an RLS-scoped read
+ * path to `@@realtime`+`@@allow` models — a schema with no such model never
+ * mints or verifies a handle, so an unset secret is harmless there
+ * (spec: "Requirement: Daemon startup preflight requires the signing
+ * secret"). SCHEMA-CONDITIONAL by design — narrower than "fail whenever the
+ * env var happens to be unset" (that broader unconditional form was PR A's
+ * intentional safe-direction deviation pending this narrowing).
+ *
+ * The predicate is "any `@@allow` block at all" (`table.allow !==
+ * undefined`), matching the corrected SSE wake-up scoping predicate — not
+ * "carries a `read` `AllowRule`" — since a create-only `@@allow` model still
+ * needs the secret to serve its RLS-scoped log page.
+ */
+export function assertRealtimeSecretPresent(
+  resolved: Pick<ResolvedSchema, "tables">,
+  secret: string | undefined,
+): void {
+  const needsSecret = resolved.tables.some((t) => t.realtime && t.allow !== undefined);
+  if (needsSecret && !secret) {
+    console.error(
+      `❌ INDIGODB_REALTIME_SECRET is not set. This schema has a model that is both ` +
+        `@@realtime and @@allow, whose /api/realtime/log page requires it to mint/verify ` +
+        `handles. Set it and retry.`,
+    );
+    process.exit(1);
+  }
+}
+
 /** Determines the client output path (generator block > flag > default). */
 export function resolveOutputPath(ast: Schema, flag?: string): string {
   const fromGenerator = ast.generators[0]?.output;
