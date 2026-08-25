@@ -22,6 +22,7 @@ import {
   resolveOutputPath,
   writePulledSchema,
   assertLogicalReplication,
+  assertRealtimeSecretPresent,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -230,23 +231,17 @@ program
   .option("-p, --port <port>", "Port", "4477")
   .action(async (options: { schema: string; port: string }) => {
     loadEnv();
-    // Startup preflight (PR A): the daemon now serves the signed-handle log
-    // endpoint (REALTIME_LOG_PATH). An unset secret means every handle
-    // minted or verified against it is unusable/insecure — fail loudly and
-    // immediately rather than silently start a daemon that can never
-    // authenticate a request to that endpoint.
-    if (!process.env.INDIGODB_REALTIME_SECRET) {
-      console.error(
-        `❌ INDIGODB_REALTIME_SECRET is not set. The realtime daemon serves ` +
-          `${REALTIME_LOG_PATH}, which requires it to mint/verify handles. Set it and retry.`,
-      );
-      process.exit(1);
-    }
     const { resolved } = loadSchema(options.schema);
     if (!resolved.tables.some((t) => t.realtime)) {
       console.error("❌ No @@realtime tables in the schema. Mark a Table with @@realtime first.");
       process.exit(1);
     }
+    // Startup preflight (PR B, narrowed from PR A's unconditional check per
+    // spec): the daemon now serves the signed-handle log endpoint
+    // (REALTIME_LOG_PATH), but a schema with no @@realtime+@@allow model
+    // never mints or verifies a handle at all — the secret is only required
+    // when it will actually be used.
+    assertRealtimeSecretPresent(resolved, process.env.INDIGODB_REALTIME_SECRET);
     const connectionString = resolveConnectionString(resolved);
     const engine = new RealtimeEngine({ connectionString, schema: resolved });
     const port = Number(options.port);

@@ -1117,10 +1117,6 @@
     {
       "message": "Unsupported \"name\" argument on @@allow on model \"NamedArgsRejected\".",
       "model": "NamedArgsRejected"
-    },
-    {
-      "message": "Model \"RealtimeAndAllow\" cannot be both @@realtime and @@allow — realtime fan-out has no row-level filter yet.",
-      "model": "RealtimeAndAllow"
     }
   ]
 }

@@ -18,7 +18,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/studio-server.mjs && node test/pull.mjs && node test/preflight.mjs && node test/migrate-runner.mjs"
+    "test": "node test/studio-server.mjs && node test/pull.mjs && node test/preflight.mjs && node test/realtime-secret-preflight.mjs && node test/migrate-runner.mjs"
   },
   "dependencies": {
     "@indigodb/core": "workspace:*",

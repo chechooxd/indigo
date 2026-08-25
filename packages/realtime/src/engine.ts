@@ -18,7 +18,13 @@
 import type { IncomingMessage, ServerResponse, Server } from "node:http";
 import pg from "pg";
 import type { ResolvedSchema } from "@indigodb/core";
-import type { RealtimeEvent, RealtimeReady, RealtimeLogPage, RealtimeOp } from "./protocol.js";
+import type {
+  RealtimeEvent,
+  RealtimeReady,
+  RealtimeLogPage,
+  RealtimeOp,
+  RealtimeWakeEvent,
+} from "./protocol.js";
 import { REALTIME_PATH, REALTIME_LOG_PATH, REALTIME_LOG_PAGE_SIZE, type RealtimeSource } from "./protocol.js";
 import { WalSource } from "./wal-source.js";
 import { verifyHandle } from "./handle.js";
@@ -100,6 +106,17 @@ export class RealtimeEngine {
   private readonly heartbeatMs: number;
   private readonly onError: (error: Error) => void;
   private readonly realtimeModels: Set<string>;
+  /**
+   * Models carrying an `@@allow` block at all — ANY block, regardless of
+   * which actions it names (corrected predicate, `realtime-live-endpoint`
+   * spec fix, Engram #734/#735). `computeBuckets`
+   * (`@indigodb/migrator/postgres.ts`) returns `[]` (deny-all) for an
+   * `@@allow` block with no `read` rule, because the real table has RLS
+   * enabled and denies every read without a matching policy — so a
+   * create-only `@@allow` model must ALSO be scoped to wake-up-only SSE, not
+   * just models whose `@@allow` happens to include a `read` rule.
+   */
+  private readonly allowModels: Set<string>;
   private readonly subscribers = new Set<Subscriber>();
   private readonly listeners = new Set<(event: RealtimeEvent) => void>();
   private heartbeat: NodeJS.Timeout | null = null;
@@ -121,6 +138,9 @@ export class RealtimeEngine {
     this.onError = options.onError ?? ((err) => console.error("[indigodb realtime]", err.message));
     this.realtimeModels = new Set(
       options.schema.tables.filter((t) => t.realtime).map((t) => t.name),
+    );
+    this.allowModels = new Set(
+      options.schema.tables.filter((t) => t.allow !== undefined).map((t) => t.name),
     );
     this.injectedLogDb = options.logDb ?? null;
   }
@@ -357,9 +377,17 @@ export class RealtimeEngine {
 
   private dispatch(event: RealtimeEvent): void {
     for (const listener of this.listeners) listener(event);
+    // Any `@@allow` block at all (not just one carrying a `read` rule) scopes
+    // SSE to a data-free wake-up signal — see `allowModels`'s doc comment.
+    const scoped = this.allowModels.has(event.table);
     for (const sub of this.subscribers) {
       if (sub.tables && !sub.tables.has(event.table)) continue;
       sub.seq += 1;
+      if (scoped) {
+        const wake: RealtimeWakeEvent = { table: event.table, op: event.op, lsn: event.lsn, seq: sub.seq };
+        sub.res.write(`id: ${sub.seq}\nevent: wake\ndata: ${JSON.stringify(wake)}\n\n`);
+        continue;
+      }
       const payload: RealtimeEvent = { ...event, seq: sub.seq };
       sub.res.write(`id: ${sub.seq}\nevent: change\ndata: ${JSON.stringify(payload)}\n\n`);
     }
