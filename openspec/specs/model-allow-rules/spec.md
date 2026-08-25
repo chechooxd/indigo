@@ -82,17 +82,6 @@ Postgres's native permissive-OR semantics govern runtime evaluation.
 - WHEN the schema is resolved
 - THEN the IR carries two distinct, ordered rules under the `read` action
 
-### Requirement: `@@realtime` and `@@allow` are mutually exclusive on one model
-
-The compiler MUST reject a model that declares both `@@realtime` and `@@allow`, with a located
-diagnostic, because the realtime fan-out path has no row-level filter.
-
-#### Scenario: Combination rejected
-
-- GIVEN a model with both `@@realtime` and `@@allow(read, auth.userId == this.ownerId)`
-- WHEN the schema is validated
-- THEN a located diagnostic is produced naming the conflicting attributes
-
 ### Requirement: Resolved allow rules are exposed on the table IR
 
 `packages/core/src/ir.ts` MUST mirror the Rust-resolved allow rules as an ordered list per
