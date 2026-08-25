@@ -730,6 +730,24 @@ fn fixture_18_ir_is_populated_in_pr_b() {
 }
 
 #[test]
+fn fixture_18_realtime_and_allow_co_occur_on_one_resolved_table() {
+    // `realtime-live-endpoint` PR B: `realtime: true` and `allow: [...]` now
+    // co-occur on a single `ResolvedTable` — the compiler guard that used to
+    // reject this combination is lifted. Snapshot-covered on the accept
+    // path, not just "no longer rejected" (see fixtures.rs's fixture 19
+    // test for the rejection-side counterpart).
+    let source = fs::read_to_string(fixtures_dir().join("18-allow-rules.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let table = resolved.tables.iter().find(|t| t.name == "RealtimeAllowed").unwrap();
+
+    assert_eq!(table.realtime, Some(true), "RealtimeAllowed must resolve with realtime: true");
+    let allow = table.allow.as_ref().expect("RealtimeAllowed has allow rules");
+    assert_eq!(allow.len(), 1);
+    assert_eq!(allow[0].action, ir::AllowAction::Read);
+}
+
+#[test]
 fn fixture_19_rejected_allow_reports_every_diagnostic_class() {
     let source = fs::read_to_string(fixtures_dir().join("19-rejected-allow.indigo")).unwrap();
     let schema = parse_source(&source).unwrap();
@@ -744,8 +762,15 @@ fn fixture_19_rejected_allow_reports_every_diagnostic_class() {
     assert!(has("ClaimVsLiteral", "must be compared against a this.<field> reference"), "{errors:?}");
     assert!(has("ConstantPredicate", "references neither a field nor auth.userId"), "{errors:?}");
     assert!(has("PolicyNameTooLong", "exceeds 63 bytes"), "{errors:?}");
-    assert!(has("RealtimeAndAllow", "cannot be both @@realtime and @@allow"), "{errors:?}");
     assert!(has("NamedArgsRejected", "\"name\""), "{errors:?}");
+
+    // `RealtimeAndAllow` no longer produces a diagnostic here
+    // (realtime-live-endpoint PR B lifted the @@realtime+@@allow guard) —
+    // see `fixture_19_realtime_and_allow_is_no_longer_rejected` below.
+    assert!(
+        !errors.iter().any(|e| e.model.as_deref() == Some("RealtimeAndAllow")),
+        "RealtimeAndAllow must produce zero diagnostics now that the guard is lifted: {errors:?}"
+    );
 
     // Exactly one diagnostic per isolated table (no unexpected extras).
     for model in [
@@ -757,7 +782,6 @@ fn fixture_19_rejected_allow_reports_every_diagnostic_class() {
         "ClaimVsLiteral",
         "ConstantPredicate",
         "PolicyNameTooLong",
-        "RealtimeAndAllow",
         "NamedArgsRejected",
     ] {
         let count = errors.iter().filter(|e| e.model.as_deref() == Some(model)).count();

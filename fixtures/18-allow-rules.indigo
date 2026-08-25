@@ -43,3 +43,15 @@ Table Doc {
   ownerId String
   @@allow(read, auth.userId == this.ownerId)
 }
+
+// `@@realtime` + `@@allow` co-declared (realtime-live-endpoint PR B): the
+// compiler guard rejecting this combination is lifted; `realtime: true` and
+// `allow: [...]` now co-occur on one `ResolvedTable`. Safety is jointly
+// enforced elsewhere — SSE wake-up scoping (packages/realtime) and the
+// RLS-enforced GET ?handle&offset read path — not by the compiler.
+Table RealtimeAllowed {
+  id      String @id
+  ownerId Int
+  @@realtime
+  @@allow(read, auth.userId == this.ownerId)
+}

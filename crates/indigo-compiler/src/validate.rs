@@ -83,18 +83,10 @@ pub fn validate(schema: &Schema) -> Vec<ValidationError> {
             });
         }
 
-        // @@realtime + @@allow: the realtime fan-out has no row-level filter
-        // yet, so combining both would leak RLS-hidden rows (design decision 4).
-        if get_attr(&model.attributes, "realtime").is_some() && has_attr(&model.attributes, "allow") {
-            errors.push(ValidationError {
-                message: format!(
-                    "Model \"{}\" cannot be both @@realtime and @@allow — realtime fan-out has no row-level filter yet.",
-                    model.name
-                ),
-                model: Some(model.name.clone()),
-                field: None,
-            });
-        }
+        // @@realtime + @@allow is now accepted (realtime-live-endpoint PR B):
+        // the SSE wake-up scoping in packages/realtime/src/engine.ts's
+        // dispatch() plus the RLS-enforced GET ?handle&offset read path
+        // ship together and jointly make the combination safe.
     }
 
     errors
@@ -1576,7 +1568,14 @@ Table Post {
     }
 
     #[test]
-    fn allow_realtime_conflict_is_rejected() {
+    fn allow_realtime_combination_is_accepted() {
+        // `realtime-live-endpoint` PR B: the `@@realtime` + `@@allow`
+        // mutual-exclusion guard is lifted. Guard removal and SSE wake-up
+        // scoping (packages/realtime/src/engine.ts) ship together — the
+        // scoped `{table,op,lsn}` SSE frame plus the RLS-enforced
+        // `GET ?handle&offset` read path are jointly what makes the
+        // combination safe. No diagnostic naming this conflict should be
+        // produced for a model combining both.
         let errors = validate_source(
             r#"
 Table Post {
@@ -1587,8 +1586,10 @@ Table Post {
 }
 "#,
         );
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("cannot be both @@realtime and @@allow"));
+        assert!(
+            !errors.iter().any(|e| e.message.contains("cannot be both @@realtime and @@allow")),
+            "expected zero diagnostics naming the @@realtime+@@allow conflict, got: {errors:?}"
+        );
     }
 
     #[test]
