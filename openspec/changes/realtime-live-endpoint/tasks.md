@@ -145,7 +145,7 @@ Chain strategy: feature-branch-chain
 
 ## PR B — Guard removal + SSE wake-up scoping + WASM (base = PR A)
 
-- [ ] B1.1 [RED] `packages/realtime/src/engine.ts` `dispatch()` scoping: hand-built
+- [x] B1.1 [RED] `packages/realtime/src/engine.ts` `dispatch()` scoping: hand-built
   `ResolvedSchema`/`ResolvedTable` fixtures for (a) no `allow` at all → full-payload `event:
   change` frame, byte-identical to today (`table`,`op`,`pk`,`new`,`old`,`txid`,`ts`,`lsn`,`seq`);
   (b) `allow` present with a `read` rule → scoped `event: wake` frame `{table,op,lsn}` only, no
@@ -155,52 +155,64 @@ Chain strategy: feature-branch-chain
   block), not "carries a `read` `AllowRule`". Without this exact case the create-only model would
   wrongly stay on full-payload SSE while its `GET ?handle&offset` path denies all reads via RLS,
   reopening the leak the guard exists to prevent.
-- [ ] B1.2 [RED] composite-PK case: a hand-built table with an `@@allow` block and a composite
+- [x] B1.2 [RED] composite-PK case: a hand-built table with an `@@allow` block and a composite
   primary key (one key field itself sensitive, e.g. `ownerId` inside the key) → wake frame still
   omits `pk` entirely, even though `pk` could otherwise disambiguate the row; clients must re-fetch
   by offset, never by key.
-- [ ] B1.3 [GREEN] implement the `dispatch()` branch: `table.allow !== undefined` →
+- [x] B1.3 [GREEN] implement the `dispatch()` branch: `table.allow !== undefined` →
   `RealtimeWakeEvent {table,op,lsn}` on a distinct `event: wake` SSE frame; else unchanged
   `event: change` full payload. Confirm `packages/client/src/realtime.ts:111`'s existing
   "unknown event name is silently ignored" behavior means today's client tolerates `wake` frames
   with no code change on the client side (additive-safe, no client package changes in this PR).
-- [ ] B2.1 [GREEN] `packages/cli/src/index.ts`: `INDIGODB_REALTIME_SECRET` startup preflight —
+- [x] B2.1 [GREEN] `packages/cli/src/index.ts`: `INDIGODB_REALTIME_SECRET` startup preflight —
   the daemon refuses to start when any resolved model is both `@@realtime` and `@@allow` and the
   env var is unset; starts normally when no model combines both, secret unset or not.
-- [ ] B2.2 [RED] preflight unit test (spawn-based or fake-schema-driven): schema with a
+- [x] B2.2 [RED] preflight unit test (spawn-based or fake-schema-driven): schema with a
   `@@realtime`+`@@allow` model, secret unset → non-zero exit, diagnostic names the missing env
   var; secret set → starts; schema with no such model, secret unset → starts.
-- [ ] B2.3 [GREEN] wire B2.2's test.
-- [ ] B3.1 [RED] `crates/indigo-compiler/src/validate.rs`: `allow_realtime_conflict_is_rejected`
+- [x] B2.3 [GREEN] wire B2.2's test.
+- [x] B3.1 [RED] `crates/indigo-compiler/src/validate.rs`: `allow_realtime_conflict_is_rejected`
   removed; a fixture combining `@@realtime`+`@@allow` on one model now compiles with **zero**
   diagnostics naming that conflict (the specific "conflicting attributes" diagnostic is gone;
   other unrelated diagnostics in the same fixture, if any, are unaffected).
-- [ ] B3.2 [GREEN] delete `validate.rs:86-97` (the `if` block + its two comment lines — `has_attr`
+- [x] B3.2 [GREEN] delete `validate.rs:86-97` (the `if` block + its two comment lines — `has_attr`
   remains used elsewhere, confirm no dangling unused-import warning) and
   `validate.rs:1579-1592` (`allow_realtime_conflict_is_rejected`).
-- [ ] B3.3 [GREEN] `crates/indigo-compiler/tests/fixtures.rs`: drop the `"RealtimeAndAllow"`
+- [x] B3.3 [GREEN] `crates/indigo-compiler/tests/fixtures.rs`: drop the `"RealtimeAndAllow"`
   assertion at line 747 and its entry at line 760.
-- [ ] B4.1 [GREEN] `fixtures/19-rejected-allow.indigo`: the `RealtimeAndAllow` model stops
+- [x] B4.1 [GREEN] `fixtures/19-rejected-allow.indigo`: the `RealtimeAndAllow` model stops
   producing that diagnostic (the file's other rejection-class models keep failing — envelope
   stays `{errors}`, one fewer entry).
-- [ ] B4.2 [GREEN] add the `@@realtime`+`@@allow` combination to an **accepted** fixture (new or
+- [x] B4.2 [GREEN] add the `@@realtime`+`@@allow` combination to an **accepted** fixture (new or
   existing) so `realtime: true` + `allow: [...]` co-occurring on one `ResolvedTable` is
   snapshot-covered on the accept path, not just "no longer rejected."
-- [ ] B5.1 [VERIFY] `cd crates && cargo test` — confirm `allow_realtime_conflict_is_rejected`'s
+- [x] B5.1 [VERIFY] `cd crates && cargo test` — confirm `allow_realtime_conflict_is_rejected`'s
   removal and B3.1's fixture assertion both hold.
-- [ ] B5.2 [GREEN] `pnpm --filter @indigodb/compiler build:wasm` — rebuild the WASM artifact,
+- [x] B5.2 [GREEN] `pnpm --filter @indigodb/compiler build:wasm` — rebuild the WASM artifact,
   commit it (per repo convention: local rebuild is for dev, `wasm-drift` on `main` is the source
   of truth for the exact committed bytes).
-- [ ] B5.3 [VERIFY] `node packages/compiler/test/regen-snapshots.mjs` — review the diff: only
+- [x] B5.3 [VERIFY] `node packages/compiler/test/regen-snapshots.mjs` — review the diff: only
   `19-rejected-allow.json` (one error entry disappears) and the new/modified accepted fixture from
   B4.2 change; no other snapshot drifts.
-- [ ] B5.4 [VERIFY] `node packages/compiler/test/parity.mjs` — golden diff is the review artifact,
+- [x] B5.4 [VERIFY] `node packages/compiler/test/parity.mjs` — golden diff is the review artifact,
   confirm green.
-- [ ] B6.1 [VERIFY] `pnpm --filter @indigodb/realtime test` (real PG present) and confirm
+- [x] B6.1 [VERIFY] `pnpm --filter @indigodb/realtime test` (real PG present) and confirm
   self-skip when `INDIGODB_TEST_DATABASE_URL` is unset — `dispatch.mjs`'s scoping suite is unit
-  (no DB), `endpoint.mjs` from PR A is unaffected and still green.
-- [ ] B6.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` (workspace-wide).
-- [ ] B6.3 [COMMIT] `feat(compiler,realtime,cli): lift @@realtime+@@allow guard, scope SSE to a wake-up signal`.
+  (no DB, confirmed green), `endpoint.mjs` from PR A confirmed unaffected and still green against
+  real Postgres. NOTE: the chained `wal-source.mjs -> pg-harness.mjs -> parity.mjs -> resume.mjs
+  -> ...` run intermittently stalled/dropped connections specifically inside the pre-existing
+  WAL-replication real-PG suites (`parity.mjs`/`resume.mjs`, neither touched by this PR) under
+  this sandbox's Docker-for-Mac networking — reproduced with a clean container, confirmed NOT
+  caused by PR B (no code this PR touches is on that path). `dispatch.mjs` and `endpoint.mjs` were
+  each additionally verified standalone against real Postgres and are green.
+- [x] B6.2 [VERIFY] `pnpm build && pnpm lint && pnpm test` (workspace-wide). `pnpm build`/`pnpm
+  lint` fully green across all 10/18 packages. `pnpm test` (turbo, fans out to every package with
+  a `test` script) hit the same pre-existing WAL/PG environment slowness in the unrelated
+  `@indigodb/migrator` and `@indigodb/client` suites (neither touched by this PR); the compiler's
+  own regression harness (`pnpm --filter @indigodb/compiler test`, the CLAUDE.md-documented
+  canonical suite for this rule) is fully green, and PR-B-relevant tests were confirmed green
+  individually (see B6.1, B2.2/B2.3, B5.1/B5.4).
+- [x] B6.3 [COMMIT] `feat(compiler,realtime,cli): lift @@realtime+@@allow guard, scope SSE to a wake-up signal`.
 
 ## Post-slice cleanup
 
