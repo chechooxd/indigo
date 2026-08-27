@@ -194,6 +194,14 @@ export class WalSource implements RealtimeSource {
     onEvent: (event: RealtimeEvent) => void,
     onError: (error: Error) => void,
   ): Promise<void> {
+    // A reconnect timer fired (or a stale caller re-entered connect()) after
+    // stop() already ran — bail before touching any connection. Without this,
+    // a retry scheduled just before stop() can race stop()'s clearTimeout,
+    // survive it, and go on to redial a slot the caller's fixture may have
+    // already dropped — failing forever and keeping the process alive on its
+    // own backoff timer (observed: a 46-minute CI hang).
+    if (this.stopped) return;
+
     // Any writer left over from a prior connect()/teardown is stale by
     // construction — close it defensively before opening a fresh one.
     await this.closeWriter();
@@ -265,9 +273,16 @@ export class WalSource implements RealtimeSource {
     onError: (error: Error) => void,
   ): void {
     if (this.stopped) return;
+    // Defensive: clear any timer already outstanding before overwriting the
+    // handle. Two calls in quick succession would otherwise orphan the first
+    // timer — stop()'s clearTimeout only ever sees the second one — leaving
+    // an uncancellable reconnect loop running after stop().
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     const delay = this.retryMs;
     this.retryMs = Math.min(this.retryMs * 2, 30_000);
     this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.stopped) return;
       this.connect(onEvent, onError).catch((err) => {
         onError(err instanceof Error ? err : new Error(String(err)));
         if (!this.stopped) this.scheduleReconnect(onEvent, onError);

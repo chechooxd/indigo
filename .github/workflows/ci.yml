@@ -266,6 +266,7 @@ jobs:
           exit 1
 
       - name: Run real-Postgres realtime + migrator replication-DDL suites
+        timeout-minutes: 5
         env:
           INDIGODB_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:55432/indigo_test
         run: |
