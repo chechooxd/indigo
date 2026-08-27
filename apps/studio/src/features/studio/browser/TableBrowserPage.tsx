@@ -7,12 +7,14 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
+import { useLiveTable } from './hooks/useLiveTable';
 import { useCreateTableForm } from './hooks/useCreateTableForm';
 import { useRecordEditor } from './hooks/useRecordEditor';
 import { TableList } from './components/TableList';
 import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
 import { SampleDataBanner } from './components/SampleDataBanner';
+import { LiveStatusBadge } from './components/LiveStatusBadge';
 import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
 
 const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
@@ -52,6 +54,14 @@ export default function TableBrowserPage() {
   const editor = useRecordEditor();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Live view: subscribe to the active table's realtime SSE stream, if any.
+  // `null` status means inert (no backend, or the table isn't `@@realtime`
+  // -eligible) — the badge stays hidden entirely (studio-ui-honesty).
+  const { status: liveStatus } = useLiveTable(
+    activeTable?.name,
+    isBackendAvailable() && activeTable?.realtime === true,
+  );
 
   // Under the studio backend, load real rows for the active table on demand.
   useEffect(() => {
@@ -131,6 +141,7 @@ export default function TableBrowserPage() {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /><span>Refresh</span>
             </button>
+            <LiveStatusBadge status={liveStatus} />
           </div>
           <div className="flex items-center gap-3">
             <div className="flex bg-zinc-950 rounded-xl p-0.5 border border-zinc-800 text-xs font-semibold">
