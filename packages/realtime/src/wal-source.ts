@@ -27,6 +27,19 @@
  * reconnect (at-least-once; v1 was at-most-once). Consumers already refetch
  * by `pk` (`RealtimeModelDelegate`), so a replay is idempotent.
  *
+ * `acknowledge.timeoutSeconds` is set to 10, NOT 0 (found live, not by
+ * design — a prior value of 0 disabled the library's periodic standby-status
+ * timer entirely, since `checkStandbyStatus()` only arms it when
+ * `timeoutSeconds > 0`). That timer is not just about acking received data —
+ * it is this client's half of the replication liveness protocol: Postgres's
+ * `wal_sender_timeout` (default 60s) kills the walsender if the client sends
+ * nothing for that long, data or not. With no writes to acknowledge and no
+ * periodic timer either, an idle `@@realtime` table got disconnected by
+ * Postgres every ~60s, forever, in production as much as in a quiet test —
+ * observed as a repeating "terminating walsender process due to replication
+ * timeout" in the server log, masquerading as a hang under backoff. 10s
+ * leaves a wide margin under the 60s default without spamming keepalives.
+ *
  * `txid`/`ts` (decisions 9/10): `txid` is the decimal transaction id from
  * the `begin` message (same *meaning* as v1's `txid_current()::text`; LSN
  * addressing is a later slice's contract — see `protocol.ts`'s doc comment).
@@ -208,7 +221,7 @@ export class WalSource implements RealtimeSource {
 
     const service = new LogicalReplicationService(
       { connectionString: this.connectionString } as pg.ClientConfig,
-      { acknowledge: { auto: false, timeoutSeconds: 0 } },
+      { acknowledge: { auto: false, timeoutSeconds: 10 } },
     );
     this.service = service;
     this.txid = undefined;
@@ -239,12 +252,29 @@ export class WalSource implements RealtimeSource {
       }
     });
 
+    // Declared outside the try so the catch block can close it too — see the
+    // note there on why supersession must close, not just abandon, a writer
+    // that got as far as being assigned to `this.writer`.
+    let writer: pg.Client | undefined;
+
     try {
       // Opened before subscribing so the writer is ready before the first
       // commit can possibly arrive. Same connection string as the
       // replication stream; an ordinary connection can run DML where the
       // replication one cannot.
-      const writer = new pg.Client({ connectionString: this.connectionString } as pg.ClientConfig);
+      writer = new pg.Client({ connectionString: this.connectionString } as pg.ClientConfig);
+      // Attached before connect() so nothing can fire before it's listening.
+      // pg.Client extends EventEmitter — an 'error' event with no listener
+      // is fatal to the whole Node process (not just this connection), and
+      // this client's socket dies independently of the replication one on
+      // any admin-initiated kill, network drop, or server restart. The
+      // replication connection's own "error"/subscribe-rejection handling
+      // already drives reconnection; this only stops the writer's socket
+      // from taking the host process down with it (observed: an admin
+      // `pg_terminate_backend()` during test teardown crashed the process).
+      writer.on("error", (err) => {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      });
       await writer.connect();
       if (this.service !== service) {
         // Superseded by a newer connect() while the writer was connecting.
@@ -254,14 +284,36 @@ export class WalSource implements RealtimeSource {
       this.writer = writer;
 
       await service.subscribe(plugin, this.slot);
-      // subscribe() resolves when the stream ends without an error (e.g. our
-      // own stop()). If that happened while we intended to keep running,
-      // treat it the same as a dropped connection.
-      if (this.service === service && !this.stopped) {
-        this.scheduleReconnect(onEvent, onError);
+      // subscribe() resolves once the stream ends — including the case
+      // where it ends because THIS connect() attempt only finished
+      // establishing the stream *after* stop() (or a newer connect()) had
+      // already run while we were awaiting it above. `this.service`/
+      // `this.stopped` reflect the CURRENT desired state, not the state
+      // when this call started, so re-check both here: without this, a
+      // connect() that "wins the race" against a concurrent stop() leaves a
+      // live, fully-subscribed replication socket that nothing holds a
+      // reference to any more — orphaned, never closed, and (because it's
+      // an active streaming socket) enough on its own to keep the whole
+      // Node process alive indefinitely. Observed directly via
+      // `process._getActiveHandles()` showing one surviving `Socket` after
+      // a `stop()` that had already resolved.
+      if (this.service !== service || this.stopped) {
+        await service.stop().catch(() => {});
+        if (this.writer === writer) this.writer = null;
+        await writer.end().catch(() => {});
+        return;
       }
+      this.scheduleReconnect(onEvent, onError);
     } catch (err) {
-      if (this.service !== service) return; // superseded by a newer connect()
+      if (this.service !== service || this.stopped) {
+        // Superseded by a newer connect(), or stop() ran while this attempt
+        // was failing. Close whatever this attempt itself opened — a writer
+        // that reached `this.writer = writer` above is otherwise never
+        // closed by anyone once nothing calls connect() again.
+        if (writer && this.writer === writer) this.writer = null;
+        await writer?.end().catch(() => {});
+        return;
+      }
       onError(err instanceof Error ? err : new Error(String(err)));
       if (!this.stopped) this.scheduleReconnect(onEvent, onError);
       else throw err;
