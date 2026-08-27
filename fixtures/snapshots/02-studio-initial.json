@@ -285,6 +285,10 @@
                 }
               }
             ]
+          },
+          {
+            "name": "realtime",
+            "args": []
           }
         ]
       },
@@ -625,6 +629,7 @@
             ]
           }
         ],
+        "realtime": true,
         "color": "#c3c0ff",
         "group": "Auth"
       },

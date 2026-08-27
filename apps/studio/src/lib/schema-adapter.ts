@@ -81,6 +81,7 @@ export function resolvedToTables(resolved: ResolvedSchema): Table[] {
     return {
       name: table.name,
       schema: 'public',
+      realtime: table.realtime,
       columns,
       records: [],
     };

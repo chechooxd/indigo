@@ -26,6 +26,9 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.2.9
         version: 5.2.9
+      '@indigodb/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@indigodb/core':
         specifier: workspace:*
         version: link:../../packages/core
