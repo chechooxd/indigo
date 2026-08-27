@@ -1,3 +1,10 @@
+# DISABLED (2026-08-26): moved out of .github/workflows/ so GitHub Actions
+# stops picking it up entirely — this repo is private and pre-product, and
+# running this on every push/PR was billed against real money for no
+# reader yet. To re-enable: `git mv .github/workflows-disabled/ci.yml
+# .github/workflows/ci.yml` and push. Until then, use `pnpm build && pnpm
+# lint && pnpm test` and `scripts/test-postgres.sh` locally before pushing.
+#
 # CI floor for IndigoDB.
 #
 # Four jobs, deliberately independent (no `needs:`) so one red job never hides
