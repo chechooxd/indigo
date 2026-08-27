@@ -16,6 +16,20 @@ vi.mock('../../../../lib/api', () => ({
   fetchTableRows: vi.fn(),
 }));
 
+// Fake transport: `connect()` synchronously fires `onOpen(false)` so the
+// live badge (when mounted) reaches its `live` status without a real SSE
+// stream. Real transport/backoff behavior is covered by useLiveTable.test.tsx.
+vi.mock('@indigodb/client/realtime', () => ({
+  SseTransport: vi.fn().mockImplementation(() => ({
+    connect: vi.fn((_tables: string[], handlers: { onOpen: (reconnected: boolean) => void }) => {
+      handlers.onOpen(false);
+      return () => {};
+    }),
+  })),
+  LIVE_DEBOUNCE_MS: 50,
+  REALTIME_PATH: '/api/realtime',
+}));
+
 import { isBackendAvailable, fetchTableRows } from '../../../../lib/api';
 
 function resetTables() {
@@ -230,5 +244,37 @@ describe('TableBrowserPage', () => {
 
     const refreshButton = screen.getByRole('button', { name: /refresh/i });
     expect(refreshButton).not.toBeDisabled();
+  });
+
+  describe('live status badge (studio-ui-honesty: hidden, not disabled, when inert)', () => {
+    it('is absent for a non-realtime table even with a backend connected', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      // The default 'users' mock table carries no `realtime` flag.
+      render(<TableBrowserPage />);
+
+      expect(screen.queryByText(/live/i)).not.toBeInTheDocument();
+    });
+
+    it('is absent with no backend connected, even for a realtime-eligible table', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(false);
+      useDataStore.setState((state) => ({
+        tables: state.tables.map((t, i) => (i === 0 ? { ...t, realtime: true } : t)),
+      }));
+
+      render(<TableBrowserPage />);
+
+      expect(screen.queryByText(/live/i)).not.toBeInTheDocument();
+    });
+
+    it('is present and shows live status for a realtime-eligible table with a backend connected', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useDataStore.setState((state) => ({
+        tables: state.tables.map((t, i) => (i === 0 ? { ...t, realtime: true } : t)),
+      }));
+
+      render(<TableBrowserPage />);
+
+      expect(screen.getByText(/live/i)).toBeInTheDocument();
+    });
   });
 });

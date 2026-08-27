@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@indigodb/client": "workspace:*",
     "@indigodb/core": "workspace:*",
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",

@@ -24,6 +24,7 @@ Table Post {
   author   User    @relation(fields: [authorId], references: [id])
 
   @@index([authorId])
+  @@realtime
 }
 
 Table Profile {
