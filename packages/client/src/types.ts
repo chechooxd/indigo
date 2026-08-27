@@ -12,9 +12,18 @@ export type OrderDirection = "asc" | "desc";
 
 /** Operator object usable in a `where` clause (MVP subset). */
 export interface WhereFilter<T> {
+  /** Equality. `equals: null` selects the NULL rows (same as the `field: null` shorthand). */
   equals?: T;
+  /**
+   * Negated equality. `not: null` selects every non-NULL row.
+   *
+   * Rows where the column IS NULL are included in `not: <value>`, matching
+   * Prisma — plain SQL `<>` would drop them, which surprises anyone reading
+   * the filter as "everything except this value". Same rule for `notIn`.
+   */
   not?: T;
   in?: T[];
+  /** Negated membership. Includes NULL rows, like `not`. */
   notIn?: T[];
   lt?: T;
   lte?: T;

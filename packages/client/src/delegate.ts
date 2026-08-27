@@ -258,10 +258,29 @@ function fieldExpr(column: string, raw: unknown, params: Params): string {
   if (isFilterObject(raw)) {
     const f = raw as WhereFilter<unknown>;
     const clauses: string[] = [];
-    if ("equals" in f) clauses.push(`${column} = ${params.add(f.equals)}`);
-    if ("not" in f) clauses.push(`${column} <> ${params.add(f.not)}`);
+    // NULL never compares equal to anything in SQL, so binding it as a
+    // parameter makes the clause unsatisfiable rather than "match the NULL
+    // rows". `equals: null` has to become IS NULL — the `raw === null`
+    // shorthand above already did, and the two spellings disagreeing was the
+    // same API contradicting itself.
+    if ("equals" in f)
+      clauses.push(f.equals === null ? `${column} IS NULL` : `${column} = ${params.add(f.equals)}`);
+    // Negation is Prisma-compatible: NULL rows survive it. `not: null` is
+    // IS NOT NULL (as `<> $1` could not match any row in any database), and
+    // `not: value` keeps the NULL rows a caller reading "everything except
+    // value" expects — plain `<>` silently drops them.
+    if ("not" in f)
+      clauses.push(
+        f.not === null
+          ? `${column} IS NOT NULL`
+          : `(${column} <> ${params.add(f.not)} OR ${column} IS NULL)`,
+      );
     if ("in" in f) clauses.push(`${column} = ANY(${params.add(f.in)})`);
-    if ("notIn" in f) clauses.push(`${column} <> ALL(${params.add(f.notIn)})`);
+    // Same negation rule as `not` — splitting their NULL behaviour would be
+    // arbitrary. `notIn: []` stays "match everything": `<> ALL('{}')` is true
+    // for every non-NULL row, and the OR now covers the NULL ones too.
+    if ("notIn" in f)
+      clauses.push(`(${column} <> ALL(${params.add(f.notIn)}) OR ${column} IS NULL)`);
     if ("lt" in f) clauses.push(`${column} < ${params.add(f.lt)}`);
     if ("lte" in f) clauses.push(`${column} <= ${params.add(f.lte)}`);
     if ("gt" in f) clauses.push(`${column} > ${params.add(f.gt)}`);
