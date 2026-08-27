@@ -17,8 +17,16 @@ All commands run from the repo root and fan out through Turborepo:
 - `pnpm dev` — run all `dev` tasks (Studio dev server on :5555); `dev` depends on `^build`
 - `pnpm build` — build every package (`tsc`) and the Studio app (`tsc -b && vite build`)
 - `pnpm lint` — typecheck-as-lint: every package's `lint` is `tsc --noEmit`
-- `pnpm test` — wired via Turbo; the only suite is `@indigodb/compiler`'s regression harness
-  (`packages/compiler/test/parity.mjs`, plain Node, golden snapshots in `fixtures/snapshots/`)
+- `pnpm test` — wired via Turbo (`turbo test`, depends on `build`) and fans out to every
+  package's own plain-Node test script (no shared runner/framework — each package's `test`
+  is a `node test/a.mjs && node test/b.mjs && ...` chain, plus `apps/studio`'s `vitest run`).
+  Run a single file directly, e.g. `node packages/client/test/live.mjs`, or scope one
+  package with `pnpm test --filter=@indigodb/client`. `@indigodb/compiler`'s suite
+  (`test/parity.mjs`) checks the WASM artifact against golden snapshots in
+  `fixtures/snapshots/`. `@indigodb/realtime`'s Postgres-backed suites (`wal-source.mjs`,
+  `pg-harness.mjs`) are gated on `INDIGODB_TEST_DATABASE_URL` — unset, they print `SKIP` and
+  pass; to actually exercise them, point that env var at a real Postgres (see the docker
+  one-liner in `packages/realtime/test/pg-harness.mjs`'s header).
 - `pnpm clean` — remove `dist/` and `.turbo/` across packages
 
 Rust compiler (only needed when touching `crates/`; requires `cargo`, the
@@ -103,16 +111,39 @@ read the IR rather than re-deriving structure from the raw AST.
 - **`@indigodb/generator`** — `generateClient(resolved)` in `client.ts` emits a typed `indigo.ts`
   (enums, row/create/update interfaces, model metadata, an `IndigoClient` binding one
   `ModelDelegate` per model; `RealtimeModelDelegate` for `@@realtime` models).
-- **`@indigodb/client`** — framework-agnostic runtime. `IndigoClientBase` (`client.ts`) owns the
-  `pg` Pool + parameterized executor; `ModelDelegate` (`delegate.ts`) implements Prisma-style
-  CRUD (`findMany/findUnique/create/update/delete/count`, `where` subset, `select`, `orderBy`).
-  Consumed by the generated client.
+- **`@indigodb/realtime`** — Postgres → client change-event engine for `@@realtime` tables,
+  `pg`/`pg-logical-replication` only. `RealtimeEngine` (`engine.ts`) is the embeddable
+  fan-out hub: consumes a `RealtimeSource` and pushes `RealtimeEvent`s to in-process
+  listeners and SSE subscribers (`GET <REALTIME_PATH>?tables=...`) over plain `node:http`
+  — no framework. Default source is `WalSource` (`wal-source.ts`, logical replication /
+  `pgoutput`, no events lost while disconnected); `PgNotifySource` (`source.ts`, v1
+  LISTEN/NOTIFY) remains exported and pluggable via `RealtimeEngineOptions.source`. The
+  `RealtimeSource` seam (`protocol.ts`) keeps the wire protocol and SDK stable across both.
+  `handle.ts` mints/verifies HMAC-signed handles (`mintHandle`/`verifyHandle`) that gate the
+  replay-log route (`REALTIME_LOG_PATH`) to a caller's own rows. Consumed by the `indigodb
+  realtime` CLI command and embedded directly in the Studio server.
+- **`@indigodb/client`** — framework-agnostic runtime. `IndigoClientBase` (`client.ts`) owns
+  the `pg` Pool + parameterized executor; `ModelDelegate` (`delegate.ts`) implements
+  Prisma-style CRUD (`findMany/findUnique/create/update/delete/count`, `where` subset,
+  `select`, `orderBy`). `adapters/` (`pg.ts`, `pglite.ts`) let callers hand in an already-open
+  driver (e.g. embedded PGlite) instead of a `connectionString`, behind the same
+  `DriverAdapter` shape. `realtime.ts` + `live.ts` + `realtime-delegate.ts` are the browser-safe
+  client half of the realtime story: `realtime.ts` runs the SSE protocol over `fetch()`
+  streaming (not the `EventSource` global, absent in Node <22), one connection per table,
+  refcounted across subscribers, reconnecting with backoff; `live.ts` layers `findMany().live()`
+  on top — snapshot-then-tail, debounced/coalesced refetch on wake — for `RealtimeModelDelegate`s
+  the generator emits. These files deliberately import **type-only** (or not at all) from
+  `@indigodb/realtime`'s root entry, since that pulls `pg` via `engine.ts`/`wal-source.ts`;
+  value imports go through the dependency-free `@indigodb/realtime/protocol` subpath instead,
+  so this package stays safe to bundle into a browser build. Consumed by the generated client.
 - **`@indigodb/cli`** — the `indigodb` binary (commander). Commands: `init`, `generate`,
-  `db push` (executes SQL via `pg`; `--print` to dry-run), `migrate dev/deploy/status`, `studio`.
-  Shared helpers in `util.ts` (`.env` loader, `loadSchema`, `resolveConnectionString`).
-  `migrate-runner.ts` owns migration files (`migrations/<ts>_<name>/migration.sql`), the
-  `.snapshot.json` used to diff the next migration, and the `_indigo_migrations` history table.
-  `studio-server.ts` is a dependency-free `node:http` server (see below).
+  `db push` (executes SQL via `pg`; `--print` to dry-run), `migrate dev/deploy/status`,
+  `studio`, `realtime` (standalone SSE daemon over `@indigodb/realtime`'s `RealtimeEngine`,
+  requires at least one `@@realtime` table). Shared helpers in `util.ts` (`.env` loader,
+  `loadSchema`, `resolveConnectionString`). `migrate-runner.ts` owns migration files
+  (`migrations/<ts>_<name>/migration.sql`), the `.snapshot.json` used to diff the next
+  migration, and the `_indigo_migrations` history table. `studio-server.ts` is a
+  dependency-free `node:http` server (see below).
 
 **Everything visual lives in the Studio** (`indigodb studio`), by design — the ER diagram +
 editor, data/table browser, SQL console, and documentation. There is intentionally no separate
@@ -131,7 +162,12 @@ Studio internals: single Zustand store (`src/store/useStudioStore.ts`, which als
 shadcn-style UI in `src/components/ui/`; feature modules in `src/features/` (`erd/` is a custom
 canvas/SVG renderer — not a graph library — with orthogonal edge routing in `src/lib/routing.ts`
 and node sizing in `src/shared/lib/node-geometry.ts`; `studio/browser/` = data browser);
-i18n via `react-i18next` (`src/i18n/locales/` en/es).
+i18n via `react-i18next` (`src/i18n/locales/` en/es). `studio/browser/hooks/useLiveTable.ts`
+gives the Table Browser its live-refresh: it opens `@indigodb/client`'s `SseTransport` directly
+against `REALTIME_PATH` for the active `@@realtime` table and debounces/coalesces a refetch on
+each change — this is Studio's own dev-only connection to the **embedded, unauthenticated**
+realtime stream, separate from (and simpler than) the generated client's `.live()`, which is
+gated behind `@@allow` + a signed handle.
 
 ### CLI Studio server (`packages/cli/src/studio-server.ts`)
 `indigodb studio` starts a `node:http` server that serves the built Studio SPA (located via
