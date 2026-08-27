@@ -11,9 +11,21 @@
  * reconnect subscribers get a `resync` signal — events emitted while
  * disconnected are lost in v1 (LISTEN/NOTIFY has no replay), so callers
  * should re-query on resync.
+ *
+ * Re-exports below (`REALTIME_PATH`/`REALTIME_LOG_PATH`/`LIVE_DEBOUNCE_MS`/
+ * `LiveStatus`) exist so `@indigodb/client/realtime` (this file's build
+ * output, `dist/realtime.js`) is a self-contained browser-safe entry point
+ * (`client-live-queries` spec, design.md decision 2). VALUE imports are
+ * `protocol`-only — `@indigodb/realtime/protocol` transitively imports
+ * nothing, unlike `@indigodb/realtime`'s root entry which pulls `pg` via
+ * `engine.ts`/`wal-source.ts`. Never widen this to a bare
+ * `@indigodb/realtime` value import.
  */
 
 import type { RealtimeEvent } from "@indigodb/realtime";
+export { REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime/protocol";
+export { LIVE_DEBOUNCE_MS } from "./live.js";
+export type { LiveStatus } from "./live.js";
 
 export type Unsubscribe = () => void;
 
