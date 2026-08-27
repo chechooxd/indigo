@@ -42,6 +42,34 @@ function quote(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Escape character declared on every `ILIKE` this file emits. PostgreSQL
+ * already defaults to a backslash, but stating it makes the pattern's meaning
+ * independent of server settings (`standard_conforming_strings`) instead of
+ * inherited from them.
+ */
+const LIKE_ESCAPE_CLAUSE = ` ESCAPE '\\'`;
+
+/**
+ * Escapes the LIKE metacharacters in a `contains`/`startsWith`/`endsWith`
+ * value so it matches as literal text.
+ *
+ * `types.ts` documents these three as substring/prefix/suffix matches, but
+ * they compile to `ILIKE`, where `%` and `_` are wildcards and `\` escapes
+ * them. Without this, a value carrying one silently widens the match:
+ * `contains: "100%"` matched "1000 euros", `contains: "a_b"` matched "axb",
+ * and a value mixing both (`"100\%"`) matched a row the caller never asked
+ * for while missing the one it did.
+ *
+ * This was never an injection issue — the value has always travelled as a
+ * bind parameter, so no SQL structure was reachable from it. The defect was
+ * purely in pattern semantics. The backslash must be replaced first, or the
+ * backslashes introduced for `%`/`_` would be escaped a second time.
+ */
+function escapeLikePattern(value: unknown): string {
+  return String(value).replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 /** Thrown by `loadRelations` when `include` targets an unusable relation —
  * unknown name, no sibling delegate registered, or a composite (multi-
  * column) key (see `types.ts`'s `CompositeRelationMeta`). */
@@ -238,9 +266,18 @@ function fieldExpr(column: string, raw: unknown, params: Params): string {
     if ("lte" in f) clauses.push(`${column} <= ${params.add(f.lte)}`);
     if ("gt" in f) clauses.push(`${column} > ${params.add(f.gt)}`);
     if ("gte" in f) clauses.push(`${column} >= ${params.add(f.gte)}`);
-    if ("contains" in f) clauses.push(`${column} ILIKE ${params.add(`%${f.contains}%`)}`);
-    if ("startsWith" in f) clauses.push(`${column} ILIKE ${params.add(`${f.startsWith}%`)}`);
-    if ("endsWith" in f) clauses.push(`${column} ILIKE ${params.add(`%${f.endsWith}`)}`);
+    if ("contains" in f)
+      clauses.push(
+        `${column} ILIKE ${params.add(`%${escapeLikePattern(f.contains)}%`)}${LIKE_ESCAPE_CLAUSE}`,
+      );
+    if ("startsWith" in f)
+      clauses.push(
+        `${column} ILIKE ${params.add(`${escapeLikePattern(f.startsWith)}%`)}${LIKE_ESCAPE_CLAUSE}`,
+      );
+    if ("endsWith" in f)
+      clauses.push(
+        `${column} ILIKE ${params.add(`%${escapeLikePattern(f.endsWith)}`)}${LIKE_ESCAPE_CLAUSE}`,
+      );
     return clauses.join(" AND ");
   }
 

@@ -20,9 +20,17 @@ export interface WhereFilter<T> {
   lte?: T;
   gt?: T;
   gte?: T;
-  /** Substring match (ILIKE %value%). String columns only. */
+  /**
+   * Case-insensitive substring match. String columns only.
+   *
+   * The value matches as literal text: `%`, `_` and `\` are escaped before
+   * reaching the underlying `ILIKE`, so `contains: "100%"` matches "100%"
+   * and not "1000". Same for `startsWith`/`endsWith` below.
+   */
   contains?: string;
+  /** Case-insensitive prefix match, literal (see `contains`). */
   startsWith?: string;
+  /** Case-insensitive suffix match, literal (see `contains`). */
   endsWith?: string;
 }
 
