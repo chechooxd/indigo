@@ -1,5 +1,13 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "//": "globalDependencies lists the Rust sources behind the COMMITTED WASM artifact. They live in crates/, outside every package, so Turbo would not otherwise see them change: it would serve a cached @indigodb/compiler:test and replay a stale 'ok' while the artifact no longer matched the sources. That is exactly the drift test/wasm-freshness.mjs exists to catch, so the guard has to be cache-invalidating or it silently never runs. Verified by editing a .rs file and confirming the task re-executes instead of replaying logs. Scoped to source globs (not crates/**) to keep crates/target/ build output out.",
+  "globalDependencies": [
+    "crates/**/*.rs",
+    "crates/**/Cargo.toml",
+    "crates/Cargo.lock",
+    "rust-toolchain.toml",
+    "!crates/target/**"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

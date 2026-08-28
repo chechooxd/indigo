@@ -38,12 +38,25 @@ Rust compiler (only needed when touching `crates/`; requires `cargo`, the
   toolchain — if you change `crates/`, you MUST run `build:wasm` and commit the result,
   then run the regression harness. Regenerate golden snapshots only on intentional contract
   changes (`node packages/compiler/test/regen-snapshots.mjs`; the diff is the review artifact).
-  **This rule is now enforced, with CI as the source of truth for the exact bytes** — not your
-  local rebuild. `build:wasm` sets `RUSTFLAGS=--remap-path-prefix` so the artifact never embeds
-  your `$HOME`, but even past that, identical rustc/wasm-pack/wasm-bindgen still produce different
-  bytes on different host OSes (low-level codegen ordering). So don't hand-verify your local
-  rebuild against what's committed — build locally to develop and test, then let CI's `wasm-drift`
-  job self-heal `main` on push. See `.github/workflows/ci.yml`'s header for the full mechanism.
+  **This rule is enforced locally by `packages/compiler/test/wasm-freshness.mjs`**, which runs
+  first in `@indigodb/compiler`'s `test` script (so on every `pnpm test`). It does NOT diff the
+  `.wasm` bytes — those are not reproducible across machines: `build:wasm` sets
+  `RUSTFLAGS=--remap-path-prefix` so the artifact never embeds your `$HOME`, but even past that,
+  identical rustc/wasm-pack/wasm-bindgen still produce different bytes on different host OSes
+  (low-level codegen ordering). Instead it hashes the **inputs** — every `.rs`/`Cargo.toml`,
+  `crates/Cargo.lock` and `rust-toolchain.toml` — into `packages/compiler/wasm-sources.sha256`,
+  which `build:wasm` rewrites on every rebuild. Sources moved but artifact didn't ⇒ the test
+  fails and tells you to rebuild. That is the failure that actually bites: without it, editing
+  `crates/` and forgetting the rebuild leaves every TypeScript test passing against the **stale**
+  compiler — green and wrong. It proves freshness, not byte-correctness; hermetic byte
+  verification stays out of scope (see `rust-toolchain.toml`'s header).
+  Because `crates/` lives outside every package, Turbo would otherwise replay a cached `test`
+  and never run the guard, so the Rust sources are declared in `turbo.json`'s
+  `globalDependencies` — don't remove them, that silently disarms the check.
+  **CI is currently disabled** (`.github/workflows-disabled/`, commit `8acd5d4`), so its
+  `wasm-drift` job — which used to be the source of truth for the exact bytes and self-healed
+  `main` on push — is not running. If you re-enable it, it and this local guard are
+  complementary: the guard catches "you forgot to rebuild", CI catches "your bytes differ".
   The toolchain is still pinned (`rust-toolchain.toml` → rustc 1.93.1, wasm-pack 0.15.0,
   wasm-bindgen 0.2.126 via the committed `crates/Cargo.lock`) to keep local dev and CI on the same
   footing. `build:wasm` uses `$(pwd)` and `rm -f`, so it is Unix-only — it would need adjusting
@@ -54,8 +67,15 @@ or `pnpm --filter @indigodb/studio dev`.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request, as three
-independent jobs (no `needs:`, so one red job never hides another):
+**CI is currently disabled and nothing runs on push or PR.** The workflow was moved to
+`.github/workflows-disabled/ci.yml` in commit `8acd5d4` ("private pre-product repo, billed
+minutes with no payoff yet"), and `.github/workflows/` is empty. Verification is therefore
+local: `pnpm build`, `pnpm lint`, `pnpm test` before landing on `main`. The one CI guarantee
+that could not survive being switched off — nobody noticing a stale WASM artifact — is now
+enforced by `packages/compiler/test/wasm-freshness.mjs` (see the `build:wasm` bullet above).
+
+If it is re-enabled, move the file back; it still describes three independent jobs (no
+`needs:`, so one red job never hides another):
 
 - **`ts`** — `pnpm install/build/lint/test`. Installs **no** Rust toolchain, deliberately: the
   committed WASM artifact exists so TypeScript-only contributors never need cargo. If this job

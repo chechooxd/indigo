@@ -16,10 +16,10 @@
   ],
   "scripts": {
     "build": "tsc",
-    "build:wasm": "RUSTFLAGS=\"--remap-path-prefix=$HOME/.cargo/registry/src=/cargo/registry\" wasm-pack build ../../crates/indigo-compiler --release --target web --out-name indigo_compiler --out-dir \"$(pwd)/wasm\" && rm -f wasm/.gitignore wasm/package.json wasm/LICENSE",
+    "build:wasm": "RUSTFLAGS=\"--remap-path-prefix=$HOME/.cargo/registry/src=/cargo/registry\" wasm-pack build ../../crates/indigo-compiler --release --target web --out-name indigo_compiler --out-dir \"$(pwd)/wasm\" && rm -f wasm/.gitignore wasm/package.json wasm/LICENSE && node test/wasm-freshness.mjs --write",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/parity.mjs"
+    "test": "node test/wasm-freshness.mjs && node test/parity.mjs"
   },
   "dependencies": {
     "@indigodb/ast": "workspace:*"
