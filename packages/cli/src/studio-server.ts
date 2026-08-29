@@ -9,6 +9,7 @@
  *   GET   /api/schema          → the ResolvedSchema as JSON
  *   GET   /api/tables/:name    → up to 100 rows from a table
  *   POST  /api/query { sql }   → runs a single read-only SELECT
+ *   POST  /api/rows/:table     → inserts one row, returns it (incl. generated PK)
  *   PATCH /api/rows/:table     → updates one row, identified by primary key
  */
 
@@ -272,19 +273,21 @@ export interface WriteTarget {
 }
 
 /**
- * Single shared identifier resolver for every row-write route
- * (PATCH here; POST/DELETE land in later slices). Re-validates the
- * requested table name against `resolved.tables` and every requested
- * column name against that table's columns — the one place this
- * injection-adjacent surface is checked, so every write route shares the
- * exact same guarantees.
+ * Single shared identifier resolver for every row-write route (PATCH and
+ * POST here; DELETE lands in Phase 3). Re-validates the requested table
+ * name against `resolved.tables` and every requested column name against
+ * that table's columns — the one place this injection-adjacent surface is
+ * checked, so every write route shares the exact same guarantees.
  *
  * Throws `WriteTargetError` (→ HTTP 400 at the call site) when:
  *  - the table name is not in `resolved.tables`;
  *  - any requested column name is not one of that table's columns;
  *  - the table has no primary key (writes require row identity);
  *  - a requested column is a generated/autoincrement column (its value is
- *    owned by the database, not the client).
+ *    owned by the database, not the client) — this is what makes it safe to
+ *    reuse unchanged for POST/INSERT: a generated primary key column must
+ *    never appear among the requested columns there either, whether or not
+ *    the client supplied a value for it.
  */
 export function resolveWriteTarget(
   resolved: ResolvedSchema,
@@ -486,6 +489,11 @@ export async function startStudio(
         return;
       }
 
+      if (path.startsWith("/api/rows/") && req.method === "POST") {
+        await handleInsertRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        return;
+      }
+
       if (path.startsWith("/api/rows/") && req.method === "PATCH") {
         await handleUpdateRow(path.slice("/api/rows/".length), req, res, resolved, db);
         return;
@@ -644,6 +652,71 @@ async function handleUpdateRow(
       return;
     }
     sendJson(res, 200, { row: result.rows[0] });
+  } catch (error) {
+    sendJson(res, 400, { error: (error as Error).message });
+  }
+}
+
+/**
+ * `POST /api/rows/:table` — inserts one row, returning the persisted row
+ * (including any database-generated primary key or default values). Body
+ * shape: a flat `Record<columnName, value>` of the new row's column values,
+ * keyed by the schema field name (not the physical `dbName`), matching
+ * `/api/tables/:name`'s aliasing convention.
+ *
+ * `resolveWriteTarget` is reused unchanged from the UPDATE route: a
+ * generated/autoincrement primary key column MUST be omitted from the
+ * request body entirely — the database owns its value — so if the client
+ * includes one anyway (any value, including `null`), the same
+ * `WriteTargetError` that guards UPDATE's patch body rejects it here too,
+ * before any SQL is built.
+ *
+ * Runs on `db.writable`, never `db.readOnly`.
+ */
+async function handleInsertRow(
+  encodedTableName: string,
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  resolved: ResolvedSchema,
+  db: StudioDb,
+): Promise<void> {
+  const tableName = decodeURIComponent(encodedTableName);
+
+  let body: unknown;
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    sendJson(res, 400, { error: "Request body must be a JSON object of column values" });
+    return;
+  }
+  const valuesInput = body as Record<string, unknown>;
+
+  let target: WriteTarget;
+  try {
+    target = resolveWriteTarget(resolved, tableName, Object.keys(valuesInput));
+  } catch (error) {
+    if (error instanceof WriteTargetError) {
+      sendJson(res, 400, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+
+  const params = target.columns.map((c) => valuesInput[c.name] ?? null);
+  const selectList = target.table.columns.map((c) => `"${c.dbName}" AS "${c.name}"`).join(", ");
+  const sql =
+    target.columns.length > 0
+      ? `INSERT INTO ${target.quotedTable} (${target.columns.map((c) => `"${c.dbName}"`).join(", ")}) ` +
+        `VALUES (${target.columns.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING ${selectList}`
+      : `INSERT INTO ${target.quotedTable} DEFAULT VALUES RETURNING ${selectList}`;
+
+  try {
+    const result = await db.writable((query) => query(sql, params));
+    sendJson(res, 201, { row: result.rows[0] });
   } catch (error) {
     sendJson(res, 400, { error: (error as Error).message });
   }

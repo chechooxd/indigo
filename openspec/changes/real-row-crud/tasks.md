@@ -39,13 +39,13 @@ Chain strategy: stacked-to-main
 - [x] 1.11 Add `updateRow(table, pk, patch)` to `api.ts`.
 - [x] 1.12 Verify: `node packages/cli/test/studio-write.mjs` and existing `studio-server.mjs` regression both green.
 
-## Phase 2: Slice (b) - INSERT
+## Phase 2: Slice (b) - INSERT — DONE (PR 2, branch feat/real-row-crud-2-insert)
 
-- [ ] 2.1 RED: extend `studio-write.mjs` with failing POST tests (generated PK omitted from body, returns generated key).
-- [ ] 2.2 GREEN: add `POST /api/rows/:table` route reusing `resolveWriteTarget`/`writable`.
-- [ ] 2.3 Add `createRow(table, values)` to `api.ts`.
-- [ ] 2.4 Wire "Add Record" in `TableBrowserPage.tsx`/`RecordInspector.tsx` (enable when backend available).
-- [ ] 2.5 Verify: studio-ui-honesty scenarios (Add Record conditional; Discard/Create Table submit unchanged).
+- [x] 2.1 RED: extend `studio-write.mjs` with failing POST tests (generated PK omitted from body, returns generated key).
+- [x] 2.2 GREEN: add `POST /api/rows/:table` route reusing `resolveWriteTarget`/`writable`.
+- [x] 2.3 Add `createRow(table, values)` to `api.ts`.
+- [x] 2.4 Wire "Add Record" in `TableBrowserPage.tsx`/`RecordInspector.tsx` (enable when backend available).
+- [x] 2.5 Verify: studio-ui-honesty scenarios (Add Record conditional; Discard/Create Table submit unchanged).
 
 ## Phase 3: Slice (c) - DELETE + guards
 

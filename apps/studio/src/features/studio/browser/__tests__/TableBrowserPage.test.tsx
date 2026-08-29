@@ -14,6 +14,8 @@ import { INITIAL_TABLES } from '../../../../data/mockData';
 vi.mock('../../../../lib/api', () => ({
   isBackendAvailable: vi.fn(() => false),
   fetchTableRows: vi.fn(),
+  updateRow: vi.fn(),
+  createRow: vi.fn(),
 }));
 
 // Fake transport: `connect()` synchronously fires `onOpen(false)` so the
@@ -30,7 +32,7 @@ vi.mock('@indigodb/client/realtime', () => ({
   REALTIME_PATH: '/api/realtime',
 }));
 
-import { isBackendAvailable, fetchTableRows } from '../../../../lib/api';
+import { isBackendAvailable, fetchTableRows, createRow } from '../../../../lib/api';
 
 function resetTables() {
   // Deep-clone so per-test store mutations never leak across tests (Zustand
@@ -45,6 +47,7 @@ describe('TableBrowserPage', () => {
     resetTables();
     vi.mocked(isBackendAvailable).mockReturnValue(false);
     vi.mocked(fetchTableRows).mockReset();
+    vi.mocked(createRow).mockReset();
   });
 
   it('never calls window.alert, and Refresh triggers a real refetch when a backend is connected', async () => {
@@ -180,6 +183,55 @@ describe('TableBrowserPage', () => {
     await user.click(addRecordButton);
 
     expect(useDataStore.getState().tables).toBe(recordsBefore);
+  });
+
+  it('enables Add Record with a backend, and submitting the create form calls createRow and appends the persisted row', async () => {
+    vi.mocked(isBackendAvailable).mockReturnValue(true);
+    const persistedRow = {
+      id: 'new-id',
+      email: 'new@example.com',
+      full_name: null,
+      created_at: '',
+      is_active: '',
+    };
+    vi.mocked(createRow).mockResolvedValue(persistedRow);
+
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const addRecordButton = screen.getByRole('button', { name: /add record/i });
+    expect(addRecordButton).not.toBeDisabled();
+    expect(addRecordButton).not.toHaveAttribute('title');
+
+    await user.click(addRecordButton);
+
+    const createButton = screen.getByRole('button', { name: /create row/i });
+    expect(createButton).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('id'), 'new-id');
+    await user.type(screen.getByLabelText('email'), 'new@example.com');
+    await user.click(createButton);
+
+    expect(createRow).toHaveBeenCalledWith(
+      'users',
+      expect.objectContaining({ id: 'new-id', email: 'new@example.com' }),
+    );
+    expect(useDataStore.getState().tables[0].records).toHaveLength(5);
+    expect(useDataStore.getState().tables[0].records.at(-1)).toEqual(persistedRow);
+  });
+
+  it('disables Add Record with an explanatory title without a backend even after a prior create form was open', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const recordsBefore = useDataStore.getState().tables;
+    const addRecordButton = screen.getByRole('button', { name: /add record/i });
+    expect(addRecordButton).toBeDisabled();
+
+    await user.click(addRecordButton);
+
+    expect(useDataStore.getState().tables).toBe(recordsBefore);
+    expect(screen.queryByRole('button', { name: /create row/i })).not.toBeInTheDocument();
   });
 
   it('disables Save with an explanatory title when there is no backend, and clicking never mutates the store', async () => {

@@ -4,9 +4,10 @@
  */
 
 import React from 'react';
-import { X, Save, RotateCcw } from 'lucide-react';
+import { X, Save, RotateCcw, Plus } from 'lucide-react';
 import { Table } from '../../../../types';
 import { resolveWidget } from './widgets/registry';
+import type { RecordEditorMode } from '../hooks/useRecordEditor';
 
 interface RecordInspectorProps {
   activeTable: Table;
@@ -15,8 +16,12 @@ interface RecordInspectorProps {
   nulls: Record<string, boolean>;
   dirtyColumns: string[];
   isDirty: boolean;
-  /** Whether Save/Discard are wired to a real backend. When false they stay
-   * disabled with `disabledTitle` per studio-ui-honesty. */
+  /** `'edit'` for an existing row, `'create'` for an in-progress new row.
+   * Widget rendering is identical in both modes — only the footer's
+   * labels/enablement and the submit semantics differ. */
+  mode: RecordEditorMode;
+  /** Whether Save/Discard (or Create/Cancel) are wired to a real backend.
+   * When false they stay disabled with `disabledTitle` per studio-ui-honesty. */
   canSave: boolean;
   disabledTitle: string;
   saving: boolean;
@@ -35,6 +40,7 @@ export function RecordInspector({
   draft,
   nulls,
   isDirty,
+  mode,
   canSave,
   disabledTitle,
   saving,
@@ -45,14 +51,15 @@ export function RecordInspector({
   onDiscard,
   onClose,
 }: RecordInspectorProps) {
-  const saveDisabled = !canSave || !isDirty || saving;
-  const discardDisabled = !isDirty;
+  const isCreating = mode === 'create';
+  const saveDisabled = !canSave || saving || (!isCreating && !isDirty);
+  const discardDisabled = isCreating ? saving : !isDirty;
 
   return (
     <aside className="w-[320px] bg-[#09090b] border-l border-zinc-800/80 flex flex-col shrink-0">
       <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-950/20">
         <span className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest font-sans">
-          RECORD INSPECTOR
+          {isCreating ? 'NEW RECORD' : 'RECORD INSPECTOR'}
         </span>
         <button
           onClick={onClose}
@@ -114,12 +121,12 @@ export function RecordInspector({
       <div className="p-4 border-t border-zinc-800/80 bg-[#09090b] flex gap-2">
         <button
           disabled={discardDisabled}
-          title={discardDisabled && isDirty === false ? 'No unsaved changes to discard.' : undefined}
+          title={!isCreating && discardDisabled ? 'No unsaved changes to discard.' : undefined}
           onClick={onDiscard}
           className="flex-1 bg-zinc-900 text-zinc-400 border border-zinc-800 py-2.5 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>Discard</span>
+          <span>{isCreating ? 'Cancel' : 'Discard'}</span>
         </button>
         <button
           disabled={saveDisabled}
@@ -127,8 +134,8 @@ export function RecordInspector({
           onClick={onSave}
           className="flex-1 bg-white text-black py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Save className="w-3.5 h-3.5" />
-          <span>{saving ? 'Saving…' : 'Save Row'}</span>
+          {isCreating ? <Plus className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+          <span>{saving ? (isCreating ? 'Creating…' : 'Saving…') : isCreating ? 'Create Row' : 'Save Row'}</span>
         </button>
       </div>
     </aside>

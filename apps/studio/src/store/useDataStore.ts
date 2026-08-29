@@ -29,6 +29,11 @@ interface DataState {
    * grid/inspector reflect the persisted value without a full refetch. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateTableRow: (tableName: string, key: string, patch: Record<string, any>) => void;
+  /** Appends a newly-persisted row to `tableName`'s records. Used after a
+   * successful `createRow` write so the grid reflects the inserted row
+   * without a full refetch. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addTableRow: (tableName: string, row: Record<string, any>) => void;
 }
 
 export const useDataStore = create<DataState>((set) => ({
@@ -93,6 +98,16 @@ export const useDataStore = create<DataState>((set) => ({
       return {
         ...t,
         records: t.records.map((row) => (rowKey(t, row) === key ? { ...row, ...patch } : row)),
+      };
+    })
+  })),
+
+  addTableRow: (tableName, row) => set((state) => ({
+    tables: state.tables.map(t => {
+      if (t.name.toLowerCase() !== tableName.toLowerCase()) return t;
+      return {
+        ...t,
+        records: [...t.records, row],
       };
     })
   })),

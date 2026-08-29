@@ -15,7 +15,7 @@ import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
 import { SampleDataBanner } from './components/SampleDataBanner';
 import { LiveStatusBadge } from './components/LiveStatusBadge';
-import { isBackendAvailable, fetchTableRows, updateRow } from '../../../lib/api';
+import { isBackendAvailable, fetchTableRows, updateRow, createRow } from '../../../lib/api';
 import { rowKey, pkValues } from '../../../lib/rowKey';
 import { resolveWidget } from './components/widgets/registry';
 
@@ -32,6 +32,7 @@ import {
 export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
   const updateTableRow = useDataStore((s) => s.updateTableRow);
+  const addTableRow = useDataStore((s) => s.addTableRow);
   const {
     tables,
     filteredTables,
@@ -100,23 +101,24 @@ export default function TableBrowserPage() {
   // record set changes: keep the current key if it still resolves to a row
   // in this table, otherwise fall back to the first row (or none).
   useEffect(() => {
-    if (!activeTable) return;
+    if (!activeTable || editor.mode === 'create') return;
     const keys = activeTable.records.map((r) => rowKey(activeTable, r));
     if (!editor.selectedRowKey || !keys.includes(editor.selectedRowKey)) {
       editor.setSelectedRowKey(keys[0] ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTable, activeTableIndex]);
+  }, [activeTable, activeTableIndex, editor.mode]);
 
   // Sync the edit buffer whenever the selected row (or the table it belongs
-  // to) changes.
+  // to) changes. Skipped while creating: `startCreate` already seeded the
+  // buffer, and `selectedRowKey` is deliberately `null` during creation.
   useEffect(() => {
-    if (!activeTable) return;
+    if (!activeTable || editor.mode === 'create') return;
     const row = activeTable.records.find((r) => rowKey(activeTable, r) === editor.selectedRowKey) ?? null;
     editor.loadRow(activeTable, row);
     setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor.selectedRowKey, activeTable]);
+  }, [editor.selectedRowKey, activeTable, editor.mode]);
 
   const selectedRecord = activeTable?.records?.find(
     (r) => rowKey(activeTable, r) === editor.selectedRowKey,
@@ -124,6 +126,17 @@ export default function TableBrowserPage() {
 
   const handleDiscard = () => {
     editor.discard();
+    setSaveError(null);
+  };
+
+  const handleAddRecord = () => {
+    if (!activeTable || !isBackendAvailable()) return;
+    editor.startCreate(activeTable);
+    setSaveError(null);
+  };
+
+  const handleCancelCreate = () => {
+    editor.cancelCreate();
     setSaveError(null);
   };
 
@@ -158,6 +171,42 @@ export default function TableBrowserPage() {
       updateTableRow(activeTable.name, editor.selectedRowKey as string, persisted);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Update failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateRecord = async () => {
+    if (!activeTable || !isBackendAvailable()) return;
+    setSaveError(null);
+
+    // Every non-generated column is submitted — unlike an UPDATE patch,
+    // an INSERT has no prior baseline to diff against. A generated
+    // primary key column is never sent: the database owns its value.
+    const values: Record<string, unknown> = {};
+    for (const column of activeTable.columns) {
+      if (column.isGenerated) continue;
+      if (editor.nulls[column.name]) {
+        values[column.name] = null;
+        continue;
+      }
+      const parsed = resolveWidget(column).parse(editor.draft[column.name] ?? '', column);
+      if (!parsed.ok) {
+        setSaveError(parsed.error ?? `${column.name} is invalid`);
+        return;
+      }
+      values[column.name] = parsed.value;
+    }
+
+    setSaving(true);
+    try {
+      const persisted = await createRow(activeTable.name, values);
+      addTableRow(activeTable.name, persisted);
+      editor.cancelCreate();
+      const key = rowKey(activeTable, persisted);
+      if (key) editor.setSelectedRowKey(key);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Create failed');
     } finally {
       setSaving(false);
     }
@@ -206,8 +255,9 @@ export default function TableBrowserPage() {
               <button onClick={() => setIsStructureView(true)} className={`px-3 py-1 rounded-lg cursor-pointer transition-all ${isStructureView ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Structure Specs</button>
             </div>
             <button
-              disabled
-              title={READ_ONLY_TITLE}
+              onClick={handleAddRecord}
+              disabled={!isBackendAvailable() || !activeTable}
+              title={!isBackendAvailable() ? READ_ONLY_TITLE : undefined}
               className="bg-white text-black px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus className="w-3.5 h-3.5" /><span>Add Record</span>
@@ -334,22 +384,23 @@ export default function TableBrowserPage() {
       </section>
 
       {/* Right Sidebar: Record Inspector */}
-      {editor.detailsPanelOpen && activeTable && selectedRecord && (
+      {editor.detailsPanelOpen && activeTable && (selectedRecord || editor.mode === 'create') && (
         <RecordInspector
           activeTable={activeTable}
-          record={selectedRecord}
+          record={selectedRecord ?? {}}
           draft={editor.draft}
           nulls={editor.nulls}
           dirtyColumns={editor.dirtyColumns}
           isDirty={editor.isDirty}
+          mode={editor.mode}
           canSave={isBackendAvailable()}
           disabledTitle={READ_ONLY_TITLE}
           saving={saving}
           error={saveError}
           onFieldChange={editor.setField}
           onNullToggle={editor.setNull}
-          onSave={() => { void handleSave(); }}
-          onDiscard={handleDiscard}
+          onSave={() => { void (editor.mode === 'create' ? handleCreateRecord() : handleSave()); }}
+          onDiscard={editor.mode === 'create' ? handleCancelCreate : handleDiscard}
           onClose={() => editor.setDetailsPanelOpen(false)}
         />
       )}

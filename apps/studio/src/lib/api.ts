@@ -84,6 +84,27 @@ export async function updateRow(
   return body.row as Record<string, unknown>;
 }
 
+/**
+ * Inserts a new row. `values` is the full set of column values for the row,
+ * keyed by schema field name, minus any generated/autoincrement primary key
+ * column — the server rejects one if supplied. Returns the persisted row
+ * (including any database-generated primary key) on success; throws with
+ * the server's error message otherwise.
+ */
+export async function createRow(
+  table: string,
+  values: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/rows/${encodeURIComponent(table)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(values),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error ?? 'Create failed');
+  return body.row as Record<string, unknown>;
+}
+
 export async function runQuery(sql: string): Promise<QueryResult> {
   const res = await fetch('/api/query', {
     method: 'POST',
