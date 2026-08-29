@@ -18,9 +18,18 @@ interface AuthState {
   authenticated: boolean;
   loginError: string | null;
   /**
+   * `true` while the initial `GET /api/auth/status` probe is in flight.
+   * `App` uses this to withhold both the app shell and `LoginScreen` until
+   * the probe settles, so the permissive default state below never paints
+   * even for one frame.
+   */
+  statusChecking: boolean;
+  /**
    * Primary auth detection: probes `GET /api/auth/status` on app load.
-   * Fails soft (leaves state untouched) in standalone dev with no backend,
-   * matching every other bootstrap call in this app.
+   * Fails soft (leaves `authRequired`/`authenticated` untouched) in
+   * standalone dev with no backend, matching every other bootstrap call in
+   * this app — but always clears `statusChecking` so that fail-soft path
+   * still resolves to rendering the app shell.
    */
   checkStatus: () => Promise<void>;
   login: (password: string) => Promise<boolean>;
@@ -33,18 +42,21 @@ interface AuthState {
  * Defaults to "no gate" (`authRequired: false, authenticated: true`) until
  * `checkStatus()` resolves — the same fail-soft posture as the rest of this
  * app's backend-optional design: standalone `pnpm dev` never blinks a login
- * screen at anyone.
+ * screen at anyone. `statusChecking` starts `true` so `App` withholds any
+ * render decision until the probe actually settles.
  */
 export const useAuthStore = create<AuthState>((set) => ({
   authRequired: false,
   authenticated: true,
   loginError: null,
+  statusChecking: true,
 
   checkStatus: async () => {
     const status = await fetchAuthStatus();
     if (status) {
       set({ authRequired: status.authRequired, authenticated: status.authenticated });
     }
+    set({ statusChecking: false });
   },
 
   login: async (password: string) => {

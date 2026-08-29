@@ -17,25 +17,38 @@ import { TAB_TITLE_KEYS } from './lib/tab-titles';
 import LoginScreen from '../features/auth/LoginScreen';
 
 export default function App() {
-  const { t } = useTranslation();
-  const { activeTab, studioSubTab, currentCluster, setCurrentCluster, setStudioSubTab } = useNavigationStore();
   const { themeAccent } = useThemeStore();
-  const { authRequired, authenticated, checkStatus } = useAuthStore();
+  const { authRequired, authenticated, statusChecking, checkStatus } = useAuthStore();
 
   useEffect(() => {
     // Inject theme accent class to document for global overrides
     document.documentElement.className = `theme-${themeAccent}`;
   }, [themeAccent]);
 
-  useSchemaBootstrap();
-
   useEffect(() => {
     void checkStatus();
   }, [checkStatus]);
 
+  // Withhold both the app shell and its schema bootstrap fetch, and
+  // `LoginScreen`, until the initial `GET /api/auth/status` probe settles —
+  // otherwise the permissive default state briefly renders the full shell
+  // even when a login gate is about to apply.
+  if (statusChecking) {
+    return null;
+  }
+
   if (authRequired && !authenticated) {
     return <LoginScreen />;
   }
+
+  return <AppShell />;
+}
+
+function AppShell() {
+  const { t } = useTranslation();
+  const { activeTab, studioSubTab, currentCluster, setCurrentCluster, setStudioSubTab } = useNavigationStore();
+
+  useSchemaBootstrap();
 
   return (
     <div className="flex h-screen bg-[#09090b] text-white overflow-hidden font-sans antialiased selection:bg-indigo-500/30">

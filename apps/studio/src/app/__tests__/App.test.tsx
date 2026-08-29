@@ -31,13 +31,43 @@ vi.mock('../../lib/api', async () => {
   };
 });
 
-import { fetchAuthStatus, login } from '../../lib/api';
+import { fetchAuthStatus, fetchSchema, login } from '../../lib/api';
 
 describe('App auth gate', () => {
   beforeEach(() => {
-    useAuthStore.setState({ authRequired: false, authenticated: true, loginError: null });
+    useAuthStore.setState({
+      authRequired: false,
+      authenticated: true,
+      loginError: null,
+      statusChecking: true,
+    });
     vi.mocked(fetchAuthStatus).mockReset();
+    vi.mocked(fetchSchema).mockClear();
     vi.mocked(login).mockReset();
+  });
+
+  it('renders nothing and does not bootstrap the schema while the status probe is pending', async () => {
+    let resolveStatus!: (value: { authRequired: boolean; authenticated: boolean }) => void;
+    vi.mocked(fetchAuthStatus).mockReturnValue(
+      new Promise((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+
+    const { container } = render(<App />);
+
+    // While the probe is still in flight, neither the app shell nor
+    // LoginScreen should have rendered, and the schema bootstrap fetch
+    // (fired only once the app shell mounts) must not have run either.
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByLabelText('auth.login.password_label')).not.toBeInTheDocument();
+    expect(document.getElementById('main-sidebar')).not.toBeInTheDocument();
+    expect(fetchSchema).not.toHaveBeenCalled();
+
+    resolveStatus({ authRequired: false, authenticated: true });
+
+    await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
+    expect(fetchSchema).toHaveBeenCalled();
   });
 
   it('renders the app shell directly when the status probe reports authRequired: false', async () => {
