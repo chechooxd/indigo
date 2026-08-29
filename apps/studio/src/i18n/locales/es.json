@@ -92,6 +92,20 @@
       "title": "Restaurar valores predeterminados",
       "desc": "Restaura los límites de conexión, divisiones de diseño y esquemas simulados en caché a sus valores iniciales del sistema.",
       "btn": "Reiniciar Ajustes"
+    },
+    "session": {
+      "title": "Sesión",
+      "desc": "Esta instancia de Studio está protegida por una contraseña compartida. Cerrar sesión borra la sesión actual y vuelve a la pantalla de inicio de sesión.",
+      "logout": "Cerrar sesión"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Inicio de sesión de Studio",
+      "description": "Esta instancia de Studio requiere una contraseña para continuar.",
+      "password_label": "Contraseña",
+      "submit": "Iniciar sesión",
+      "submitting": "Iniciando sesión…"
     }
   },
   "studio": {

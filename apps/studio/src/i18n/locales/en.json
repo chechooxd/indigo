@@ -92,6 +92,20 @@
       "title": "Restore Workspace defaults",
       "desc": "Resets connection limits, layout splits, and cached mock schemas back to system initial values.",
       "btn": "Reset Settings"
+    },
+    "session": {
+      "title": "Session",
+      "desc": "This Studio instance is protected by a shared password. Signing out clears the current session and returns to the login screen.",
+      "logout": "Log out"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Studio Login",
+      "description": "This Studio instance requires a password to continue.",
+      "password_label": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in…"
     }
   },
   "studio": {

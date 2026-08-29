@@ -11,6 +11,7 @@ import { ConnectionCard } from './components/ConnectionCard';
 import { QueryGuardsCard } from './components/QueryGuardsCard';
 import { UIPreferencesCard } from './components/UIPreferencesCard';
 import { ResetDiagnosticsCard } from './components/ResetDiagnosticsCard';
+import { SessionCard } from './components/SessionCard';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -75,6 +76,7 @@ export default function SettingsPage() {
             onSafeUpdatesChange={setSafeUpdates}
           />
           <UIPreferencesCard accent={themeAccent} onAccentChange={setThemeAccent} />
+          <SessionCard />
         </div>
 
         <ResetDiagnosticsCard onReset={resetDefaults} />
