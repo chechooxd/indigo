@@ -191,6 +191,37 @@ export function assertRealtimeSecretPresent(
   }
 }
 
+/**
+ * `indigodb studio` startup preflight: a non-loopback `--host` bind exposes
+ * the schema, data browser and SQL query console to the whole network, so it
+ * requires `INDIGODB_STUDIO_PASSWORD` to be set — the loopback default
+ * (`127.0.0.1`/`::1`/`localhost`) needs no password and is left untouched.
+ *
+ * Kept self-contained (its own loopback set) rather than importing
+ * `studio-server.ts`'s private `isLoopbackHost`, mirroring
+ * `assertRealtimeSecretPresent`'s pattern of a small standalone preflight
+ * function in this file; the loopback host list (`127.0.0.1`, `::1`,
+ * `localhost`) matches `studio-server.ts`'s exactly and must stay in sync if
+ * that ever changes.
+ */
+const STUDIO_LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+export function assertStudioAuthForHost(host: string, password: string | undefined): void {
+  const loopback = STUDIO_LOOPBACK_HOSTS.has(host);
+  if (!loopback && !password) {
+    console.error(
+      `❌ --host ${host} binds the Studio beyond loopback, but INDIGODB_STUDIO_PASSWORD is not set.`,
+    );
+    console.error(
+      `   That would publish the schema, data browser and SQL console with no authentication.`,
+    );
+    console.error(
+      `   Set INDIGODB_STUDIO_PASSWORD and retry, or drop --host to stay on 127.0.0.1.`,
+    );
+    process.exit(1);
+  }
+}
+
 /** Determines the client output path (generator block > flag > default). */
 export function resolveOutputPath(ast: Schema, flag?: string): string {
   const fromGenerator = ast.generators[0]?.output;

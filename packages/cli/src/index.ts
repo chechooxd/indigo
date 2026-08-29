@@ -23,6 +23,7 @@ import {
   writePulledSchema,
   assertLogicalReplication,
   assertRealtimeSecretPresent,
+  assertStudioAuthForHost,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -298,6 +299,8 @@ program
   .option("--no-open", "Do not open the browser automatically")
   .action(async (options: { schema: string; port: string; host: string; open: boolean }) => {
     loadEnv();
+    const password = process.env.INDIGODB_STUDIO_PASSWORD;
+    assertStudioAuthForHost(options.host, password);
     const { resolved, path: schemaPath } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
     await startStudio({
@@ -307,6 +310,7 @@ program
       port: Number(options.port),
       host: options.host,
       open: options.open,
+      password,
     });
   });
 
