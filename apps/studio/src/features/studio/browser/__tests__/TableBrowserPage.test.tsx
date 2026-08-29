@@ -8,7 +8,7 @@ import { render, screen, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import TableBrowserPage from '../TableBrowserPage';
-import { useDataStore } from '../../../../store/useDataStore';
+import { useDataStore, defaultTablePageState } from '../../../../store/useDataStore';
 import { useSettingsStore } from '../../../../store/useSettingsStore';
 import { INITIAL_TABLES } from '../../../../data/mockData';
 
@@ -18,6 +18,7 @@ vi.mock('../../../../lib/api', () => ({
   updateRow: vi.fn(),
   createRow: vi.fn(),
   deleteRow: vi.fn(),
+  PAGE_SIZES: [25, 50, 100, 200],
 }));
 
 // Fake transport: `connect()` synchronously fires `onOpen(false)` so the
@@ -34,14 +35,28 @@ vi.mock('@indigodb/client/realtime', () => ({
   REALTIME_PATH: '/api/realtime',
 }));
 
-import { isBackendAvailable, fetchTableRows, createRow, deleteRow } from '../../../../lib/api';
+import { isBackendAvailable, fetchTableRows, createRow, deleteRow, type TablePage } from '../../../../lib/api';
 
 function resetTables() {
   // Deep-clone so per-test store mutations never leak across tests (Zustand
   // stores are module singletons).
   useDataStore.setState({
     tables: INITIAL_TABLES.map((t) => ({ ...t, records: t.records.map((r) => ({ ...r })) })),
+    pagination: {},
   });
+}
+
+/** Builds a complete `TablePage` response for `fetchTableRows` mocks. */
+function mockPage(rows: Record<string, unknown>[], overrides: Partial<TablePage> = {}): TablePage {
+  return {
+    columns: [],
+    rows,
+    nextCursor: null,
+    prevCursor: null,
+    total: rows.length,
+    paginated: true,
+    ...overrides,
+  };
 }
 
 describe('TableBrowserPage', () => {
@@ -57,7 +72,7 @@ describe('TableBrowserPage', () => {
   it('never calls window.alert, and Refresh triggers a real refetch when a backend is connected', async () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
     vi.mocked(isBackendAvailable).mockReturnValue(true);
-    vi.mocked(fetchTableRows).mockResolvedValue({ columns: [], rows: [{ id: 'refreshed-1' }] });
+    vi.mocked(fetchTableRows).mockResolvedValue(mockPage([{ id: 'refreshed-1' }]));
 
     const user = userEvent.setup();
     render(<TableBrowserPage />);
@@ -65,7 +80,7 @@ describe('TableBrowserPage', () => {
     await user.click(screen.getByText('Refresh'));
 
     expect(alertSpy).not.toHaveBeenCalled();
-    expect(fetchTableRows).toHaveBeenCalledWith('users');
+    expect(fetchTableRows).toHaveBeenCalledWith('users', expect.objectContaining({ limit: 100 }));
 
     alertSpy.mockRestore();
   });
@@ -85,11 +100,70 @@ describe('TableBrowserPage', () => {
     alertSpy.mockRestore();
   });
 
-  it('renders no pager controls', () => {
-    render(<TableBrowserPage />);
+  describe('pagination (studio-table-pagination)', () => {
+    it('renders prev/next pager controls disabled when there is no next/prev cursor', () => {
+      render(<TableBrowserPage />);
 
-    expect(screen.queryByText('Jump page')).not.toBeInTheDocument();
-    expect(screen.queryByText(/simulated client memory cache/i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /next page/i })).toBeDisabled();
+    });
+
+    it('Next page fetches the following page and updates the pager state', async () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      // Seed pagination state directly, as if a prior page load already
+      // happened (mirrors real usage: this mock table's records are
+      // pre-populated, so the mount effect's auto-load is a no-op here —
+      // see the "already has records" guard in TableBrowserPage).
+      useDataStore.setState({
+        pagination: { users: { ...defaultTablePageState(), nextCursor: 'cursor-a', total: 2 } },
+      });
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
+
+      expect(screen.getByRole('button', { name: /next page/i })).not.toBeDisabled();
+
+      vi.mocked(fetchTableRows).mockResolvedValueOnce(
+        mockPage([{ id: 'row-2' }], { prevCursor: 'cursor-b', nextCursor: null, total: 2 }),
+      );
+      await user.click(screen.getByRole('button', { name: /next page/i }));
+
+      expect(fetchTableRows).toHaveBeenCalledWith(
+        'users',
+        expect.objectContaining({ cursor: 'cursor-a', direction: 'forward' }),
+      );
+      await screen.findByRole('button', { name: /next page/i });
+      expect(screen.getByRole('button', { name: /next page/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /previous page/i })).not.toBeDisabled();
+    });
+
+    it('page-size selector resets to page one (cursor: null) on change', async () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useDataStore.setState({
+        pagination: { users: { ...defaultTablePageState(), nextCursor: 'cursor-a', total: 2 } },
+      });
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
+
+      vi.mocked(fetchTableRows).mockResolvedValueOnce(mockPage([{ id: 'row-1' }], { total: 1 }));
+
+      await user.selectOptions(screen.getByLabelText(/rows per page/i), '25');
+
+      expect(fetchTableRows).toHaveBeenCalledWith(
+        'users',
+        expect.objectContaining({ cursor: null, direction: 'forward', limit: 25 }),
+      );
+    });
+
+    it('shows a PK-less notice instead of a pager when the server reports paginated:false', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useDataStore.setState({
+        pagination: { users: { ...defaultTablePageState(), paginated: false, total: 1 } },
+      });
+      render(<TableBrowserPage />);
+
+      expect(screen.getByText(/has no primary key/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /next page/i })).not.toBeInTheDocument();
+    });
   });
 
   it('derives the displayed record count from records.length, not a fabricated figure', () => {
@@ -121,50 +195,29 @@ describe('TableBrowserPage', () => {
     expect(screen.getByText('alex@indigodb.io')).toBeInTheDocument();
   });
 
-  it('clicking a column header cycles sort asc -> desc -> unsorted and reorders the displayed rows', async () => {
-    const user = userEvent.setup();
-    render(<TableBrowserPage />);
+  describe('sort control (studio-ui-honesty: disabled, not removed)', () => {
+    it('renders the sort control disabled with SORT_DISABLED_TITLE, and clicking it has no effect', async () => {
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
 
-    const fullNameHeader = screen.getByRole('columnheader', { name: /full_name/i });
+      const sortButton = screen.getByRole('button', { name: /sort by full_name/i });
+      expect(sortButton).toBeDisabled();
+      expect(sortButton).toHaveAttribute(
+        'title',
+        'Sorting is disabled: rows are ordered by primary key across all pages. Full-table sort on other columns is not available yet.',
+      );
 
-    const cellOrder = () =>
-      screen.getAllByRole('row').slice(1).map((row) => row.textContent);
-
-    const originalOrder = cellOrder();
-
-    await user.click(fullNameHeader);
-    const ascOrder = cellOrder();
-    expect(ascOrder).not.toEqual(originalOrder);
-
-    await user.click(fullNameHeader);
-    const descOrder = cellOrder();
-    expect(descOrder).not.toEqual(ascOrder);
-
-    await user.click(fullNameHeader);
-    expect(cellOrder()).toEqual(originalOrder);
+      const recordsBefore = useDataStore.getState().tables[0].records;
+      await user.click(sortButton);
+      expect(useDataStore.getState().tables[0].records).toBe(recordsBefore);
+    });
   });
 
-  it('sorting never mutates the Zustand store\'s underlying records array', async () => {
-    const user = userEvent.setup();
-    render(<TableBrowserPage />);
-
-    const recordsBefore = useDataStore.getState().tables[0].records;
-    const namesBefore = recordsBefore.map((r) => r.full_name);
-
-    await user.click(screen.getByRole('columnheader', { name: /full_name/i }));
-
-    const recordsAfter = useDataStore.getState().tables[0].records;
-
-    expect(recordsAfter).toBe(recordsBefore);
-    expect(recordsAfter.map((r) => r.full_name)).toEqual(namesBefore);
-  });
-
-  it('composes filter and sort: sorts only the search-filtered rows, not the full unfiltered set', async () => {
+  it('search alone filters the displayed rows (no sort applied)', async () => {
     const user = userEvent.setup();
     render(<TableBrowserPage />);
 
     await user.type(screen.getByPlaceholderText('Search active records...'), 'gmail');
-    await user.click(screen.getByRole('columnheader', { name: /full_name/i }));
 
     const dataRows = screen.getAllByRole('row').slice(1);
     expect(dataRows).toHaveLength(1);

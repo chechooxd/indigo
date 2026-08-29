@@ -18,83 +18,43 @@ function resetTables() {
   });
 }
 
-describe('useTableData — filter + sort', () => {
+describe('useTableData — filter', () => {
   beforeEach(() => {
     resetTables();
   });
 
-  it('sorts a copy, never mutating the store\'s original records array', () => {
-    const { result } = renderHook(() => useTableData());
-
-    const storeRecordsBefore = useDataStore.getState().tables[0].records;
-    const storeRecordsBeforeSnapshot = storeRecordsBefore.map((r) => r.full_name);
-
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-
-    const storeRecordsAfter = useDataStore.getState().tables[0].records;
-
-    // Same array reference, same order: the hook must never sort in-place.
-    expect(storeRecordsAfter).toBe(storeRecordsBefore);
-    expect(storeRecordsAfter.map((r) => r.full_name)).toEqual(storeRecordsBeforeSnapshot);
-  });
-
-  it('cycles asc -> desc -> unsorted on repeated cycleSort calls, sorting only the copy', () => {
-    const { result } = renderHook(() => useTableData());
-
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'asc' });
-    const ascNames = result.current.filteredRecords.map((r) => r.full_name);
-    expect(ascNames).toEqual([...ascNames].sort((a, b) => a.localeCompare(b)));
-
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'desc' });
-    const descNames = result.current.filteredRecords.map((r) => r.full_name);
-    expect(descNames).toEqual([...ascNames].reverse());
-
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-    expect(result.current.sort).toBeNull();
-  });
-
-  it('filters before sorting: sort only reorders the already-filtered rows', () => {
+  it('filters records by the search query across all fields', () => {
     const { result } = renderHook(() => useTableData());
 
     act(() => {
       result.current.setRecordSearchQuery('gmail');
     });
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
 
-    // Only the gmail.com row ('sarah.j@gmail.com' -> 'Sarah Jenkins') matches
-    // the search, so sorting must not resurrect filtered-out rows.
+    // Only the gmail.com row ('sarah.j@gmail.com' -> 'Sarah Jenkins') matches.
     expect(result.current.filteredRecords).toHaveLength(1);
     expect(result.current.filteredRecords[0].full_name).toBe('Sarah Jenkins');
   });
 
-  it('resets hiddenColumns and sort when the active table changes', () => {
+  it('returns the store\'s own records array by reference when unfiltered (no defensive copy needed)', () => {
+    const { result } = renderHook(() => useTableData());
+
+    const storeRecords = useDataStore.getState().tables[0].records;
+    expect(result.current.filteredRecords).toBe(storeRecords);
+  });
+
+  it('resets hiddenColumns when the active table changes', () => {
     const { result } = renderHook(() => useTableData());
 
     act(() => {
       result.current.toggleColumnVisibility('email');
-      result.current.cycleSort('full_name');
     });
     expect(result.current.hiddenColumns.has('email')).toBe(true);
-    expect(result.current.sort).not.toBeNull();
 
     act(() => {
       result.current.setActiveTableIndex(1);
     });
 
     expect(result.current.hiddenColumns.size).toBe(0);
-    expect(result.current.sort).toBeNull();
   });
 
   it('toggleColumnVisibility hides a column from visibleColumns and restores it on re-toggle', () => {
@@ -113,45 +73,10 @@ describe('useTableData — filter + sort', () => {
     expect(result.current.visibleColumns.some((c) => c.name === 'email')).toBe(true);
   });
 
-  it('sorts null/undefined values last, in both directions', () => {
-    // compareRows' nullish-last rule (useTableData.ts) has no seeded mock
-    // fixture with a missing field, so it was implemented but never exercised
-    // — this pins it directly against a table built for the purpose.
-    useDataStore.setState({
-      tables: [
-        {
-          ...INITIAL_TABLES[0],
-          records: [
-            { id: 1, full_name: 'Bravo' },
-            { id: 2, full_name: null },
-            { id: 3, full_name: 'Alpha' },
-            { id: 4, full_name: undefined },
-          ],
-        },
-      ],
-    });
+  it('does not expose sort/cycleSort/compareRows fields — sorting was removed, not hidden', () => {
     const { result } = renderHook(() => useTableData());
 
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'asc' });
-    expect(result.current.filteredRecords.map((r) => r.full_name)).toEqual([
-      'Alpha',
-      'Bravo',
-      null,
-      undefined,
-    ]);
-
-    act(() => {
-      result.current.cycleSort('full_name');
-    });
-    expect(result.current.sort).toEqual({ column: 'full_name', direction: 'desc' });
-    expect(result.current.filteredRecords.map((r) => r.full_name)).toEqual([
-      'Bravo',
-      'Alpha',
-      null,
-      undefined,
-    ]);
+    expect('sort' in result.current).toBe(false);
+    expect('cycleSort' in result.current).toBe(false);
   });
 });

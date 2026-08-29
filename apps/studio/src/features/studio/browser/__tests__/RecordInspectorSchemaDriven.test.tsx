@@ -19,6 +19,7 @@ vi.mock('../../../../lib/api', () => ({
   isBackendAvailable: vi.fn(() => true),
   fetchTableRows: vi.fn(),
   updateRow: vi.fn(),
+  PAGE_SIZES: [25, 50, 100, 200],
 }));
 
 vi.mock('@indigodb/client/realtime', () => ({

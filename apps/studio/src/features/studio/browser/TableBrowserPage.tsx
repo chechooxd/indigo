@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { RefreshCw, Search, Plus, Check, Circle, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 
 import { useTableData } from './hooks/useTableData';
 import { useLiveTable } from './hooks/useLiveTable';
@@ -16,7 +16,7 @@ import { RecordInspector } from './components/RecordInspector';
 import { DeleteRecordDialog } from './components/DeleteRecordDialog';
 import { SampleDataBanner } from './components/SampleDataBanner';
 import { LiveStatusBadge } from './components/LiveStatusBadge';
-import { isBackendAvailable, fetchTableRows, updateRow, createRow, deleteRow } from '../../../lib/api';
+import { isBackendAvailable, fetchTableRows, updateRow, createRow, deleteRow, PAGE_SIZES, type PageSize } from '../../../lib/api';
 import { rowKey, pkValues } from '../../../lib/rowKey';
 import { resolveWidget } from './components/widgets/registry';
 
@@ -24,7 +24,9 @@ const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-
 const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
 const SAFE_UPDATES_BLOCKS_DELETE_TITLE =
   'Deleting is blocked by "Safe Updates". Disable it in Settings › Query Guards to delete rows.';
-import { useDataStore } from '../../../store/useDataStore';
+const SORT_DISABLED_TITLE =
+  'Sorting is disabled: rows are ordered by primary key across all pages. Full-table sort on other columns is not available yet.';
+import { useDataStore, defaultTablePageState } from '../../../store/useDataStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
 import {
   DropdownMenu,
@@ -38,6 +40,10 @@ export default function TableBrowserPage() {
   const updateTableRow = useDataStore((s) => s.updateTableRow);
   const addTableRow = useDataStore((s) => s.addTableRow);
   const removeTableRow = useDataStore((s) => s.removeTableRow);
+  const pagination = useDataStore((s) => s.pagination);
+  const setTablePage = useDataStore((s) => s.setTablePage);
+  const setPageSize = useDataStore((s) => s.setPageSize);
+  const setTablePageResult = useDataStore((s) => s.setTablePageResult);
   const safeUpdates = useSettingsStore((s) => s.safeUpdates);
   const {
     tables,
@@ -50,14 +56,14 @@ export default function TableBrowserPage() {
     isStructureView,
     hiddenColumns,
     visibleColumns,
-    sort,
     setActiveTableIndex,
     setTableFilterQuery,
     setRecordSearchQuery,
     setIsStructureView,
     toggleColumnVisibility,
-    cycleSort,
   } = useTableData();
+
+  const pageState = pagination[activeTable?.name ?? ''] ?? defaultTablePageState();
 
   const createForm = useCreateTableForm();
 
@@ -76,13 +82,27 @@ export default function TableBrowserPage() {
     isBackendAvailable() && activeTable?.realtime === true,
   );
 
-  // Under the studio backend, load real rows for the active table on demand.
+  // Under the studio backend, load the first page of real rows for the
+  // active table on demand — once. Either the table already carries records
+  // (initial sample data / a prior load) or a page was already fetched for
+  // it: both mean "nothing to load here", checked via the store's own
+  // current state (not the reactive `pagination` selector above) so this
+  // effect only re-runs when the active table itself changes.
   useEffect(() => {
     if (!isBackendAvailable() || !activeTable) return;
     if (activeTable.records.length > 0) return;
+    if (useDataStore.getState().pagination[activeTable.name]) return;
     let cancelled = false;
-    fetchTableRows(activeTable.name).then((result) => {
-      if (!cancelled && result) updateTableRecords(activeTable.name, result.rows);
+    const table = activeTable.name;
+    fetchTableRows(table, { limit: defaultTablePageState().pageSize }).then((result) => {
+      if (cancelled || !result) return;
+      updateTableRecords(table, result.rows);
+      setTablePageResult(table, {
+        nextCursor: result.nextCursor,
+        prevCursor: result.prevCursor,
+        total: result.total,
+        paginated: result.paginated,
+      });
     });
     return () => {
       cancelled = true;
@@ -90,17 +110,74 @@ export default function TableBrowserPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTable?.name]);
 
-  // Manual refresh: re-fetch the active table's rows when a backend is
-  // connected. With no backend there is nothing to refetch from, so the
-  // control is disabled outright instead of being a silent no-op.
+  // Manual refresh: re-fetch the active table's CURRENT page (same
+  // cursor/direction/page size) when a backend is connected. With no
+  // backend there is nothing to refetch from, so the control is disabled
+  // outright instead of being a silent no-op.
   const refreshActiveTable = async () => {
     if (!isBackendAvailable() || !activeTable) return;
     setIsRefreshing(true);
     try {
-      const result = await fetchTableRows(activeTable.name);
-      if (result) updateTableRecords(activeTable.name, result.rows);
+      const result = await fetchTableRows(activeTable.name, {
+        cursor: pageState.cursor,
+        direction: pageState.direction,
+        limit: pageState.pageSize,
+      });
+      if (result) {
+        updateTableRecords(activeTable.name, result.rows);
+        setTablePageResult(activeTable.name, {
+          nextCursor: result.nextCursor,
+          prevCursor: result.prevCursor,
+          total: result.total,
+          paginated: result.paginated,
+        });
+      }
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  // Pager: fetches the page at `cursor`/`direction` and updates both the
+  // records and the pagination "result" fields. Disabled entirely for a
+  // PK-less table (`paginated === false`) or when the matching cursor is
+  // null (already at that boundary).
+  const goToPage = async (cursor: string | null, direction: 'forward' | 'backward') => {
+    if (!activeTable || !isBackendAvailable()) return;
+    setTablePage(activeTable.name, cursor, direction);
+    const result = await fetchTableRows(activeTable.name, { cursor, direction, limit: pageState.pageSize });
+    if (result) {
+      updateTableRecords(activeTable.name, result.rows);
+      setTablePageResult(activeTable.name, {
+        nextCursor: result.nextCursor,
+        prevCursor: result.prevCursor,
+        total: result.total,
+        paginated: result.paginated,
+      });
+    }
+  };
+
+  const handleNextPage = () => {
+    if (pageState.nextCursor) void goToPage(pageState.nextCursor, 'forward');
+  };
+  const handlePrevPage = () => {
+    if (pageState.prevCursor) void goToPage(pageState.prevCursor, 'backward');
+  };
+
+  // Changing the page size resets to page one (`cursor: null, direction:
+  // 'forward'`) per studio-table-pagination's design — there is no
+  // client-side cursor stack to invalidate.
+  const handlePageSizeChange = async (size: PageSize) => {
+    if (!activeTable || !isBackendAvailable()) return;
+    setPageSize(activeTable.name, size);
+    const result = await fetchTableRows(activeTable.name, { cursor: null, direction: 'forward', limit: size });
+    if (result) {
+      updateTableRecords(activeTable.name, result.rows);
+      setTablePageResult(activeTable.name, {
+        nextCursor: result.nextCursor,
+        prevCursor: result.prevCursor,
+        total: result.total,
+        paginated: result.paginated,
+      });
     }
   };
 
@@ -280,6 +357,15 @@ export default function TableBrowserPage() {
       {/* Main Workspace Area */}
       <section className="flex-1 flex flex-col bg-[#09090b] overflow-hidden">
         <SampleDataBanner />
+        {isBackendAvailable() && !isStructureView && pageState.paginated === false && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-amber-950/30 border-b border-amber-900/40 text-amber-300 text-[11px] font-sans shrink-0">
+            <Info className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              "{activeTable?.name}" has no primary key, so it cannot be paged stably. Showing a
+              single, unpaginated page.
+            </span>
+          </div>
+        )}
         {/* Contextual Toolbar */}
         <div className="h-[48px] bg-[#09090b] border-b border-zinc-800/80 flex items-center justify-between px-4 shrink-0">
           <div className="flex items-center gap-4">
@@ -339,6 +425,40 @@ export default function TableBrowserPage() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {!isStructureView && pageState.paginated !== false && (
+            <div className="flex items-center gap-2 text-zinc-400 text-xs">
+              <button
+                aria-label="Previous page"
+                title="Previous page"
+                onClick={handlePrevPage}
+                disabled={!pageState.prevCursor}
+                className="flex items-center justify-center w-6 h-6 rounded-lg hover:bg-zinc-900 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                aria-label="Next page"
+                title="Next page"
+                onClick={handleNextPage}
+                disabled={!pageState.nextCursor}
+                className="flex items-center justify-center w-6 h-6 rounded-lg hover:bg-zinc-900 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <label htmlFor="page-size-select" className="sr-only">Rows per page</label>
+              <select
+                id="page-size-select"
+                aria-label="Rows per page"
+                value={pageState.pageSize}
+                onChange={(e) => void handlePageSizeChange(Number(e.target.value) as PageSize)}
+                className="bg-zinc-950 border border-zinc-800 rounded-lg text-[10px] px-1.5 py-0.5 text-zinc-300"
+              >
+                {PAGE_SIZES.map((size) => (
+                  <option key={size} value={size}>{size} / page</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="ml-auto">
             <div className="w-48 h-7 bg-[#09090b] border border-zinc-805 rounded-xl flex items-center px-2.5">
               <Search className="w-3 h-3 text-zinc-500" />
@@ -378,19 +498,24 @@ export default function TableBrowserPage() {
                 <tr>
                   <th className="w-10 px-3 py-2 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 focus:ring-0 text-white" type="checkbox" readOnly checked /></th>
                   {visibleColumns.map((col) => {
-                    const isSorted = sort?.column === col.name;
-                    const SortIcon = isSorted ? (sort?.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
                     return (
                       <th
                         key={col.name}
-                        onClick={() => cycleSort(col.name)}
-                        className="px-4 py-3 border-r border-zinc-800 min-w-[120px] cursor-pointer select-none hover:bg-zinc-900/40 transition-colors"
+                        className="px-4 py-3 border-r border-zinc-800 min-w-[120px] select-none"
                       >
                         <div className="flex items-center justify-between gap-1.5">
                           <span className="text-zinc-500 uppercase tracking-wider">{col.name}</span>
                           <div className="flex items-center gap-1">
                             {col.isPK && <span className="text-[9px] text-zinc-400 font-semibold border border-zinc-800 px-1.5 py-0.2 rounded">PK</span>}
-                            <SortIcon className={`w-3 h-3 ${isSorted ? 'text-white' : 'text-zinc-600'}`} />
+                            <button
+                              type="button"
+                              aria-label={`Sort by ${col.name}`}
+                              title={SORT_DISABLED_TITLE}
+                              disabled
+                              className="flex items-center justify-center disabled:cursor-not-allowed"
+                            >
+                              <ArrowUpDown className="w-3 h-3 text-zinc-600" />
+                            </button>
                           </div>
                         </div>
                       </th>
@@ -430,7 +555,10 @@ export default function TableBrowserPage() {
 
         {/* Footer */}
         <div className="h-10 bg-[#09090b] border-t border-zinc-800/80 flex items-center justify-between px-4 shrink-0 text-xs text-zinc-500 font-sans font-medium">
-          <span>Showing {filteredRecords.length} of {activeTable?.records?.length ?? 0} rows</span>
+          <span>
+            Showing {filteredRecords.length} of{' '}
+            {activeTable && pagination[activeTable.name] ? pageState.total : (activeTable?.records?.length ?? 0)} rows
+          </span>
         </div>
       </section>
 

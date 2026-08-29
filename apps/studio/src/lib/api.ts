@@ -13,6 +13,26 @@ export interface QueryResult {
   rows: Record<string, unknown>[];
 }
 
+/** Page size options the server accepts (see @indigodb/cli's `studio-server.ts`). */
+export const PAGE_SIZES = [25, 50, 100, 200] as const;
+export type PageSize = (typeof PAGE_SIZES)[number];
+
+export interface FetchTableRowsOptions {
+  cursor?: string | null;
+  direction?: 'forward' | 'backward';
+  limit?: PageSize;
+}
+
+export interface TablePage {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+  total: number;
+  /** `false` for a PK-less table: a single unpaginated page, no stable cursor key. */
+  paginated: boolean;
+}
+
 let backendAvailable: boolean | null = null;
 
 export function isBackendAvailable(): boolean {
@@ -53,11 +73,19 @@ export async function fetchSchemaSource(): Promise<string | null> {
   }
 }
 
-export async function fetchTableRows(name: string): Promise<QueryResult | null> {
+export async function fetchTableRows(
+  name: string,
+  options?: FetchTableRowsOptions,
+): Promise<TablePage | null> {
   try {
-    const res = await fetch(`/api/tables/${encodeURIComponent(name)}`);
+    const params = new URLSearchParams();
+    if (options?.cursor) params.set('cursor', options.cursor);
+    if (options?.direction) params.set('direction', options.direction);
+    if (options?.limit) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    const res = await fetch(`/api/tables/${encodeURIComponent(name)}${qs ? `?${qs}` : ''}`);
     if (!res.ok || !hasContentType(res, 'application/json')) throw new Error();
-    return (await res.json()) as QueryResult;
+    return (await res.json()) as TablePage;
   } catch {
     return null;
   }

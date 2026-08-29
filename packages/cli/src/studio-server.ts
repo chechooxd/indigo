@@ -7,7 +7,10 @@
  *
  * API:
  *   GET   /api/schema          → the ResolvedSchema as JSON
- *   GET   /api/tables/:name    → up to 100 rows from a table
+ *   GET   /api/tables/:name    → a page of rows from a table, PK-ordered and
+ *                                cursor-paginated (see `resolveReadTarget`,
+ *                                `parsePageParams` below); falls back to a
+ *                                single unpaginated page for PK-less tables
  *   POST  /api/query { sql }   → runs a single read-only SELECT
  *   POST   /api/rows/:table    → inserts one row, returns it (incl. generated PK)
  *   PATCH  /api/rows/:table    → updates one row, identified by primary key
@@ -331,6 +334,165 @@ export function resolveWriteTarget(
   return { table, quotedTable: `"${table.dbName}"`, columns, pk };
 }
 
+/**
+ * Thrown by `resolveReadTarget` when a table name doesn't resolve. Every
+ * route that calls it maps this to HTTP 404 and runs no SQL.
+ */
+export class ReadTargetError extends Error {}
+
+/**
+ * A validated read target: the resolved table, its already-quoted physical
+ * name, and its primary-key columns (possibly empty — a legal case for
+ * reads, unlike `resolveWriteTarget`'s `WriteTarget`).
+ *
+ * Deliberately NOT `resolveWriteTarget` reused: that function throws on an
+ * empty primary key (writes require row identity) and on autoincrement
+ * columns (their value is database-owned) — both of those rejections are
+ * wrong here. Reads must tolerate a PK-less table (short-circuit to a single
+ * unpaginated page) and must be able to order by an autoincrement column,
+ * since autoincrement primary keys are exactly what most tables page on.
+ */
+export interface ReadTarget {
+  table: ResolvedTable;
+  quotedTable: string;
+  pk: ResolvedColumn[];
+}
+
+/**
+ * Sibling of `resolveWriteTarget` for the read path. Validates only that the
+ * table exists; an empty or autoincrement-bearing primary key is left to the
+ * caller to handle (PK-less tables short-circuit to a single legacy page,
+ * see `/api/tables/:name`).
+ */
+export function resolveReadTarget(resolved: ResolvedSchema, tableName: string): ReadTarget {
+  const table = resolved.tables.find((t) => t.name === tableName || t.dbName === tableName);
+  if (!table) {
+    throw new ReadTargetError(`Unknown table: ${tableName}`);
+  }
+
+  const pk = table.primaryKey.map((dbName) => {
+    const col = table.columns.find((c) => c.dbName === dbName);
+    if (!col) {
+      throw new ReadTargetError(
+        `Primary key column "${dbName}" not found among "${table.name}"'s columns.`,
+      );
+    }
+    return col;
+  });
+
+  return { table, quotedTable: `"${table.dbName}"`, pk };
+}
+
+/**
+ * Builds the keyset WHERE-clause fragment and matching ORDER BY for a page
+ * of rows, composite-PK-safe via Postgres row-value comparison:
+ *   single column: `"col" op $N`
+ *   composite:     `("c1","c2") op ($N,$N+1)`
+ * `ORDER BY` always mirrors the operator so the comparison and the row order
+ * agree: ascending for `>` (forward paging), descending for `<` (backward —
+ * the query is run in reverse and the caller re-reverses the trimmed rows
+ * before returning, so the response is always ascending PK order).
+ */
+function buildKeysetSql(
+  pk: ResolvedColumn[],
+  op: ">" | "<",
+  paramStart: number,
+): { where: string; orderBy: string } {
+  const cols = pk.map((c) => `"${c.dbName}"`);
+  const placeholders = pk.map((_, i) => `$${paramStart + i}`);
+  const where =
+    pk.length === 1
+      ? `${cols[0]} ${op} ${placeholders[0]}`
+      : `(${cols.join(",")}) ${op} (${placeholders.join(",")})`;
+  const direction = op === ">" ? "ASC" : "DESC";
+  const orderBy = cols.map((c) => `${c} ${direction}`).join(", ");
+  return { where, orderBy };
+}
+
+/** Encodes a primary-key value tuple (in `ResolvedTable.primaryKey` order) as
+ * an opaque cursor string: `base64url(JSON.stringify(values))`. */
+function encodeCursor(values: unknown[]): string {
+  return Buffer.from(JSON.stringify(values)).toString("base64url");
+}
+
+/**
+ * Thrown by `parsePageParams`/`decodeCursor` on any malformed pagination
+ * input. Every route that calls them maps this to HTTP 400 and runs no SQL.
+ */
+export class PageParamError extends Error {}
+
+/**
+ * Decodes and arity-checks a cursor string against the table's actual
+ * primary-key column count — a cursor for a 2-column composite PK can never
+ * be silently accepted as a 1-column cursor or vice versa.
+ */
+function decodeCursor(raw: string, pkLength: number): unknown[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    throw new PageParamError("Invalid cursor");
+  }
+  if (!Array.isArray(parsed) || parsed.length !== pkLength) {
+    throw new PageParamError("Invalid cursor");
+  }
+  return parsed;
+}
+
+const ALLOWED_LIMITS = new Set([25, 50, 100, 200]);
+
+export interface PageParams {
+  limit: number;
+  direction: "forward" | "backward";
+  cursor: unknown[] | null;
+}
+
+/**
+ * Validates and parses `limit`/`direction`/`cursor` query params.
+ *
+ * `limit`: absent → 100 (default). Present → must be an exact decimal-integer
+ * string that is a member of `{25, 50, 100, 200}`; anything else (including
+ * `0`, `1000`, `50.0`, or non-numeric text) is REJECTED with 400, never
+ * clamped to the nearest valid value — an honest-looking pager over a page
+ * size the caller never actually chose would be worse than an error.
+ *
+ * `direction`: absent → "forward"; otherwise must be exactly "forward" or
+ * "backward".
+ *
+ * `cursor`: absent → `null`; otherwise decoded and arity-checked against
+ * `pkLength` via `decodeCursor`.
+ */
+export function parsePageParams(searchParams: URLSearchParams, pkLength: number): PageParams {
+  const limitRaw = searchParams.get("limit");
+  let limit = 100;
+  if (limitRaw !== null) {
+    if (!/^\d+$/.test(limitRaw) || !ALLOWED_LIMITS.has(Number(limitRaw))) {
+      throw new PageParamError("limit must be one of 25, 50, 100, 200");
+    }
+    limit = Number(limitRaw);
+  }
+
+  const directionRaw = searchParams.get("direction");
+  let direction: "forward" | "backward" = "forward";
+  if (directionRaw !== null) {
+    if (directionRaw !== "forward" && directionRaw !== "backward") {
+      throw new PageParamError('direction must be "forward" or "backward"');
+    }
+    direction = directionRaw;
+  }
+
+  const cursorRaw = searchParams.get("cursor");
+  const cursor = cursorRaw !== null ? decodeCursor(cursorRaw, pkLength) : null;
+
+  return { limit, direction, cursor };
+}
+
+/** Extracts a row's primary-key value tuple, in `pk` order, keyed by the
+ * schema field name (`c.name`) — the alias every SELECT here uses. */
+function pkValuesOf(pk: ResolvedColumn[], row: Record<string, unknown>): unknown[] {
+  return pk.map((c) => row[c.name]);
+}
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 function isLoopbackHost(host: string): boolean {
@@ -457,20 +619,85 @@ export async function startStudio(
 
       if (path.startsWith("/api/tables/")) {
         const name = decodeURIComponent(path.slice("/api/tables/".length));
-        const table = resolved.tables.find((t) => t.name === name || t.dbName === name);
-        if (!table) {
-          sendJson(res, 404, { error: `Unknown table: ${name}` });
-          return;
+
+        let target: ReadTarget;
+        try {
+          target = resolveReadTarget(resolved, name);
+        } catch (error) {
+          if (error instanceof ReadTargetError) {
+            sendJson(res, 404, { error: error.message });
+            return;
+          }
+          throw error;
         }
+
+        let params: PageParams;
+        try {
+          params = parsePageParams(url.searchParams, target.pk.length);
+        } catch (error) {
+          if (error instanceof PageParamError) {
+            sendJson(res, 400, { error: error.message });
+            return;
+          }
+          throw error;
+        }
+
         // Alias physical columns back to schema field names (e.g. created_at → createdAt)
         // so the rows match the column metadata the UI renders.
-        const selectList = table.columns
+        const selectList = target.table.columns
           .map((c) => `"${c.dbName}" AS "${c.name}"`)
           .join(", ");
-        const result = await db.readOnly((query) =>
-          query(`SELECT ${selectList} FROM "${table.dbName}" LIMIT 100`),
-        );
-        sendJson(res, 200, { columns: table.columns.map((c) => c.name), rows: result.rows });
+        const columns = target.table.columns.map((c) => c.name);
+
+        const result = await db.readOnly(async (query) => {
+          const countResult = await query(
+            `SELECT count(*)::int AS n FROM ${target.quotedTable}`,
+          );
+          const total = (countResult.rows[0] as { n: number }).n;
+
+          if (target.pk.length === 0) {
+            // PK-less: no stable cursor key exists. Keep today's exact query
+            // shape (no ORDER BY, LIMIT only) — cursor/direction/limit were
+            // already validated above but are otherwise ignored here.
+            const rowsResult = await query(
+              `SELECT ${selectList} FROM ${target.quotedTable} LIMIT 100`,
+            );
+            return {
+              columns,
+              rows: rowsResult.rows,
+              nextCursor: null,
+              prevCursor: null,
+              total,
+              paginated: false,
+            };
+          }
+
+          const op = params.direction === "forward" ? ">" : "<";
+          const { where, orderBy } = buildKeysetSql(target.pk, op, 1);
+          const whereClause = params.cursor ? `WHERE ${where}` : "";
+          const sql = `SELECT ${selectList} FROM ${target.quotedTable} ${whereClause} ORDER BY ${orderBy} LIMIT ${params.limit + 1}`;
+          const rowsResult = await query(sql, params.cursor ?? []);
+
+          const hasExtra = rowsResult.rows.length > params.limit;
+          let rows = rowsResult.rows.slice(0, params.limit) as Record<string, unknown>[];
+          if (params.direction === "backward") rows = rows.reverse();
+
+          let nextCursor: string | null = null;
+          let prevCursor: string | null = null;
+          if (rows.length > 0) {
+            if (params.direction === "forward") {
+              nextCursor = hasExtra ? encodeCursor(pkValuesOf(target.pk, rows[rows.length - 1])) : null;
+              prevCursor = params.cursor ? encodeCursor(pkValuesOf(target.pk, rows[0])) : null;
+            } else {
+              prevCursor = hasExtra ? encodeCursor(pkValuesOf(target.pk, rows[0])) : null;
+              nextCursor = encodeCursor(pkValuesOf(target.pk, rows[rows.length - 1]));
+            }
+          }
+
+          return { columns, rows, nextCursor, prevCursor, total, paginated: true };
+        });
+
+        sendJson(res, 200, result);
         return;
       }
 

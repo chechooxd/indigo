@@ -3,6 +3,34 @@ import type { ResolvedSchema } from '@indigodb/core';
 import { Table, RecentSchema, SystemAlert } from '../types';
 import { INITIAL_TABLES, INITIAL_SCHEMAS, INITIAL_ALERTS } from '../data/mockData';
 import { rowKey } from '../lib/rowKey';
+import type { PageSize } from '../lib/api';
+
+/** Per-table pagination state, keyed by table name. Absent for a table means
+ * "not yet loaded a page" — components fall back to sensible defaults
+ * (`cursor: null`, `direction: 'forward'`, `pageSize: 100`). */
+export interface TablePageState {
+  cursor: string | null;
+  direction: 'forward' | 'backward';
+  pageSize: PageSize;
+  nextCursor: string | null;
+  prevCursor: string | null;
+  total: number;
+  paginated: boolean;
+}
+
+export const DEFAULT_PAGE_SIZE: PageSize = 100;
+
+export function defaultTablePageState(): TablePageState {
+  return {
+    cursor: null,
+    direction: 'forward',
+    pageSize: DEFAULT_PAGE_SIZE,
+    nextCursor: null,
+    prevCursor: null,
+    total: 0,
+    paginated: true,
+  };
+}
 
 interface DataState {
   schemas: RecentSchema[];
@@ -38,6 +66,23 @@ interface DataState {
    * `tableName`. Used after a successful `deleteRow` write so the grid
    * reflects the removal without a full refetch. */
   removeTableRow: (tableName: string, key: string) => void;
+
+  /** Per-table pagination state (cursor/direction/page size/total/paginated). */
+  pagination: Record<string, TablePageState>;
+  /** Replaces the pagination "result" fields (nextCursor/prevCursor/total/paginated)
+   * for `tableName` after a page fetch, without touching `cursor`/`direction`/`pageSize`
+   * (those are set by `setTablePage`/`setPageSize` before the fetch, not after). */
+  setTablePageResult: (
+    tableName: string,
+    result: Pick<TablePageState, 'nextCursor' | 'prevCursor' | 'total' | 'paginated'>,
+  ) => void;
+  /** Navigates `tableName` to the given cursor/direction (or back to page one
+   * when `cursor` is `null`). Does not itself fetch — callers fetch afterward
+   * and report the result via `setTablePageResult`. */
+  setTablePage: (tableName: string, cursor: string | null, direction: 'forward' | 'backward') => void;
+  /** Changes `tableName`'s page size and resets to page one (`cursor: null`,
+   * `direction: 'forward'`), per studio-table-pagination's design. */
+  setPageSize: (tableName: string, pageSize: PageSize) => void;
 }
 
 export const useDataStore = create<DataState>((set) => ({
@@ -46,6 +91,28 @@ export const useDataStore = create<DataState>((set) => ({
   tables: INITIAL_TABLES,
   resolvedSchema: null,
   setResolvedSchema: (schema) => set({ resolvedSchema: schema }),
+
+  pagination: {},
+
+  setTablePageResult: (tableName, result) => set((state) => {
+    const prev = state.pagination[tableName] ?? defaultTablePageState();
+    return { pagination: { ...state.pagination, [tableName]: { ...prev, ...result } } };
+  }),
+
+  setTablePage: (tableName, cursor, direction) => set((state) => {
+    const prev = state.pagination[tableName] ?? defaultTablePageState();
+    return { pagination: { ...state.pagination, [tableName]: { ...prev, cursor, direction } } };
+  }),
+
+  setPageSize: (tableName, pageSize) => set((state) => {
+    const prev = state.pagination[tableName] ?? defaultTablePageState();
+    return {
+      pagination: {
+        ...state.pagination,
+        [tableName]: { ...prev, pageSize, cursor: null, direction: 'forward' },
+      },
+    };
+  }),
 
   setSchemas: (updater) => set((state) => ({
     schemas: typeof updater === 'function' ? updater(state.schemas) : updater
