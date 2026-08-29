@@ -1,12 +1,42 @@
 schema: spec-driven
 
 context: |
-  IndigoDB: schema-first DB toolkit, custom .indigo language.
+  IndigoDB: schema-first DB toolkit, custom .indigo language, Prisma-shaped ergonomics
+  with a differentiated realtime story (Firebase-style DX, Postgres-native receipts —
+  auth compiles to real RLS policies, not an app-tier evaluator).
+
   pnpm+Turborepo monorepo, ESM-only strict TS, 1 Rust crate (WASM).
-  Pipeline: parser -> core (ResolvedSchema IR) -> migrator/generator/client/studio/cli.
+  Pipeline: parser -> core (ResolvedSchema IR, the single source of truth) ->
+  migrator/generator/client/realtime/studio/cli. Every consumer reads the IR;
+  no consumer re-derives structure from the raw AST. New IR fields are resolved
+  once in @indigodb/core, never duplicated per-consumer.
+
   packages/{ast,compiler,parser,core,migrator,generator,client,realtime,cli} + apps/studio.
-  crates/indigo-compiler compiles to WASM; artifact committed in packages/compiler/wasm/.
-  No CI (.github/ absent). Only compiler package + Rust crate have tests.
+  crates/indigo-compiler compiles to WASM; artifact committed in packages/compiler/wasm/,
+  guarded against drift by packages/compiler/test/wasm-freshness.mjs.
+
+  CI is disabled, not absent: .github/workflows/ is empty, the real pipeline lives at
+  .github/workflows-disabled/ci.yml (3 independent jobs: ts, rust, wasm-drift). Re-enable
+  by moving it back if the wasm-freshness bot-commit loop or CI minutes budget changes.
+  Until then, `pnpm build && pnpm lint && pnpm test` from repo root is the verification
+  gate — treat it as CI's stand-in, not an optional local nicety.
+
+  Test coverage: 7 of 9 TS packages have real suites today — only @indigodb/ast and
+  @indigodb/parser (thin, low-churn layers) have none. Convention is plain Node +
+  node:assert per test/*.mjs file, chained in each package's `test` script, no shared
+  runner — apps/studio is the one exception, using vitest for component/hook tests
+  plus its own test/*.mjs for server-side checks. Match whichever convention the
+  target package already uses; don't introduce a new framework into a package that
+  has an established one.
+
+  Shipped since this file was first written (2026-08-10): full ORM parity (transactions,
+  relations, nested writes, where composition, batch/aggregate, native types, driver
+  adapters, extension seam), a bank-grade migration engine (shadow-replay diffing,
+  introspection, destructive-change classification, history/locking/recovery), the
+  realtime differentiator end-to-end (WAL capture, @@allow compiled to RLS, bucket
+  pre-evaluation, signed-handle log endpoint, typed .live() client), and the Studio's
+  first real write surface (row CRUD with a dual-gated DELETE, keyset pagination).
+  Studio is now publishable (private:true dropped, files allowlist added).
 
 strict_tdd: true
 
@@ -16,48 +46,155 @@ testing:
   lint_command: "pnpm lint"
   coverage_threshold: 0
   notes: |
-    pnpm test (Turborepo) runs the ONLY TS suite: @indigodb/compiler regression
-    harness at packages/compiler/test/parity.mjs (plain Node, golden snapshots
-    in fixtures/snapshots/). Currently GREEN.
-    cd crates && cargo test runs 4 tests in crates/indigo-compiler/tests/fixtures.rs.
-    Currently GREEN.
-    node packages/compiler/test/regen-snapshots.mjs regenerates golden snapshots
-    (diff is the review artifact) — only run on intentional contract changes.
-    pnpm --filter @indigodb/compiler build:wasm rebuilds the committed WASM
-    artifact; REQUIRED after any change under crates/, followed by re-running
-    the regression harness.
-    pnpm lint is typecheck-as-lint (tsc --noEmit per package).
-    9 of 10 TS packages (all except @indigodb/compiler) have ZERO tests: no
-    vitest/jest installed, no coverage measurement, no integration tests
-    against real PostgreSQL, no CI. For Strict TDD on those packages, a test
-    harness must be established as part of the work before RED-GREEN-REFACTOR
-    is possible — a known precondition, not a blocker.
+    `pnpm test` (Turborepo, depends on `^build`) fans out to each package's own
+    `test` script — there is no shared runner or assertion library across
+    packages. `@indigodb/compiler`'s suite also diffs the committed WASM artifact
+    against a fresh rebuild (wasm-freshness.mjs) before running its parity/golden-
+    snapshot regression harness.
+
+    `@indigodb/realtime`'s Postgres-backed suites (wal-source.mjs, pg-harness.mjs)
+    are gated on INDIGODB_TEST_DATABASE_URL — unset, they print SKIP and pass. Point
+    it at a real Postgres (docker one-liner in that file's header) to actually run
+    them; a change to WAL/replication logic is not verified without doing so.
+
+    `cd crates && cargo test --locked` runs the Rust suite (the lockfile pins
+    wasm-bindgen at 0.2.126, since Cargo.toml alone carries a caret range).
+
+    `pnpm lint` is typecheck-as-lint: `tsc --noEmit` per package. There is no
+    separate style linter (no eslint/biome config) — don't propose one unless
+    asked; it's a deliberate absence, not a gap.
+
+    coverage_threshold is 0 because nothing measures coverage yet (no c8/nyc/
+    vitest-coverage wired anywhere). Treat "0" as honest, not as a target to
+    silently raise — raising it is its own scoped change (instrumentation +
+    a real threshold), not a side effect of an unrelated one.
+
+    @indigodb/ast and @indigodb/parser have no test script. Before Strict TDD
+    can run RED-GREEN-REFACTOR on either, establish a minimal harness (plain
+    Node + node:assert, matching every other package's convention) as an
+    explicit first task, not an assumption.
 
 rules:
   proposal:
-    - Include rollback plan for risky changes
-    - Flag any change touching crates/ as requiring build:wasm + regression harness rerun
+    - Include a rollback plan for risky changes (this repo's convention — a
+      revertable commit range or a stated "restore the removed flag/file", not
+      a formal migration-down story — see the archived unblock-publishing and
+      real-row-crud proposals for the expected shape)
+    - Flag any change touching crates/ as requiring build:wasm + the regression
+      harness rerun before commit
+    - State explicitly what's staying out of scope when a change sits next to
+      a sibling epic touching the same surface (e.g. a Studio change should say
+      whether it touches auth, pagination, or write-guards, even to say "no") —
+      the roadmap's own history shows silent scope creep between adjacent
+      Studio epics is the single most common review defect in this repo
+    - When extending an existing seam (Executor, DriverAdapter, QueryExtension,
+      WIDGET_REGISTRY, resolveReadTarget/resolveWriteTarget), name the seam and
+      confirm the change doesn't require widening its contract — if it does,
+      that widening is itself a design decision to call out, not an incidental
+      diff
+
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - When a delta modifies a capability that a *later, still-open* sibling
+      change will also touch (check openspec/changes/ for anything unarchived
+      first), say so explicitly — this repo chains dependent Studio changes
+      (real-row-crud -> real-pagination-filtering-sorting both modified
+      studio-ui-honesty) and a spec that doesn't flag the shared surface has
+      caused a real self-contradiction between delta files before
+    - A requirement that replaces an existing one (not adds to it) must copy
+      the full prior requirement block before editing — partial replacement
+      silently drops scenarios at archive time
+
   design:
-    - Resolve new IR fields once in @indigodb/core (ResolvedSchema); consumers read the IR
-    - Document architecture decisions with rationale
+    - Resolve new IR fields once in @indigodb/core (ResolvedSchema); every
+      consumer reads the IR, none re-derives it — this is the one
+      non-negotiable dependency direction in the whole codebase
+    - Favor the extension-point pattern already established over ad-hoc
+      conditionals — a closed registry keyed by a stable identifier
+      (WIDGET_REGISTRY keyed by ScalarType, the driver-adapter factories keyed
+      by target) over a switch statement that grows a case per feature. Only
+      introduce a new registry when there are genuinely 3+ variants and more
+      are expected — two variants is still a plain if/else
+    - Keep read and write validation as separate functions even when they
+      look similar (resolveReadTarget vs resolveWriteTarget — same shape,
+      different legal states — an empty PK or an autoincrement column is
+      valid for a read and invalid for a write). Reusing one for both is the
+      single most likely source of a silently-wrong guard in this codebase
+    - Prefer a stateless server over client-held session state when both are
+      viable (the reverse-keyset-via-flipped-query decision over a client
+      cursor stack is the precedent) — this is a single-process embeddable
+      library, and pushing state to the client multiplies the surface a
+      page-size change, a reload, or a second tab can silently break
+    - Every new SQL-adjacent identifier (table/column name reaching a query)
+      MUST be resolved against the live ResolvedSchema, never interpolated
+      from request/user text — treat this as load-bearing on the level of a
+      security control, because in this codebase it is one
+    - Don't add abstraction ahead of a second real caller. This is a
+      single-maintainer, pre-1.0 project — a generic plugin system, a second
+      dialect's seam, or a config-driven strategy object are all explicitly
+      deferred non-goals until something concrete needs them (see the
+      roadmap's own "Deliberate non-goals" section before proposing one)
+    - Document architecture decisions with rationale, including *rejected*
+      alternatives — this repo's design docs are read later by verify/archive
+      to confirm the shipped code matches intent, not just by the implementer
+
   tasks:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
-    - If a package other than @indigodb/compiler needs tests, add a task to establish
-      a minimal harness (framework choice + first test) before feature tasks in that package
+    - RED before GREEN for every task under strict_tdd — write the failing
+      assertion against the spec scenario first, confirm it fails for the
+      stated reason, then implement
+    - If a package needs a test harness it doesn't have (today, only
+      @indigodb/ast and @indigodb/parser), add establishing it — framework
+      choice (match the plain-Node convention unless there's a concrete
+      reason not to) plus a first real test — as its own task before any
+      feature task in that package, not folded into the first feature's diff
+    - A task touching an existing seam's shared resolver/registry (see design
+      rules above) should be sequenced before tasks that consume it, so the
+      contract is stable when dependents are written against it
+
   apply:
     guidelines:
       - Follow existing code patterns (ESM, strict TS, workspace:* deps)
-      - Rebuild dependency packages before dependents when cross-package types change
-      - Any crates/ change MUST be followed by build:wasm and committing packages/compiler/wasm/
+      - Rebuild dependency packages before dependents when cross-package types
+        change — Turbo's ^build handles this from the repo root; don't build
+        a single package in isolation when its types moved
+      - Any crates/ change MUST be followed by build:wasm and committing
+        packages/compiler/wasm/
+      - Keep a change's own scope — don't fold in an unrelated fix or
+        refactor discovered along the way — file it as a follow-up instead
+        (this repo's archived changes consistently separate "what shipped"
+        from "what was found but deliberately deferred")
+      - A new write path reaches the database only through the same kind of
+        explicit, schema-validated resolver the existing write paths use —
+        never a second, parallel way to reach SQL
     tdd: true
     test_command: "pnpm test"
+
   verify:
     test_command: "pnpm test"
     build_command: "pnpm build"
     coverage_threshold: 0
+    guidelines:
+      - Re-run tests yourself with cache bypassed (turbo --force on the
+        affected package) before trusting a "green" claim from apply — this
+        repo has a documented instance of a cached pass masking a missing
+        test step
+      - For anything read-only-vs-writable (transaction boundaries, guard
+        toggles, dual-gated destructive actions), trace the actual code path
+        end to end rather than trusting a scenario's pass/fail alone — this
+        is where an adversarial spot-check has caught real defects here
+      - Cross-check new delta specs against any other *unarchived* change's
+        deltas on the same capability for silent contradictions before
+        approving
+
   archive:
     - Warn before merging destructive deltas
+    - Verify the merged delta specs read correctly against the CURRENT state
+      of openspec/specs/ (not the state when the change was proposed) when a
+      capability was already modified once by an earlier, already-archived
+      change in the same area
+    - Commit the archive move itself before reporting done — a file move or
+      spec merge that never lands a commit is not archived, it's just moved
+      on disk
