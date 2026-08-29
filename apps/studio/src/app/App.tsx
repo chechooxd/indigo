@@ -11,13 +11,16 @@ import DocBrowser from '../features/docs/DocBrowserPage';
 import Settings from '../features/settings/SettingsPage';
 import { useThemeStore } from '../store/useThemeStore';
 import { useNavigationStore } from '../store/useNavigationStore';
+import { useAuthStore } from '../store/useAuthStore';
 import { useSchemaBootstrap } from './hooks/useSchemaBootstrap';
 import { TAB_TITLE_KEYS } from './lib/tab-titles';
+import LoginScreen from '../features/auth/LoginScreen';
 
 export default function App() {
   const { t } = useTranslation();
   const { activeTab, studioSubTab, currentCluster, setCurrentCluster, setStudioSubTab } = useNavigationStore();
   const { themeAccent } = useThemeStore();
+  const { authRequired, authenticated, checkStatus } = useAuthStore();
 
   useEffect(() => {
     // Inject theme accent class to document for global overrides
@@ -25,6 +28,14 @@ export default function App() {
   }, [themeAccent]);
 
   useSchemaBootstrap();
+
+  useEffect(() => {
+    void checkStatus();
+  }, [checkStatus]);
+
+  if (authRequired && !authenticated) {
+    return <LoginScreen />;
+  }
 
   return (
     <div className="flex h-screen bg-[#09090b] text-white overflow-hidden font-sans antialiased selection:bg-indigo-500/30">

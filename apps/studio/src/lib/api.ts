@@ -39,6 +39,33 @@ export function isBackendAvailable(): boolean {
   return backendAvailable === true;
 }
 
+export interface AuthStatus {
+  authRequired: boolean;
+  authenticated: boolean;
+}
+
+export interface LoginResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Fired whenever any `/api/*` call answers 401, mid-session (session expiry
+ * or a revoked/tampered cookie). This is a backstop, not the primary auth
+ * detection mechanism — the startup `fetchAuthStatus()` probe (driven by
+ * `useAuthStore.checkStatus`) is. Registered by `useAuthStore` itself so this
+ * module never imports the store back (would be circular).
+ */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+function notifyIfUnauthorized(res: Response): void {
+  if (res.status === 401) onUnauthorized?.();
+}
+
 /**
  * Standalone dev mode (`pnpm dev`) has no backend, so these API paths hit
  * Vite's own dev server instead — which has no route for them and, per Vite's
@@ -54,6 +81,7 @@ function hasContentType(res: Response, expected: string): boolean {
 export async function fetchSchema(): Promise<ResolvedSchema | null> {
   try {
     const res = await fetch('/api/schema');
+    notifyIfUnauthorized(res);
     if (!res.ok || !hasContentType(res, 'application/json')) throw new Error();
     backendAvailable = true;
     return (await res.json()) as ResolvedSchema;
@@ -66,6 +94,7 @@ export async function fetchSchema(): Promise<ResolvedSchema | null> {
 export async function fetchSchemaSource(): Promise<string | null> {
   try {
     const res = await fetch('/api/schema/source');
+    notifyIfUnauthorized(res);
     if (!res.ok || !hasContentType(res, 'text/plain')) throw new Error();
     return await res.text();
   } catch {
@@ -84,6 +113,7 @@ export async function fetchTableRows(
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const res = await fetch(`/api/tables/${encodeURIComponent(name)}${qs ? `?${qs}` : ''}`);
+    notifyIfUnauthorized(res);
     if (!res.ok || !hasContentType(res, 'application/json')) throw new Error();
     return (await res.json()) as TablePage;
   } catch {
@@ -107,6 +137,7 @@ export async function updateRow(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ pk, patch }),
   });
+  notifyIfUnauthorized(res);
   const body = await res.json();
   if (!res.ok) throw new Error(body?.error ?? 'Update failed');
   return body.row as Record<string, unknown>;
@@ -128,6 +159,7 @@ export async function createRow(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(values),
   });
+  notifyIfUnauthorized(res);
   const body = await res.json();
   if (!res.ok) throw new Error(body?.error ?? 'Create failed');
   return body.row as Record<string, unknown>;
@@ -145,6 +177,7 @@ export async function deleteRow(table: string, pk: Record<string, unknown>): Pro
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ pk }),
   });
+  notifyIfUnauthorized(res);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error ?? 'Delete failed');
@@ -157,7 +190,55 @@ export async function runQuery(sql: string): Promise<QueryResult> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sql }),
   });
+  notifyIfUnauthorized(res);
   const body = await res.json();
   if (!res.ok) throw new Error(body?.error ?? 'Query failed');
   return body as QueryResult;
+}
+
+/**
+ * Auth status probe (see @indigodb/cli's studio-server.ts `/api/auth/status`
+ * route). Always ungated, and always answers even with no password
+ * configured (`{authRequired:false}`). Fails soft to `null` in standalone dev
+ * (no backend) — treated by `useAuthStore` the same as "no gate".
+ */
+export async function fetchAuthStatus(): Promise<AuthStatus | null> {
+  try {
+    const res = await fetch('/api/auth/status');
+    if (!res.ok || !hasContentType(res, 'application/json')) throw new Error();
+    return (await res.json()) as AuthStatus;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Submits the shared Studio password. Never throws: both outcomes are
+ * regular return values so the login screen can show an inline error
+ * without a try/catch at the call site. The server returns an identical
+ * body for a wrong password and for auth being unconfigured, so this
+ * mirrors that: no `login`-side hint beyond the message itself.
+ */
+export async function login(password: string): Promise<LoginResult> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: body?.error ?? 'Invalid password' };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Invalid password' };
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch {
+    // Fail soft, matching every other call in this module — a network
+    // failure here still lets the client-side session state clear locally.
+  }
 }
