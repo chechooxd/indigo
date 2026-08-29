@@ -26,6 +26,7 @@ import { platform } from "node:os";
 import pg from "pg";
 import type { ResolvedColumn, ResolvedSchema, ResolvedTable } from "@indigodb/core";
 import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
+import { createStudioAuth, SESSION_COOKIE, SESSION_TTL_SECONDS, type StudioAuth } from "./studio-auth.js";
 
 export interface StudioOptions {
   resolved: ResolvedSchema;
@@ -43,6 +44,15 @@ export interface StudioOptions {
   open?: boolean;
   /** Injectable database port. Defaults to `createPgDb(connectionString)`. Tests inject a PGlite-backed adapter. */
   db?: StudioDb;
+  /**
+   * Optional shared password gating every `/api/*` route behind a signed
+   * session cookie (see `studio-auth.ts`). `undefined` (the default) is a
+   * structural no-op: `auth` below resolves to `null` once at startup and
+   * every request short-circuits past auth entirely — no cookie parse, no
+   * HMAC, not even a conditional branch body. The static SPA shell is never
+   * gated, regardless of this option.
+   */
+  password?: string;
 }
 
 /**
@@ -570,6 +580,13 @@ export async function startStudio(
   const publicSchema = redactSchema(resolved);
   const publicSource = redactSource(source);
 
+  // Resolved ONCE at startup, never per-request: with no password configured
+  // this is `null` and every request path below short-circuits on `if
+  // (auth)` before any cookie parsing or HMAC work happens — a structural
+  // no-op for the zero-config default, not a conditional check inside auth
+  // logic.
+  const auth: StudioAuth | null = options.password ? createStudioAuth(options.password) : null;
+
   // `boundPort` starts as the requested port and is updated once `listen`
   // resolves the actual bound port — needed for `port: 0` (ephemeral, used
   // by tests). Captured by reference, so the request handler below always
@@ -594,7 +611,58 @@ export async function startStudio(
       return;
     }
 
+    // ─── Session auth gate ────────────────────────────────────────────────
+    // Applies ONLY to /api/* routes — the static SPA shell always falls
+    // through unauthenticated (see design.md's "Static SPA shell" decision).
+    // `GET /api/auth/status` and `POST /api/auth/login` are themselves
+    // ungated (a locked-out client must be able to reach them at all); every
+    // other /api/* route requires a valid session whenever `auth` is set.
+    if (auth && path.startsWith("/api/") && path !== "/api/auth/status" && path !== "/api/auth/login") {
+      if (!auth.verify(req.headers.cookie)) {
+        sendJson(res, 401, { error: "Authentication required" });
+        return;
+      }
+    }
+
     try {
+      // ─── Auth routes ───────────────────────────────────────────────────
+      if (path === "/api/auth/status" && req.method === "GET") {
+        const authRequired = auth !== null;
+        const authenticated = auth !== null && auth.verify(req.headers.cookie);
+        sendJson(res, 200, { authRequired, authenticated });
+        return;
+      }
+
+      if (path === "/api/auth/login" && req.method === "POST") {
+        const body = await readBody(req);
+        let submittedPassword = "";
+        try {
+          submittedPassword = (JSON.parse(body || "{}").password ?? "").toString();
+        } catch {
+          sendJson(res, 401, { error: "Invalid password" });
+          return;
+        }
+        // Identical failure whether auth is unconfigured or the password is
+        // simply wrong — a caller must never be able to distinguish the two.
+        if (!auth || !auth.check(submittedPassword)) {
+          sendJson(res, 401, { error: "Invalid password" });
+          return;
+        }
+        res.setHeader("Set-Cookie", auth.cookieHeader(auth.mint(), SESSION_TTL_SECONDS));
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (path === "/api/auth/logout" && req.method === "POST") {
+        // Stateless sessions by design: this clears the client-side cookie
+        // only — no server-side session invalidation. A captured cookie
+        // replayed elsewhere before its own natural expiry remains valid,
+        // a spec'd limitation, not a bug.
+        res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
       // ─── API ───────────────────────────────────────────────────────────
       if (path === "/api/schema") {
         sendJson(res, 200, publicSchema);
@@ -762,6 +830,7 @@ export async function startStudio(
   console.log("  ─────────────────────────────");
   console.log(`  Tables: ${resolved.tables.length}`);
   console.log(`  URL:    http://${actualHost}:${boundPort}`);
+  console.log(`  Auth:   ${auth ? "enabled (session password required)" : "disabled (no password configured)"}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
   }
