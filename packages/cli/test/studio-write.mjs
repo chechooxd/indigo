@@ -5,8 +5,8 @@
  * a REAL `startStudio` HTTP server, backed by a REAL (in-process) PostgreSQL
  * engine via PGlite, over real `fetch()` calls — see `studio-harness.mjs`.
  *
- * Scope: PR 1 (Slice A) covered UPDATE. PR 2 (Slice B, this file's POST
- * section) adds INSERT. DELETE lands in Phase 3 and is NOT exercised here.
+ * Scope: PR 1 (Slice A) covered UPDATE. PR 2 (Slice B) added INSERT. PR 3
+ * (Slice C, this file's DELETE section) adds DELETE.
  */
 
 import { parse, resolve } from "@indigodb/core";
@@ -116,6 +116,14 @@ function insertRow(baseUrl, table, values) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(values),
+  });
+}
+
+function deleteRow(baseUrl, table, pk) {
+  return fetch(`${baseUrl}/api/rows/${encodeURIComponent(table)}`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pk }),
   });
 }
 
@@ -401,6 +409,100 @@ await check(
     });
   },
 );
+
+// ─── DELETE removes exactly one row by single-column primary key ─────────
+await check("DELETE removes exactly one row by single-column primary key", async () => {
+  await withDatabase(async (db) => {
+    await seedUsers(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "User", { id: 1 });
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+    });
+
+    const remaining = await db.query(`SELECT id FROM "User" ORDER BY id`);
+    assert(remaining.rows.length === 1, `expected 1 remaining row, got ${remaining.rows.length}`);
+    assert(remaining.rows[0].id === 2, "expected the other row to be untouched");
+  });
+});
+
+// ─── DELETE removes exactly one row by composite primary key ─────────────
+await check("DELETE removes exactly one row by composite primary key", async () => {
+  await withDatabase(async (db) => {
+    await seedMemberships(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "Membership", { userId: 1, orgId: 2 });
+      assert(res.status === 200, `expected 200, got ${res.status}`);
+    });
+
+    const remaining = await db.query(`SELECT "userId", "orgId" FROM "Membership"`);
+    assert(remaining.rows.length === 1, `expected 1 remaining row, got ${remaining.rows.length}`);
+    assert(remaining.rows[0].orgId === 1, "expected the other composite-key row to be untouched");
+  });
+});
+
+// ─── DELETE with only one of two composite key values is rejected ────────
+await check("DELETE with only one of two composite key values is rejected (4xx), no row removed", async () => {
+  await withDatabase(async (db) => {
+    await seedMemberships(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "Membership", { userId: 1 });
+      assert(res.status >= 400 && res.status < 500, `expected 4xx, got ${res.status}`);
+    });
+
+    const rows = await db.query(`SELECT count(*)::int AS n FROM "Membership"`);
+    assert(rows.rows[0].n === 2, "expected both membership rows to still exist");
+  });
+});
+
+// ─── DELETE against an unknown table is rejected ──────────────────────────
+await check("DELETE against an unknown table is rejected (4xx) and executes no SQL", async () => {
+  await withDatabase(async (db) => {
+    await seedUsers(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "NoSuchTable", { id: 1 });
+      assert(res.status >= 400 && res.status < 500, `expected 4xx, got ${res.status}`);
+      const body = await res.json();
+      assert(typeof body.error === "string" && body.error.length > 0, "expected an error message");
+    });
+
+    const rows = await db.query(`SELECT count(*)::int AS n FROM "User"`);
+    assert(rows.rows[0].n === 2, "expected the User table to still exist with both rows");
+  });
+});
+
+// ─── DELETE with a missing/empty pk is rejected ───────────────────────────
+await check("DELETE with a missing primary key value is rejected (4xx), no row removed", async () => {
+  await withDatabase(async (db) => {
+    await seedUsers(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "User", {});
+      assert(res.status >= 400 && res.status < 500, `expected 4xx, got ${res.status}`);
+    });
+
+    const rows = await db.query(`SELECT count(*)::int AS n FROM "User"`);
+    assert(rows.rows[0].n === 2, "expected both users to still exist");
+  });
+});
+
+// ─── DELETE for a non-existent pk value is a 404, not a silent success ────
+await check("DELETE for a primary key value that matches no row responds 404, no row removed", async () => {
+  await withDatabase(async (db) => {
+    await seedUsers(db);
+    const fixture = loadFixture();
+    await withStudio(db, fixture, async ({ baseUrl }) => {
+      const res = await deleteRow(baseUrl, "User", { id: 999 });
+      assert(res.status === 404, `expected 404, got ${res.status}`);
+    });
+
+    const rows = await db.query(`SELECT count(*)::int AS n FROM "User"`);
+    assert(rows.rows[0].n === 2, "expected both users to still exist");
+  });
+});
 
 await check(
   "GET /api/tables/:name immediately after a successful PATCH is unaffected by the write routes' existence",

@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { X, Save, RotateCcw, Plus } from 'lucide-react';
+import { X, Save, RotateCcw, Plus, Trash2 } from 'lucide-react';
 import { Table } from '../../../../types';
 import { resolveWidget } from './widgets/registry';
 import type { RecordEditorMode } from '../hooks/useRecordEditor';
@@ -28,6 +28,15 @@ interface RecordInspectorProps {
   /** Validation/server error surfaced from the last save attempt, if any. */
   error: string | null;
 
+  /** Delete is only offered in `'edit'` mode (a create-mode row has nothing
+   * to delete yet). `deleteDisabled`/`deleteDisabledTitle` implement
+   * studio-ui-honesty's "disabled with a stated reason": the button stays
+   * visible and disabled rather than hidden whenever backend availability
+   * or the "Safe Updates" guard blocks it — see `DeleteRecordDialog`. */
+  onDeleteClick?: () => void;
+  deleteDisabled?: boolean;
+  deleteDisabledTitle?: string;
+
   onFieldChange: (column: string, value: string) => void;
   onNullToggle: (column: string, isNull: boolean) => void;
   onSave: () => void;
@@ -45,6 +54,9 @@ export function RecordInspector({
   disabledTitle,
   saving,
   error,
+  onDeleteClick,
+  deleteDisabled,
+  deleteDisabledTitle,
   onFieldChange,
   onNullToggle,
   onSave,
@@ -61,12 +73,25 @@ export function RecordInspector({
         <span className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest font-sans">
           {isCreating ? 'NEW RECORD' : 'RECORD INSPECTOR'}
         </span>
-        <button
-          onClick={onClose}
-          className="text-zinc-500 hover:text-white p-1.5 rounded-xl hover:bg-zinc-900 transition-colors cursor-pointer"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {!isCreating && onDeleteClick && (
+            <button
+              onClick={onDeleteClick}
+              disabled={deleteDisabled}
+              title={deleteDisabled ? deleteDisabledTitle : 'Delete this row'}
+              aria-label="Delete row"
+              className="text-zinc-500 hover:text-red-400 p-1.5 rounded-xl hover:bg-zinc-900 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-500 disabled:hover:bg-transparent"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="text-zinc-500 hover:text-white p-1.5 rounded-xl hover:bg-zinc-900 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="p-4 space-y-5 overflow-y-auto custom-scrollbar flex-1">

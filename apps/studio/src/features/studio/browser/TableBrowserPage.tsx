@@ -13,15 +13,19 @@ import { useRecordEditor } from './hooks/useRecordEditor';
 import { TableList } from './components/TableList';
 import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
+import { DeleteRecordDialog } from './components/DeleteRecordDialog';
 import { SampleDataBanner } from './components/SampleDataBanner';
 import { LiveStatusBadge } from './components/LiveStatusBadge';
-import { isBackendAvailable, fetchTableRows, updateRow, createRow } from '../../../lib/api';
+import { isBackendAvailable, fetchTableRows, updateRow, createRow, deleteRow } from '../../../lib/api';
 import { rowKey, pkValues } from '../../../lib/rowKey';
 import { resolveWidget } from './components/widgets/registry';
 
 const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
 const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
+const SAFE_UPDATES_BLOCKS_DELETE_TITLE =
+  'Deleting is blocked by "Safe Updates". Disable it in Settings › Query Guards to delete rows.';
 import { useDataStore } from '../../../store/useDataStore';
+import { useSettingsStore } from '../../../store/useSettingsStore';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -33,6 +37,8 @@ export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
   const updateTableRow = useDataStore((s) => s.updateTableRow);
   const addTableRow = useDataStore((s) => s.addTableRow);
+  const removeTableRow = useDataStore((s) => s.removeTableRow);
+  const safeUpdates = useSettingsStore((s) => s.safeUpdates);
   const {
     tables,
     filteredTables,
@@ -58,6 +64,7 @@ export default function TableBrowserPage() {
   const editor = useRecordEditor();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -207,6 +214,50 @@ export default function TableBrowserPage() {
       if (key) editor.setSelectedRowKey(key);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Create failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Delete gate: the button itself is disabled (with a stated reason, per
+  // studio-ui-honesty) whenever either half of the dual gate already fails —
+  // no backend, no selected row, or Safe Updates enabled — so opening the
+  // dialog at all already implies Safe Updates was off at click time. The
+  // dialog's own confirm handler re-checks Safe Updates independently (see
+  // DeleteRecordDialog), so neither half alone is ever sufficient.
+  const deleteDisabled = !isBackendAvailable() || !selectedRecord || safeUpdates;
+  const deleteDisabledTitle = safeUpdates
+    ? SAFE_UPDATES_BLOCKS_DELETE_TITLE
+    : !isBackendAvailable()
+      ? READ_ONLY_TITLE
+      : 'Select a row to delete.';
+
+  const handleDeleteClick = () => {
+    if (deleteDisabled) return;
+    setDeleteDialogOpen(true);
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!activeTable || !selectedRecord) return;
+    setDeleteDialogOpen(false);
+    setSaveError(null);
+
+    const pkColumns = activeTable.columns.filter((c) => c.isPK).map((c) => c.name);
+    const pkVals = pkValues(activeTable, selectedRecord);
+    const pk = Object.fromEntries(pkColumns.map((name, i) => [name, pkVals[i]]));
+    const key = editor.selectedRowKey;
+
+    setSaving(true);
+    try {
+      await deleteRow(activeTable.name, pk);
+      if (key) removeTableRow(activeTable.name, key);
+      editor.setSelectedRowKey(null);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Delete failed');
     } finally {
       setSaving(false);
     }
@@ -397,11 +448,28 @@ export default function TableBrowserPage() {
           disabledTitle={READ_ONLY_TITLE}
           saving={saving}
           error={saveError}
+          onDeleteClick={handleDeleteClick}
+          deleteDisabled={deleteDisabled}
+          deleteDisabledTitle={deleteDisabledTitle}
           onFieldChange={editor.setField}
           onNullToggle={editor.setNull}
           onSave={() => { void (editor.mode === 'create' ? handleCreateRecord() : handleSave()); }}
           onDiscard={editor.mode === 'create' ? handleCancelCreate : handleDiscard}
           onClose={() => editor.setDetailsPanelOpen(false)}
+        />
+      )}
+
+      {activeTable && selectedRecord && (
+        <DeleteRecordDialog
+          open={deleteDialogOpen}
+          tableName={activeTable.name}
+          pk={Object.fromEntries(
+            activeTable.columns
+              .filter((c) => c.isPK)
+              .map((c) => [c.name, selectedRecord[c.name]]),
+          )}
+          onCancel={handleCancelDelete}
+          onConfirm={() => { void handleConfirmDelete(); }}
         />
       )}
 

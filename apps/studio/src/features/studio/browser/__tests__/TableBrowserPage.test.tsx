@@ -4,11 +4,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import TableBrowserPage from '../TableBrowserPage';
 import { useDataStore } from '../../../../store/useDataStore';
+import { useSettingsStore } from '../../../../store/useSettingsStore';
 import { INITIAL_TABLES } from '../../../../data/mockData';
 
 vi.mock('../../../../lib/api', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../../../lib/api', () => ({
   fetchTableRows: vi.fn(),
   updateRow: vi.fn(),
   createRow: vi.fn(),
+  deleteRow: vi.fn(),
 }));
 
 // Fake transport: `connect()` synchronously fires `onOpen(false)` so the
@@ -32,7 +34,7 @@ vi.mock('@indigodb/client/realtime', () => ({
   REALTIME_PATH: '/api/realtime',
 }));
 
-import { isBackendAvailable, fetchTableRows, createRow } from '../../../../lib/api';
+import { isBackendAvailable, fetchTableRows, createRow, deleteRow } from '../../../../lib/api';
 
 function resetTables() {
   // Deep-clone so per-test store mutations never leak across tests (Zustand
@@ -45,9 +47,11 @@ function resetTables() {
 describe('TableBrowserPage', () => {
   beforeEach(() => {
     resetTables();
+    useSettingsStore.setState({ safeUpdates: false });
     vi.mocked(isBackendAvailable).mockReturnValue(false);
     vi.mocked(fetchTableRows).mockReset();
     vi.mocked(createRow).mockReset();
+    vi.mocked(deleteRow).mockReset();
   });
 
   it('never calls window.alert, and Refresh triggers a real refetch when a backend is connected', async () => {
@@ -307,6 +311,87 @@ describe('TableBrowserPage', () => {
 
     const refreshButton = screen.getByRole('button', { name: /refresh/i });
     expect(refreshButton).not.toBeDisabled();
+  });
+
+  describe('delete row (studio-write-guards: confirmation + Safe Updates dual gate)', () => {
+    it('disables the delete control with an explanatory reason when Safe Updates is enabled', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useSettingsStore.setState({ safeUpdates: true });
+
+      render(<TableBrowserPage />);
+
+      const deleteButton = screen.getByRole('button', { name: /delete row/i });
+      expect(deleteButton).toBeDisabled();
+      expect(deleteButton).toHaveAttribute(
+        'title',
+        'Deleting is blocked by "Safe Updates". Disable it in Settings › Query Guards to delete rows.',
+      );
+    });
+
+    it('enables the delete control (no blocking title) when a backend is connected, a row is selected, and Safe Updates is off', () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useSettingsStore.setState({ safeUpdates: false });
+
+      render(<TableBrowserPage />);
+
+      const deleteButton = screen.getByRole('button', { name: /delete row/i });
+      expect(deleteButton).not.toBeDisabled();
+      expect(deleteButton).toHaveAttribute('title', 'Delete this row');
+    });
+
+    it('confirmed + Safe Updates off: sends the DELETE request for the selected row\'s primary key', async () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useSettingsStore.setState({ safeUpdates: false });
+      vi.mocked(deleteRow).mockResolvedValue(undefined);
+
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
+
+      await user.click(screen.getByRole('button', { name: /delete row/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+      expect(deleteRow).toHaveBeenCalledTimes(1);
+      expect(deleteRow).toHaveBeenCalledWith('users', expect.objectContaining({ id: expect.anything() }));
+    });
+
+    it('confirmed + Safe Updates on: the DELETE request is still not sent (dual gate, not either/or)', async () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useSettingsStore.setState({ safeUpdates: false });
+
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
+
+      // Open the dialog while Safe Updates is off (so the disabled delete
+      // control itself doesn't block opening it)...
+      await user.click(screen.getByRole('button', { name: /delete row/i }));
+      const dialog = await screen.findByRole('dialog');
+
+      // ...then flip Safe Updates on before confirming, proving the dialog's
+      // own confirm handler re-reads the store at click time rather than
+      // trusting a value captured when it opened.
+      act(() => {
+        useSettingsStore.setState({ safeUpdates: true });
+      });
+      await user.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+
+      expect(deleteRow).not.toHaveBeenCalled();
+    });
+
+    it('Safe Updates off + declined confirmation: the DELETE request is not sent', async () => {
+      vi.mocked(isBackendAvailable).mockReturnValue(true);
+      useSettingsStore.setState({ safeUpdates: false });
+
+      const user = userEvent.setup();
+      render(<TableBrowserPage />);
+
+      await user.click(screen.getByRole('button', { name: /delete row/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+      expect(deleteRow).not.toHaveBeenCalled();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 
   describe('live status badge (studio-ui-honesty: hidden, not disabled, when inert)', () => {

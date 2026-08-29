@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { useThemeStore } from '../../../store/useThemeStore';
+import { useSettingsStore } from '../../../store/useSettingsStore';
 
 export interface UseSettingsFormReturn {
   themeAccent: string;
@@ -26,10 +27,10 @@ export interface UseSettingsFormReturn {
 
 export function useSettingsForm(): UseSettingsFormReturn {
   const { themeAccent, setThemeAccent } = useThemeStore();
+  const { safeUpdates, setSafeUpdates } = useSettingsStore();
   const [host, setHost] = useState('production-indigo-cluster.c6e83d8a.us-east-1.rds.amazonaws.com');
   const [poolLimit, setPoolLimit] = useState(50);
   const [autocommit, setAutocommit] = useState(true);
-  const [safeUpdates, setSafeUpdates] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const save = (onSaved: () => void) => {

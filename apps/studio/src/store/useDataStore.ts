@@ -34,6 +34,10 @@ interface DataState {
    * without a full refetch. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   addTableRow: (tableName: string, row: Record<string, any>) => void;
+  /** Removes the single row identified by `key` (per `rowKey`) from
+   * `tableName`. Used after a successful `deleteRow` write so the grid
+   * reflects the removal without a full refetch. */
+  removeTableRow: (tableName: string, key: string) => void;
 }
 
 export const useDataStore = create<DataState>((set) => ({
@@ -108,6 +112,16 @@ export const useDataStore = create<DataState>((set) => ({
       return {
         ...t,
         records: [...t.records, row],
+      };
+    })
+  })),
+
+  removeTableRow: (tableName, key) => set((state) => ({
+    tables: state.tables.map(t => {
+      if (t.name.toLowerCase() !== tableName.toLowerCase()) return t;
+      return {
+        ...t,
+        records: t.records.filter((row) => rowKey(t, row) !== key),
       };
     })
   })),

@@ -49,17 +49,17 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Slice (c) - DELETE + guards
 
-- [ ] 3.1 RED: extend `studio-write.mjs` with failing DELETE tests (composite PK, single-row removal).
-- [ ] 3.2 RED: add failing vitest cases for dual-gate (both-required, either-alone-blocks, session-reset-to-off) and disabled-delete state.
-- [ ] 3.3 GREEN: add `DELETE /api/rows/:table` route reusing `resolveWriteTarget`/`writable`.
-- [ ] 3.4 Create `useSettingsStore.ts` (Zustand, unpersisted, `safeUpdates: boolean = false`).
-- [ ] 3.5 Modify `useSettingsForm.ts` to read/write the store.
-- [ ] 3.6 Create `DeleteRecordDialog.tsx`: confirm handler re-reads `safeUpdates` at click time.
-- [ ] 3.7 Add `deleteRow(table, pk)` to `api.ts`.
-- [ ] 3.8 Wire delete control in `TableBrowserPage.tsx`: disabled+titled when `safeUpdates` true, else opens dialog.
-- [ ] 3.9 Verify: `node packages/cli/test/studio-write.mjs` + vitest suite green; `pnpm build|lint|test` green.
+- [x] 3.1 RED: extend `studio-write.mjs` with failing DELETE tests (composite PK, single-row removal).
+- [x] 3.2 RED: add failing vitest cases for dual-gate (both-required, either-alone-blocks, session-reset-to-off) and disabled-delete state.
+- [x] 3.3 GREEN: add `DELETE /api/rows/:table` route reusing `resolveWriteTarget`/`writable`.
+- [x] 3.4 Create `useSettingsStore.ts` (Zustand, unpersisted, `safeUpdates: boolean = false`).
+- [x] 3.5 Modify `useSettingsForm.ts` to read/write the store.
+- [x] 3.6 Create `DeleteRecordDialog.tsx`: confirm handler re-reads `safeUpdates` at click time.
+- [x] 3.7 Add `deleteRow(table, pk)` to `api.ts`.
+- [x] 3.8 Wire delete control in `TableBrowserPage.tsx`: disabled+titled when `safeUpdates` true, else opens dialog.
+- [x] 3.9 Verify: `node packages/cli/test/studio-write.mjs` + vitest suite green; `pnpm build|lint|test` green.
 
 ## Phase 4: Cleanup
 
-- [ ] 4.1 Confirm no stray hardcoded `email`/`role`/`metadata` references remain in editor path.
-- [ ] 4.2 Update proposal Success Criteria checkboxes once all slices land.
+- [x] 4.1 Confirm no stray hardcoded `email`/`role`/`metadata` references remain in editor path.
+- [x] 4.2 Update proposal Success Criteria checkboxes once all slices land.

@@ -105,6 +105,24 @@ export async function createRow(
   return body.row as Record<string, unknown>;
 }
 
+/**
+ * Deletes one row, identified by primary key. `pk` is keyed by schema field
+ * name (not the physical `dbName`), matching `updateRow`'s `pk` shape.
+ * Throws with the server's error message on failure (including "no row
+ * matched", surfaced as a 404).
+ */
+export async function deleteRow(table: string, pk: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`/api/rows/${encodeURIComponent(table)}`, {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pk }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ?? 'Delete failed');
+  }
+}
+
 export async function runQuery(sql: string): Promise<QueryResult> {
   const res = await fetch('/api/query', {
     method: 'POST',

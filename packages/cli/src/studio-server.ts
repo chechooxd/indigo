@@ -9,8 +9,9 @@
  *   GET   /api/schema          → the ResolvedSchema as JSON
  *   GET   /api/tables/:name    → up to 100 rows from a table
  *   POST  /api/query { sql }   → runs a single read-only SELECT
- *   POST  /api/rows/:table     → inserts one row, returns it (incl. generated PK)
- *   PATCH /api/rows/:table     → updates one row, identified by primary key
+ *   POST   /api/rows/:table    → inserts one row, returns it (incl. generated PK)
+ *   PATCH  /api/rows/:table    → updates one row, identified by primary key
+ *   DELETE /api/rows/:table    → deletes one row, identified by primary key
  */
 
 import { createServer } from "node:http";
@@ -273,8 +274,8 @@ export interface WriteTarget {
 }
 
 /**
- * Single shared identifier resolver for every row-write route (PATCH and
- * POST here; DELETE lands in Phase 3). Re-validates the requested table
+ * Single shared identifier resolver for every row-write route (POST, PATCH,
+ * DELETE). Re-validates the requested table
  * name against `resolved.tables` and every requested column name against
  * that table's columns — the one place this injection-adjacent surface is
  * checked, so every write route shares the exact same guarantees.
@@ -499,6 +500,11 @@ export async function startStudio(
         return;
       }
 
+      if (path.startsWith("/api/rows/") && req.method === "DELETE") {
+        await handleDeleteRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        return;
+      }
+
       if (path.startsWith("/api/")) {
         sendJson(res, 404, { error: "Not found" });
         return;
@@ -717,6 +723,84 @@ async function handleInsertRow(
   try {
     const result = await db.writable((query) => query(sql, params));
     sendJson(res, 201, { row: result.rows[0] });
+  } catch (error) {
+    sendJson(res, 400, { error: (error as Error).message });
+  }
+}
+
+/**
+ * `DELETE /api/rows/:table` — deletes one row, identified by primary key.
+ * Body shape: `{ pk: Record<columnName, value> }`, keyed by the schema field
+ * name (not the physical `dbName`), matching PATCH's `pk` shape.
+ *
+ * `resolveWriteTarget` is called with an empty requested-column set (DELETE
+ * has no column body of its own to validate) purely to re-validate the table
+ * name and obtain its resolved primary-key columns — the exact same
+ * table-lookup and "table has a primary key" guarantees PATCH/POST rely on.
+ * Every primary-key value is bound as a parameter, never interpolated.
+ * Runs on `db.writable`, never `db.readOnly`.
+ *
+ * This route is intentionally UI-guard-agnostic: the confirmation dialog and
+ * the "Safe Updates" toggle are enforced client-side only (see
+ * `useSettingsStore`/`DeleteRecordDialog`), per the studio-write-guards spec.
+ * The server's job here is solely correct, injection-safe row identification.
+ */
+async function handleDeleteRow(
+  encodedTableName: string,
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  resolved: ResolvedSchema,
+  db: StudioDb,
+): Promise<void> {
+  const tableName = decodeURIComponent(encodedTableName);
+
+  let body: { pk?: Record<string, unknown> };
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+  const pkInput = body.pk ?? {};
+
+  let target: WriteTarget;
+  try {
+    target = resolveWriteTarget(resolved, tableName, []);
+  } catch (error) {
+    if (error instanceof WriteTargetError) {
+      sendJson(res, 400, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+
+  const missingPk = target.pk.filter((c) => !(c.name in pkInput));
+  if (missingPk.length > 0) {
+    sendJson(res, 400, {
+      error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}`,
+    });
+    return;
+  }
+
+  const whereParams = target.pk.map((c) => pkInput[c.name]);
+  const whereClauses = target.pk.map((c, i) => `"${c.dbName}" = $${i + 1}`);
+  const sql = `DELETE FROM ${target.quotedTable} WHERE ${whereClauses.join(" AND ")}`;
+
+  try {
+    const result = await db.writable(async (query) => {
+      const before = await query(
+        `SELECT 1 FROM ${target.quotedTable} WHERE ${whereClauses.join(" AND ")}`,
+        whereParams,
+      );
+      if (before.rows.length === 0) return { deleted: false };
+      await query(sql, whereParams);
+      return { deleted: true };
+    });
+    if (!result.deleted) {
+      sendJson(res, 404, { error: "No row matched the given primary key" });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
   } catch (error) {
     sendJson(res, 400, { error: (error as Error).message });
   }
