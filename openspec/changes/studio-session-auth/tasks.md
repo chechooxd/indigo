@@ -65,5 +65,5 @@ Chain strategy: pending
 
 ## Phase 4: Cleanup / Documentation
 
-- [ ] 4.1 Update `packages/cli/CLAUDE.md` or relevant package docs if a `studio` command flag/env var table exists, to document `INDIGODB_STUDIO_PASSWORD` and the non-loopback refusal.
-- [ ] 4.2 Confirm no leftover debug logging of the password/secret in `studio-auth.ts` or `studio-server.ts`.
+- [x] 4.1 Update `packages/cli/CLAUDE.md` or relevant package docs if a `studio` command flag/env var table exists, to document `INDIGODB_STUDIO_PASSWORD` and the non-loopback refusal. (Confirmed no such table exists anywhere in the repo — no `packages/cli/README.md`/`CLAUDE.md`, and root `README.md` has no flag/env var reference table for `studio`, only usage one-liners. Nothing to update under this task's own stated condition; a full `.indigo`/CLI reference is Phase 6's "Documentation and examples" epic, not this change's scope.)
+- [x] 4.2 Confirm no leftover debug logging of the password/secret in `studio-auth.ts` or `studio-server.ts`. (Grepped both files for `password`/`secret` near `console.`/`log(` — the only match is `studio-server.ts`'s startup line, which logs only `"enabled (session password required)"` / `"disabled (no password configured)"`, never the password/secret value itself.)
