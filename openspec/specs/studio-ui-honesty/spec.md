@@ -59,21 +59,36 @@ for that table.
 - THEN both show `4`, not any inflated placeholder value
 
 ### Requirement: Unavailable write actions are disabled with a stated reason
-Add Record, Save Changes, Discard, and Create Table submit MUST be disabled (not merely
-relabeled) whenever no real backend write path exists to persist the result, which is true
-unconditionally in this change since no write endpoint exists yet.
+Add Record and Save Changes MUST be enabled when a real backend write path exists to
+persist the result, and MUST remain disabled (not merely relabeled) with a stated reason
+whenever no such backend is available. Delete MUST additionally require Safe Updates to
+be disabled and explicit confirmation, per `studio-write-guards`, independent of backend
+availability. Create Table submit MUST remain disabled unconditionally in this change,
+since no table-creation write endpoint exists yet.
 
-#### Scenario: Add Record is disabled
-- GIVEN the table browser is rendered
+#### Scenario: Add Record is enabled with a real backend
+- GIVEN a real backend write path exists for the active table
+- WHEN the user inspects "Add Record"
+- THEN the control is enabled and, on submit, creates a row via the write path
+
+#### Scenario: Add Record is disabled without a backend
+- GIVEN no real backend write path exists
 - WHEN the user inspects or clicks "Add Record"
-- THEN the control is disabled, carries a `title`/tooltip reading "Row editing isn't available
-  yet — this build is read-only.", and no record is added to the store
+- THEN the control is disabled, carries a tooltip stating row editing is unavailable,
+  and no record is added to the store
 
-#### Scenario: Create Table submit is disabled
+#### Scenario: Save Changes reflects real backend availability
+- GIVEN the user has edited a record
+- WHEN no real backend write path exists
+- THEN "Save Changes" is disabled with a tooltip explaining edits are not persisted
+- AND when a real backend write path exists, "Save Changes" is enabled and persists
+  the edit
+
+#### Scenario: Create Table submit remains disabled
 - GIVEN the Create Table modal is open with valid input
 - WHEN the user attempts to submit
-- THEN the submit control is disabled with the same stated reason and no table is pushed to
-  the store
+- THEN the submit control is disabled with the same stated reason and no table is
+  pushed to the store
 
 ### Requirement: Sample-data indicator is always visible when data is not real
 The system MUST render a persistent, non-dismissible visual indicator whenever

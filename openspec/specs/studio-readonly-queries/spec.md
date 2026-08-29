@@ -48,6 +48,15 @@ enforcement mechanism.
   `BEGIN; SET TRANSACTION READ ONLY;` connection path used by `/api/query`
 - AND the response is unaffected by this change in success cases
 
+#### Scenario: Read-only guard is unaffected by the new write routes
+
+- GIVEN both the read-only pool and the new writable pool are configured
+- WHEN a client sends `GET /api/tables/:name` immediately after a successful `PATCH`
+  row write
+- THEN the `GET` request still executes on the dedicated read-only connection under
+  `SET TRANSACTION READ ONLY`
+- AND its behavior and response shape are identical to before write routes existed
+
 ### Requirement: Fast-path pre-filter remains advisory only
 
 The system MAY reject obviously non-read-only input early (e.g. via the
