@@ -5,7 +5,7 @@
 ### Requirement: Coverage of bidirectional keyset pagination
 
 The harness MUST cover forward and backward keyset traversal for single-column and
-composite primary keys, limit validation/clamping, exact count accuracy, the PK-less
+composite primary keys, limit validation (reject-only, never clamped), exact count accuracy, the PK-less
 short-circuit, and a regression proving the read-only guard and write routes are unaffected.
 
 #### Scenario: Forward-then-back round trip matches original rows
