@@ -68,6 +68,8 @@ export function resolvedToIndigoSchema(resolved: ResolvedSchema): IndigoSchema {
 
 /** Maps a ResolvedSchema into the data-browser's Table[] (without records). */
 export function resolvedToTables(resolved: ResolvedSchema): Table[] {
+  const enumsByName = new Map(resolved.enums.map((e) => [e.name, e.values]));
+
   return resolved.tables.map((table) => {
     const columns: TableColumn[] = table.columns.map((col) => ({
       name: col.name,
@@ -77,11 +79,19 @@ export function resolvedToTables(resolved: ResolvedSchema): Table[] {
       isNN: !col.nullable,
       isUQ: col.unique,
       description: col.note,
+      isEnum: col.isEnum,
+      enumValues: col.isEnum ? enumsByName.get(col.type) : undefined,
+      // Read-only rendering per studio-record-editor only applies to a
+      // database-generated PRIMARY KEY (autoincrement, or a generator
+      // function default like uuid()/now()) — a non-PK column with a
+      // generator default (e.g. createdAt) stays editable.
+      isGenerated: col.isPk && (col.autoincrement || col.default?.kind === 'function'),
     }));
     return {
       name: table.name,
       schema: 'public',
       realtime: table.realtime,
+      primaryKey: table.primaryKey,
       columns,
       records: [],
     };

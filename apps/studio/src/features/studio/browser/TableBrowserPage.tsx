@@ -15,7 +15,9 @@ import { CreateTableModal } from './components/CreateTableModal';
 import { RecordInspector } from './components/RecordInspector';
 import { SampleDataBanner } from './components/SampleDataBanner';
 import { LiveStatusBadge } from './components/LiveStatusBadge';
-import { isBackendAvailable, fetchTableRows } from '../../../lib/api';
+import { isBackendAvailable, fetchTableRows, updateRow } from '../../../lib/api';
+import { rowKey, pkValues } from '../../../lib/rowKey';
+import { resolveWidget } from './components/widgets/registry';
 
 const READ_ONLY_TITLE = "Row editing isn't available yet — this build is read-only.";
 const REFRESH_DISABLED_TITLE = 'Refresh needs a connected database — this build is showing sample data.';
@@ -29,6 +31,7 @@ import {
 
 export default function TableBrowserPage() {
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
+  const updateTableRow = useDataStore((s) => s.updateTableRow);
   const {
     tables,
     filteredTables,
@@ -52,6 +55,8 @@ export default function TableBrowserPage() {
   const createForm = useCreateTableForm();
 
   const editor = useRecordEditor();
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -91,20 +96,72 @@ export default function TableBrowserPage() {
     }
   };
 
-  // Sync edit buffers whenever the active row or active table changes
+  // Default/repair the selection whenever the active table's identity or
+  // record set changes: keep the current key if it still resolves to a row
+  // in this table, otherwise fall back to the first row (or none).
   useEffect(() => {
-    if (activeTable?.records?.[editor.selectedRowIndex]) {
-      const row = activeTable.records[editor.selectedRowIndex];
-      editor.setEditEmail(row.email || '');
-      editor.setEditRole(row.role || 'USER');
-      editor.setEditMetadata(row.metadata || '{}');
-    } else {
-      editor.setEditEmail('');
-      editor.setEditRole('USER');
-      editor.setEditMetadata('{}');
+    if (!activeTable) return;
+    const keys = activeTable.records.map((r) => rowKey(activeTable, r));
+    if (!editor.selectedRowKey || !keys.includes(editor.selectedRowKey)) {
+      editor.setSelectedRowKey(keys[0] ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor.selectedRowIndex, activeTableIndex, activeTable]);
+  }, [activeTable, activeTableIndex]);
+
+  // Sync the edit buffer whenever the selected row (or the table it belongs
+  // to) changes.
+  useEffect(() => {
+    if (!activeTable) return;
+    const row = activeTable.records.find((r) => rowKey(activeTable, r) === editor.selectedRowKey) ?? null;
+    editor.loadRow(activeTable, row);
+    setSaveError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor.selectedRowKey, activeTable]);
+
+  const selectedRecord = activeTable?.records?.find(
+    (r) => rowKey(activeTable, r) === editor.selectedRowKey,
+  );
+
+  const handleDiscard = () => {
+    editor.discard();
+    setSaveError(null);
+  };
+
+  const handleSave = async () => {
+    if (!activeTable || !selectedRecord || !isBackendAvailable()) return;
+    setSaveError(null);
+
+    const patch: Record<string, unknown> = {};
+    for (const column of editor.dirtyColumns) {
+      const col = activeTable.columns.find((c) => c.name === column);
+      if (!col) continue;
+      if (editor.nulls[column]) {
+        patch[column] = null;
+        continue;
+      }
+      const parsed = resolveWidget(col).parse(editor.draft[column] ?? '', col);
+      if (!parsed.ok) {
+        setSaveError(parsed.error ?? `${column} is invalid`);
+        return;
+      }
+      patch[column] = parsed.value;
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    const pkColumns = activeTable.columns.filter((c) => c.isPK).map((c) => c.name);
+    const pkVals = pkValues(activeTable, selectedRecord);
+    const pk = Object.fromEntries(pkColumns.map((name, i) => [name, pkVals[i]]));
+
+    setSaving(true);
+    try {
+      const persisted = await updateRow(activeTable.name, pk, patch);
+      updateTableRow(activeTable.name, editor.selectedRowKey as string, persisted);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Update failed');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div id="table-browser-container" className="flex-1 flex overflow-hidden">
@@ -116,7 +173,7 @@ export default function TableBrowserPage() {
         allTables={tables}
         tableFilterQuery={tableFilterQuery}
         onTableFilterChange={setTableFilterQuery}
-        onSelectTable={(idx) => { setActiveTableIndex(idx); editor.setSelectedRowIndex(0); }}
+        onSelectTable={(idx) => { setActiveTableIndex(idx); editor.setSelectedRowKey(null); }}
         onOpenCreateModal={createForm.handleOpenCreateModal}
       />
 
@@ -245,10 +302,11 @@ export default function TableBrowserPage() {
                   <tr><td colSpan={visibleColumns.length + 1} className="p-12 text-center text-zinc-500 italic font-sans text-xs">No matching records found. Clear filters or add new rows.</td></tr>
                 ) : (
                   filteredRecords.map((row, idx) => {
-                    const isSelected = editor.selectedRowIndex === idx;
+                    const key = activeTable ? rowKey(activeTable, row) : null;
+                    const isSelected = key !== null && editor.selectedRowKey === key;
                     return (
-                      <tr key={row.id || idx} onClick={() => editor.setSelectedRowIndex(idx)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-zinc-900/30 border-y border-zinc-800 font-semibold' : 'hover:bg-zinc-900/10'}`}>
-                        <td className="px-3 py-2.5 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 text-white focus:ring-0" type="checkbox" checked={isSelected} onChange={() => editor.setSelectedRowIndex(idx)} /></td>
+                      <tr key={key ?? idx} onClick={() => editor.setSelectedRowKey(key)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-zinc-900/30 border-y border-zinc-800 font-semibold' : 'hover:bg-zinc-900/10'}`}>
+                        <td className="px-3 py-2.5 border-r border-zinc-800"><input className="rounded bg-zinc-950 border-zinc-800 text-white focus:ring-0" type="checkbox" checked={isSelected} onChange={() => editor.setSelectedRowKey(key)} /></td>
                         {visibleColumns.map((col) => {
                           const rawValue = row[col.name];
                           return (
@@ -276,13 +334,22 @@ export default function TableBrowserPage() {
       </section>
 
       {/* Right Sidebar: Record Inspector */}
-      {editor.detailsPanelOpen && activeTable?.records?.[editor.selectedRowIndex] && (
+      {editor.detailsPanelOpen && activeTable && selectedRecord && (
         <RecordInspector
           activeTable={activeTable}
-          selectedRowIndex={editor.selectedRowIndex}
-          editEmail={editor.editEmail}
-          editRole={editor.editRole}
-          editMetadata={editor.editMetadata}
+          record={selectedRecord}
+          draft={editor.draft}
+          nulls={editor.nulls}
+          dirtyColumns={editor.dirtyColumns}
+          isDirty={editor.isDirty}
+          canSave={isBackendAvailable()}
+          disabledTitle={READ_ONLY_TITLE}
+          saving={saving}
+          error={saveError}
+          onFieldChange={editor.setField}
+          onNullToggle={editor.setNull}
+          onSave={() => { void handleSave(); }}
+          onDiscard={handleDiscard}
           onClose={() => editor.setDetailsPanelOpen(false)}
         />
       )}

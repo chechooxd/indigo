@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { ResolvedSchema } from '@indigodb/core';
 import { Table, RecentSchema, SystemAlert } from '../types';
 import { INITIAL_TABLES, INITIAL_SCHEMAS, INITIAL_ALERTS } from '../data/mockData';
+import { rowKey } from '../lib/rowKey';
 
 interface DataState {
   schemas: RecentSchema[];
@@ -23,6 +24,11 @@ interface DataState {
   clearAlerts: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateTableRecords: (tableName: string, newRecords: Record<string, any>[]) => void;
+  /** Merges `patch` into the single row identified by `key` (per `rowKey`)
+   * within `tableName`. Used after a successful `updateRow` write so the
+   * grid/inspector reflect the persisted value without a full refetch. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  updateTableRow: (tableName: string, key: string, patch: Record<string, any>) => void;
 }
 
 export const useDataStore = create<DataState>((set) => ({
@@ -79,5 +85,15 @@ export const useDataStore = create<DataState>((set) => ({
       }
       return t;
     })
-  }))
+  })),
+
+  updateTableRow: (tableName, key, patch) => set((state) => ({
+    tables: state.tables.map(t => {
+      if (t.name.toLowerCase() !== tableName.toLowerCase()) return t;
+      return {
+        ...t,
+        records: t.records.map((row) => (rowKey(t, row) === key ? { ...row, ...patch } : row)),
+      };
+    })
+  })),
 }));

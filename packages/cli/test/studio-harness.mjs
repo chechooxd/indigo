@@ -35,15 +35,27 @@ function toFields(fields) {
 /** Adapts a PGlite instance to the `StudioDb` port `startStudio` expects. */
 export function createPgliteStudioDb(db) {
   return {
-    async query(sql) {
-      const result = await db.query(sql);
+    async query(sql, params) {
+      const result = await db.query(sql, params);
       return { rows: result.rows, fields: toFields(result.fields) };
     },
     async readOnly(fn) {
       return db.transaction(async (tx) => {
         await tx.query("SET TRANSACTION READ ONLY");
-        return fn(async (sql) => {
-          const result = await tx.query(sql);
+        return fn(async (sql, params) => {
+          const result = await tx.query(sql, params);
+          return { rows: result.rows, fields: toFields(result.fields) };
+        });
+      });
+    },
+    // Real, committed write path: `db.transaction` here is a genuine
+    // PGlite transaction that commits on success and rolls back if the
+    // callback throws — never a no-op stand-in for `startStudio`'s writable
+    // pool.
+    async writable(fn) {
+      return db.transaction(async (tx) => {
+        return fn(async (sql, params) => {
+          const result = await tx.query(sql, params);
           return { rows: result.rows, fields: toFields(result.fields) };
         });
       });

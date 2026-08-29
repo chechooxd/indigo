@@ -182,29 +182,40 @@ describe('TableBrowserPage', () => {
     expect(useDataStore.getState().tables).toBe(recordsBefore);
   });
 
-  it('disables Save and Discard in the Record Inspector with an explanatory title, and clicking never mutates the store', async () => {
+  it('disables Save with an explanatory title when there is no backend, and clicking never mutates the store', async () => {
     const user = userEvent.setup();
     render(<TableBrowserPage />);
 
     const recordsBefore = useDataStore.getState().tables;
 
     const saveButton = screen.getByRole('button', { name: /save row/i });
-    const discardButton = screen.getByRole('button', { name: /discard/i });
 
     expect(saveButton).toBeDisabled();
     expect(saveButton).toHaveAttribute(
       'title',
       "Row editing isn't available yet — this build is read-only.",
     );
-    expect(discardButton).toBeDisabled();
-    expect(discardButton).toHaveAttribute(
-      'title',
-      "Row editing isn't available yet — this build is read-only.",
-    );
 
     await user.click(saveButton);
+
+    expect(useDataStore.getState().tables).toBe(recordsBefore);
+  });
+
+  it('disables Discard with no unsaved changes, and enables it (no backend needed) once a field is edited', async () => {
+    const user = userEvent.setup();
+    render(<TableBrowserPage />);
+
+    const recordsBefore = useDataStore.getState().tables;
+    const discardButton = screen.getByRole('button', { name: /discard/i });
+    expect(discardButton).toBeDisabled();
+
+    await user.clear(screen.getByLabelText('email'));
+    await user.type(screen.getByLabelText('email'), 'changed@example.com');
+
+    expect(discardButton).not.toBeDisabled();
     await user.click(discardButton);
 
+    expect(screen.getByLabelText('email')).toHaveValue('alex@indigodb.io');
     expect(useDataStore.getState().tables).toBe(recordsBefore);
   });
 

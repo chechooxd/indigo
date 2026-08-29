@@ -6,9 +6,10 @@
  * schema and data (replacing the SPA's former mock data).
  *
  * API:
- *   GET  /api/schema          → the ResolvedSchema as JSON
- *   GET  /api/tables/:name    → up to 100 rows from a table
- *   POST /api/query { sql }   → runs a single read-only SELECT
+ *   GET   /api/schema          → the ResolvedSchema as JSON
+ *   GET   /api/tables/:name    → up to 100 rows from a table
+ *   POST  /api/query { sql }   → runs a single read-only SELECT
+ *   PATCH /api/rows/:table     → updates one row, identified by primary key
  */
 
 import { createServer } from "node:http";
@@ -18,7 +19,7 @@ import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import pg from "pg";
-import type { ResolvedSchema } from "@indigodb/core";
+import type { ResolvedColumn, ResolvedSchema, ResolvedTable } from "@indigodb/core";
 import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
 
 export interface StudioOptions {
@@ -55,40 +56,60 @@ export interface StudioQueryResult {
  * PostgreSQL connection.
  */
 export interface StudioDb {
-  /** Runs `sql` on the shared (non-read-only) connection — used for metadata reads. */
-  query(sql: string): Promise<StudioQueryResult>;
+  /**
+   * Runs `sql` on the shared (non-read-only) connection — used for metadata
+   * reads. `params`, when given, are bound (never string-interpolated).
+   */
+  query(sql: string, params?: unknown[]): Promise<StudioQueryResult>;
   /**
    * Runs `fn` inside a dedicated, read-only transaction: `BEGIN; SET
    * TRANSACTION READ ONLY; ...; ROLLBACK` (always rolled back, never
    * committed — nothing this path runs is meant to persist). Postgres
    * itself rejects any write, including one disguised inside a CTE, so
    * this is the actual enforcement boundary — not a string heuristic.
+   *
+   * This function's body contains no `COMMIT` statement, full stop — a
+   * writable variant is a *separate* function (`writable`, below), never a
+   * flag on this one.
    */
   readOnly<T>(fn: (query: StudioDb["query"]) => Promise<T>): Promise<T>;
+  /**
+   * Runs `fn` inside a dedicated, writable transaction: literal `BEGIN`
+   * … `COMMIT`, with `ROLLBACK` on throw. Sibling of `readOnly`, never
+   * reachable from a GET handler. Every value `fn`'s query function is
+   * given MUST be bound as a parameter, never interpolated into the SQL
+   * text — only already-resolved identifiers (via `resolveWriteTarget`)
+   * may be interpolated.
+   */
+  writable<T>(fn: (query: StudioDb["query"]) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
 
 /** Production `StudioDb`: `pg.Pool` for metadata reads, plus a small dedicated
- * pool (`max: 4`) for read-only work. Kept separate from the shared pool so a
- * hung read-only query never starves `/api/schema` or `/api/tables/:name`. */
+ * pool (`max: 4`) for read-only work, and a third small dedicated pool
+ * (`max: 4`) for writable work. Three separate pools so a hung read-only
+ * query never starves `/api/schema` or `/api/tables/:name`, and so a write
+ * can never run on a connection that ever issued `SET TRANSACTION READ
+ * ONLY`. */
 function createPgDb(connectionString: string): StudioDb {
   const pool = new pg.Pool({ connectionString });
   const readOnlyPool = new pg.Pool({ connectionString, max: 4 });
+  const writePool = new pg.Pool({ connectionString, max: 4 });
 
   function toResult(result: { rows: unknown[]; fields: { name: string }[] }): StudioQueryResult {
     return { rows: result.rows, fields: result.fields.map((f) => ({ name: f.name })) };
   }
 
   return {
-    async query(sql) {
-      return toResult(await pool.query(sql));
+    async query(sql, params) {
+      return toResult(await pool.query(sql, params));
     },
     async readOnly(fn) {
       const client = await readOnlyPool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SET TRANSACTION READ ONLY");
-        return await fn(async (sql) => toResult(await client.query(sql)));
+        return await fn(async (sql, params) => toResult(await client.query(sql, params)));
       } finally {
         // Always ROLLBACK, never COMMIT: this path exists to run read-only
         // work, and a failed ROLLBACK here must not surface as the route's
@@ -97,9 +118,24 @@ function createPgDb(connectionString: string): StudioDb {
         client.release();
       }
     },
+    async writable(fn) {
+      const client = await writePool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await fn(async (sql, params) => toResult(await client.query(sql, params)));
+        await client.query("COMMIT");
+        return result;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async close() {
       await pool.end();
       await readOnlyPool.end();
+      await writePool.end();
     },
   };
 }
@@ -211,6 +247,84 @@ export function redactSource(source: string): string {
   }
 
   return out.join("\n");
+}
+
+/**
+ * Thrown by `resolveWriteTarget` on any identifier or shape problem with a
+ * write request. Every route that calls it maps this to HTTP 400 and runs
+ * no SQL — see the individual checks below.
+ */
+export class WriteTargetError extends Error {}
+
+/**
+ * A validated, ready-to-quote write target: the resolved table, its
+ * already-quoted physical name, the resolved columns requested for the
+ * write, and the table's primary-key columns (in `ResolvedTable.primaryKey`
+ * order, composite-safe). Every quoted identifier here is derived from the
+ * `ResolvedSchema` object itself — never from request text — which is what
+ * makes it safe to interpolate into SQL alongside bound value parameters.
+ */
+export interface WriteTarget {
+  table: ResolvedTable;
+  quotedTable: string;
+  columns: ResolvedColumn[];
+  pk: ResolvedColumn[];
+}
+
+/**
+ * Single shared identifier resolver for every row-write route
+ * (PATCH here; POST/DELETE land in later slices). Re-validates the
+ * requested table name against `resolved.tables` and every requested
+ * column name against that table's columns — the one place this
+ * injection-adjacent surface is checked, so every write route shares the
+ * exact same guarantees.
+ *
+ * Throws `WriteTargetError` (→ HTTP 400 at the call site) when:
+ *  - the table name is not in `resolved.tables`;
+ *  - any requested column name is not one of that table's columns;
+ *  - the table has no primary key (writes require row identity);
+ *  - a requested column is a generated/autoincrement column (its value is
+ *    owned by the database, not the client).
+ */
+export function resolveWriteTarget(
+  resolved: ResolvedSchema,
+  tableName: string,
+  columnNames: string[],
+): WriteTarget {
+  const table = resolved.tables.find((t) => t.name === tableName || t.dbName === tableName);
+  if (!table) {
+    throw new WriteTargetError(`Unknown table: ${tableName}`);
+  }
+
+  if (table.primaryKey.length === 0) {
+    throw new WriteTargetError(
+      `Table "${table.name}" has no primary key; row writes require one.`,
+    );
+  }
+  const pk = table.primaryKey.map((dbName) => {
+    const col = table.columns.find((c) => c.dbName === dbName);
+    if (!col) {
+      throw new WriteTargetError(
+        `Primary key column "${dbName}" not found among "${table.name}"'s columns.`,
+      );
+    }
+    return col;
+  });
+
+  const columns = columnNames.map((name) => {
+    const col = table.columns.find((c) => c.name === name || c.dbName === name);
+    if (!col) {
+      throw new WriteTargetError(`Unknown column "${name}" on table "${table.name}"`);
+    }
+    if (col.autoincrement) {
+      throw new WriteTargetError(
+        `Column "${col.name}" is auto-generated and cannot be written directly.`,
+      );
+    }
+    return col;
+  });
+
+  return { table, quotedTable: `"${table.dbName}"`, columns, pk };
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -372,6 +486,11 @@ export async function startStudio(
         return;
       }
 
+      if (path.startsWith("/api/rows/") && req.method === "PATCH") {
+        await handleUpdateRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        return;
+      }
+
       if (path.startsWith("/api/")) {
         sendJson(res, 404, { error: "Not found" });
         return;
@@ -454,6 +573,79 @@ async function serveStatic(
   } catch {
     res.writeHead(404);
     res.end("Not found");
+  }
+}
+
+/**
+ * `PATCH /api/rows/:table` — updates one row, identified by primary key.
+ * Body shape: `{ pk: Record<columnName, value>, patch: Record<columnName, value> }`,
+ * both keyed by the schema field name (not the physical `dbName`), matching
+ * `/api/tables/:name`'s aliasing convention.
+ *
+ * All identifiers (table name, column names) go through `resolveWriteTarget`
+ * before any SQL is built; every value is bound as a parameter, never
+ * interpolated. Runs on `db.writable`, never `db.readOnly`.
+ */
+async function handleUpdateRow(
+  encodedTableName: string,
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  resolved: ResolvedSchema,
+  db: StudioDb,
+): Promise<void> {
+  const tableName = decodeURIComponent(encodedTableName);
+
+  let body: { pk?: Record<string, unknown>; patch?: Record<string, unknown> };
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+  const pkInput = body.pk ?? {};
+  const patchInput = body.patch ?? {};
+
+  let target: WriteTarget;
+  try {
+    target = resolveWriteTarget(resolved, tableName, Object.keys(patchInput));
+  } catch (error) {
+    if (error instanceof WriteTargetError) {
+      sendJson(res, 400, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+
+  const missingPk = target.pk.filter((c) => !(c.name in pkInput));
+  if (missingPk.length > 0) {
+    sendJson(res, 400, {
+      error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}`,
+    });
+    return;
+  }
+  if (target.columns.length === 0) {
+    sendJson(res, 400, { error: "No columns to update" });
+    return;
+  }
+
+  const setParams = target.columns.map((c) => patchInput[c.name] ?? null);
+  const setClauses = target.columns.map((c, i) => `"${c.dbName}" = $${i + 1}`);
+  const whereParams = target.pk.map((c) => pkInput[c.name]);
+  const whereClauses = target.pk.map(
+    (c, i) => `"${c.dbName}" = $${setParams.length + i + 1}`,
+  );
+  const selectList = target.table.columns.map((c) => `"${c.dbName}" AS "${c.name}"`).join(", ");
+  const sql = `UPDATE ${target.quotedTable} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")} RETURNING ${selectList}`;
+
+  try {
+    const result = await db.writable((query) => query(sql, [...setParams, ...whereParams]));
+    if (result.rows.length === 0) {
+      sendJson(res, 404, { error: "No row matched the given primary key" });
+      return;
+    }
+    sendJson(res, 200, { row: result.rows[0] });
+  } catch (error) {
+    sendJson(res, 400, { error: (error as Error).message });
   }
 }
 

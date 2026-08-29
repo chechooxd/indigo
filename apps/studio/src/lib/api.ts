@@ -63,6 +63,27 @@ export async function fetchTableRows(name: string): Promise<QueryResult | null> 
   }
 }
 
+/**
+ * Updates one row, identified by primary key. `pk` and `patch` are both
+ * keyed by schema field name (not the physical `dbName`), matching
+ * `fetchTableRows`'s aliasing. Returns the persisted row on success; throws
+ * with the server's error message otherwise.
+ */
+export async function updateRow(
+  table: string,
+  pk: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/rows/${encodeURIComponent(table)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pk, patch }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error ?? 'Update failed');
+  return body.row as Record<string, unknown>;
+}
+
 export async function runQuery(sql: string): Promise<QueryResult> {
   const res = await fetch('/api/query', {
     method: 'POST',
