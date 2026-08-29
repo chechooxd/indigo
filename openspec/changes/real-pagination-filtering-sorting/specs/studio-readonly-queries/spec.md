@@ -5,9 +5,11 @@
 ### Requirement: Pagination parameters are validated and executed under the same read-only guard
 
 `GET /api/tables/:name` MUST accept `cursor`, `direction` (`forward`/`backward`), and `limit`
-query parameters, MUST validate/clamp `limit` server-side against the fixed allowed maximum
-before use, and MUST run the accompanying `count(*)` query inside the same read-only
-transaction as the row fetch. The route MUST NOT trust `limit` as free-form client input.
+query parameters, MUST validate `limit` server-side against the fixed allowed set
+(`{25, 50, 100, 200}`, default `100` when absent) before use — rejecting any other value with
+an HTTP 400 rather than clamping it — and MUST run the accompanying `count(*)` query inside
+the same read-only transaction as the row fetch. The route MUST NOT trust `limit` as
+free-form client input.
 
 #### Scenario: Cursor/direction/limit params execute inside the read-only transaction
 
@@ -16,12 +18,13 @@ transaction as the row fetch. The route MUST NOT trust `limit` as free-form clie
 - THEN both the row query and the count query run inside the dedicated
   `BEGIN; SET TRANSACTION READ ONLY;` connection
 
-#### Scenario: Invalid limit is rejected or clamped, never trusted
+#### Scenario: Invalid limit is rejected, never clamped
 
 - GIVEN a client sends `limit=abc` or `limit=100000`
 - WHEN the request is processed
-- THEN the server validates/clamps the value server-side before querying, and the response
-  never reflects an unbounded or non-numeric limit
+- THEN the server responds `400 { error: "limit must be one of 25, 50, 100, 200" }` before
+  running any query, and the response never reflects an unbounded, non-numeric, or
+  silently-clamped limit
 
 #### Scenario: Write routes and their transaction remain untouched
 
