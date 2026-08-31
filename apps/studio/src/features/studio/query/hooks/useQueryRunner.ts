@@ -30,6 +30,8 @@ export function useQueryRunner(tables: Table[]): UseQueryRunnerReturn {
   const [queryResults, setQueryResults] = useState<QueryResult | null>({
     columns: ['id', 'email', 'full_name', 'created_at', 'role'],
     rows: tables[0].records,
+    // Initial mock snapshot is never truncated — it's the full mock record set.
+    truncated: false,
   });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
