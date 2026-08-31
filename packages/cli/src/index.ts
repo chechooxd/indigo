@@ -27,6 +27,7 @@ import {
   resolveStudioReadOnly,
   resolveQueryTimeoutMs,
   resolveQueryRowCap,
+  resolveStudioEnvironment,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -315,6 +316,12 @@ program
     "Row cap applied to /api/query's result set. 0 disables it. " +
       "Defaults to INDIGODB_STUDIO_QUERY_ROW_CAP, or 1000.",
   )
+  .option(
+    "--env <name>",
+    "Informational environment label (e.g. development/staging/production, or any custom " +
+      "name) shown in the Studio badge and status probe. Purely informational — gates " +
+      "nothing. Defaults to INDIGODB_ENV, or unset.",
+  )
   .action(
     async (options: {
       schema: string;
@@ -324,6 +331,7 @@ program
       readOnly?: boolean;
       queryTimeout?: string;
       queryRowCap?: string;
+      env?: string;
     }) => {
       loadEnv();
       const password = process.env.INDIGODB_STUDIO_PASSWORD;
@@ -343,11 +351,17 @@ program
       // `process.exit`) on a present-but-malformed value — caught here so
       // the process exits 1 before binding, per the spec's "startup
       // resolution" requirement.
+      // `resolveStudioEnvironment` (util.ts) is the same "pure, throws" shape
+      // as the guardrail resolvers above — resolved here, after `loadEnv()`,
+      // never as a commander option default (design.md: the `--read-only`
+      // pattern, not `--host`'s module-load default).
       let queryTimeoutMs: number;
       let queryRowCap: number;
+      let environment: string | undefined;
       try {
         queryTimeoutMs = resolveQueryTimeoutMs(options.queryTimeout, process.env.INDIGODB_STUDIO_QUERY_TIMEOUT_MS);
         queryRowCap = resolveQueryRowCap(options.queryRowCap, process.env.INDIGODB_STUDIO_QUERY_ROW_CAP);
+        environment = resolveStudioEnvironment(options.env, process.env.INDIGODB_ENV);
       } catch (error) {
         console.error(`❌ ${(error as Error).message}`);
         process.exit(1);
@@ -366,6 +380,7 @@ program
         readOnly,
         queryTimeoutMs,
         queryRowCap,
+        environment,
       });
     },
   );
