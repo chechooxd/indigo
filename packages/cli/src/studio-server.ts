@@ -23,10 +23,18 @@ import { join, extname, normalize } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
+import { randomBytes } from "node:crypto";
 import pg from "pg";
 import type { ResolvedColumn, ResolvedSchema, ResolvedTable } from "@indigodb/core";
 import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
-import { createStudioAuth, SESSION_COOKIE, SESSION_TTL_SECONDS, type StudioAuth } from "./studio-auth.js";
+import { createStudioAuth, parseCookie, SESSION_COOKIE, SESSION_TTL_SECONDS, type StudioAuth } from "./studio-auth.js";
+import {
+  deriveSessionCorrelator,
+  formatAuditLine,
+  formatPkValue,
+  type AuditOp,
+  type StudioAuditEntry,
+} from "./util.js";
 
 export interface StudioOptions {
   resolved: ResolvedSchema;
@@ -88,6 +96,13 @@ export interface StudioOptions {
    * nothing.
    */
   environment?: string;
+  /**
+   * Stdout JSON audit line for every attempted row write (`studio-audit-log`).
+   * `undefined`/`true` (the default, matching `resolveStudioAuditLog`'s own
+   * default) enables it; `false` is a structural no-op — every emit path
+   * becomes `if (auditLog)` false, never even building the correlator.
+   */
+  auditLog?: boolean;
 }
 
 /**
@@ -663,6 +678,60 @@ function sendJson(res: import("node:http").ServerResponse, status: number, body:
   res.end(payload);
 }
 
+/**
+ * Per-request audit context, computed once by the dispatcher (which alone
+ * holds `auth`/`auditKey`) and threaded into each write handler — the
+ * handlers themselves never see the correlator key, only its already-derived
+ * `session` value (design.md "session is derived in studio-server.ts, never
+ * in util.ts" data-flow note).
+ */
+interface AuditContext {
+  enabled: boolean;
+  session: string | undefined;
+}
+
+/**
+ * The ONE function that both sends a write route's HTTP response and emits
+ * its audit line, so a terminal branch cannot physically respond without
+ * logging (design.md "emit is coupled to the response" decision). `sendJson`
+ * is never called directly from `handleInsertRow`/`handleUpdateRow`/
+ * `handleDeleteRow` — this is what makes "no `sendJson` inside the three
+ * write handlers" grep-checkable and the exactly-one-line-per-response
+ * invariant (Testing Strategy row 24) hold structurally rather than by
+ * discipline.
+ */
+function respondWrite(
+  res: import("node:http").ServerResponse,
+  status: number,
+  body: unknown,
+  audit: AuditContext,
+  entry: StudioAuditEntry,
+): void {
+  sendJson(res, status, body);
+  if (audit.enabled) console.log(formatAuditLine(entry));
+}
+
+/** Builds one `StudioAuditEntry`, filling in `ts`/`kind`/`op`/`table`/`session` once. */
+function buildAuditEntry(
+  op: AuditOp,
+  table: string,
+  session: string | undefined,
+  rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">,
+): StudioAuditEntry {
+  return { ts: new Date().toISOString(), kind: "studio.audit.write", op, table, session, ...rest };
+}
+
+/**
+ * Extracts a driver error's SQLSTATE, only when it matches the exact
+ * five-character shape (`/^[0-9A-Z]{5}$/`) — never the driver's message text,
+ * which embeds submitted values (design.md "`reason` never carries a
+ * database message" decision).
+ */
+function extractSqlState(error: unknown): string | undefined {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
+}
+
 /** True when `error` carries Postgres's `statement_timeout` SQLSTATE (`57014`). */
 function isStatementTimeoutError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { code?: string }).code === "57014";
@@ -716,6 +785,29 @@ export async function startStudio(
   // Never read by any auth/read-only/guardrail decision below.
   const environment = options.environment ?? null;
 
+  // Resolved ONCE at startup, matching `resolveStudioAuditLog`'s own default
+  // (util.ts) so a caller that skips CLI option resolution (tests, embedders)
+  // still gets logging on by default.
+  const auditLog = options.auditLog ?? true;
+
+  // Per-PROCESS random correlator key — generated freshly on every
+  // `startStudio` call, NEVER at module load and NEVER derived from
+  // `options.password`. This is the security property that keeps the audit
+  // log from becoming an offline password-guessing oracle against the
+  // predictable session-cookie payload (design.md "the correlator is
+  // HMAC-SHA256 under a per-process random key" decision) — and generating
+  // it here, rather than as a module-level constant, is what makes the
+  // "correlators do not survive a restart" scenario testable: two
+  // `withStudio` calls in one test process must observe two different keys.
+  const auditKey = randomBytes(32);
+
+  /** Derives the `session` audit correlator for one request, or `undefined`
+   * when auth is off — the one place `auditKey`/`auth` are both in scope. */
+  function auditSessionFor(req: import("node:http").IncomingMessage): string | undefined {
+    if (!auth) return undefined;
+    return deriveSessionCorrelator(parseCookie(req.headers.cookie, SESSION_COOKIE), auditKey);
+  }
+
   // `boundPort` starts as the requested port and is updated once `listen`
   // resolves the actual bound port — needed for `port: 0` (ephemeral, used
   // by tests). Captured by reference, so the request handler below always
@@ -761,6 +853,23 @@ export async function startStudio(
     // answer 401, never 403 — the write route must not become an oracle for
     // server posture). No DB connection or validation work happens here.
     if (readOnly && path.startsWith("/api/rows/")) {
+      const deniedOp: AuditOp | null =
+        req.method === "POST" ? "insert" : req.method === "PATCH" ? "update" : req.method === "DELETE" ? "delete" : null;
+      // Non-write verbs (e.g. GET) hit this same method-agnostic gate and
+      // still get refused 403, but emit NOTHING — a GET is not an attempted
+      // mutation (design.md "denial line" decision).
+      if (auditLog && deniedOp) {
+        const table = decodeURIComponent(path.slice("/api/rows/".length));
+        console.log(
+          formatAuditLine(
+            buildAuditEntry(deniedOp, table, auditSessionFor(req), {
+              count: 0,
+              outcome: "denied",
+              reason: "read-only",
+            }),
+          ),
+        );
+      }
       sendJson(res, 403, { error: "Studio is running in read-only mode" });
       return;
     }
@@ -957,17 +1066,20 @@ export async function startStudio(
       }
 
       if (path.startsWith("/api/rows/") && req.method === "POST") {
-        await handleInsertRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
+        await handleInsertRow(path.slice("/api/rows/".length), req, res, resolved, db, audit);
         return;
       }
 
       if (path.startsWith("/api/rows/") && req.method === "PATCH") {
-        await handleUpdateRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
+        await handleUpdateRow(path.slice("/api/rows/".length), req, res, resolved, db, audit);
         return;
       }
 
       if (path.startsWith("/api/rows/") && req.method === "DELETE") {
-        await handleDeleteRow(path.slice("/api/rows/".length), req, res, resolved, db);
+        const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
+        await handleDeleteRow(path.slice("/api/rows/".length), req, res, resolved, db, audit);
         return;
       }
 
@@ -1004,6 +1116,7 @@ export async function startStudio(
   console.log(`  Auth:   ${auth ? "enabled (session password required)" : "disabled (no password configured)"}`);
   console.log(`  Read-only: ${readOnly ? "on" : "off"}`);
   console.log(`  Environment: ${environment ?? "(unset)"}`);
+  console.log(`  Audit log: ${auditLog ? "enabled" : "disabled"}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
   }
@@ -1075,14 +1188,17 @@ async function handleUpdateRow(
   res: import("node:http").ServerResponse,
   resolved: ResolvedSchema,
   db: StudioDb,
+  audit: AuditContext,
 ): Promise<void> {
   const tableName = decodeURIComponent(encodedTableName);
+  const entryFor = (rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">) =>
+    buildAuditEntry("update", tableName, audit.session, rest);
 
   let body: { pk?: Record<string, unknown>; patch?: Record<string, unknown> };
   try {
     body = JSON.parse((await readBody(req)) || "{}");
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON body" });
+    respondWrite(res, 400, { error: "Invalid JSON body" }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
     return;
   }
   const pkInput = body.pk ?? {};
@@ -1093,7 +1209,7 @@ async function handleUpdateRow(
     target = resolveWriteTarget(resolved, tableName, Object.keys(patchInput));
   } catch (error) {
     if (error instanceof WriteTargetError) {
-      sendJson(res, 400, { error: error.message });
+      respondWrite(res, 400, { error: error.message }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
       return;
     }
     throw error;
@@ -1101,13 +1217,17 @@ async function handleUpdateRow(
 
   const missingPk = target.pk.filter((c) => !(c.name in pkInput));
   if (missingPk.length > 0) {
-    sendJson(res, 400, {
-      error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}`,
-    });
+    respondWrite(
+      res,
+      400,
+      { error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}` },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "invalid-request" }),
+    );
     return;
   }
   if (target.columns.length === 0) {
-    sendJson(res, 400, { error: "No columns to update" });
+    respondWrite(res, 400, { error: "No columns to update" }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
     return;
   }
 
@@ -1120,15 +1240,30 @@ async function handleUpdateRow(
   const selectList = target.table.columns.map((c) => `"${c.dbName}" AS "${c.name}"`).join(", ");
   const sql = `UPDATE ${target.quotedTable} SET ${setClauses.join(", ")} WHERE ${whereClauses.join(" AND ")} RETURNING ${selectList}`;
 
+  const pk = Object.fromEntries(target.pk.map((c) => [c.name, formatPkValue(pkInput[c.name])]));
+  const columns = target.columns.map((c) => c.name);
+
   try {
     const result = await db.writable((query) => query(sql, [...setParams, ...whereParams]));
     if (result.rows.length === 0) {
-      sendJson(res, 404, { error: "No row matched the given primary key" });
+      respondWrite(
+        res,
+        404,
+        { error: "No row matched the given primary key" },
+        audit,
+        entryFor({ count: 0, outcome: "error", reason: "not-found", pk }),
+      );
       return;
     }
-    sendJson(res, 200, { row: result.rows[0] });
+    respondWrite(res, 200, { row: result.rows[0] }, audit, entryFor({ count: 1, outcome: "ok", pk, columns }));
   } catch (error) {
-    sendJson(res, 400, { error: (error as Error).message });
+    respondWrite(
+      res,
+      400,
+      { error: (error as Error).message },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "db-error", ...(extractSqlState(error) ? { code: extractSqlState(error) } : {}) }),
+    );
   }
 }
 
@@ -1154,18 +1289,27 @@ async function handleInsertRow(
   res: import("node:http").ServerResponse,
   resolved: ResolvedSchema,
   db: StudioDb,
+  audit: AuditContext,
 ): Promise<void> {
   const tableName = decodeURIComponent(encodedTableName);
+  const entryFor = (rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">) =>
+    buildAuditEntry("insert", tableName, audit.session, rest);
 
   let body: unknown;
   try {
     body = JSON.parse((await readBody(req)) || "{}");
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON body" });
+    respondWrite(res, 400, { error: "Invalid JSON body" }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
     return;
   }
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    sendJson(res, 400, { error: "Request body must be a JSON object of column values" });
+    respondWrite(
+      res,
+      400,
+      { error: "Request body must be a JSON object of column values" },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "invalid-request" }),
+    );
     return;
   }
   const valuesInput = body as Record<string, unknown>;
@@ -1175,7 +1319,7 @@ async function handleInsertRow(
     target = resolveWriteTarget(resolved, tableName, Object.keys(valuesInput));
   } catch (error) {
     if (error instanceof WriteTargetError) {
-      sendJson(res, 400, { error: error.message });
+      respondWrite(res, 400, { error: error.message }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
       return;
     }
     throw error;
@@ -1189,11 +1333,23 @@ async function handleInsertRow(
         `VALUES (${target.columns.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING ${selectList}`
       : `INSERT INTO ${target.quotedTable} DEFAULT VALUES RETURNING ${selectList}`;
 
+  const columns = target.columns.map((c) => c.name);
+
   try {
     const result = await db.writable((query) => query(sql, params));
-    sendJson(res, 201, { row: result.rows[0] });
+    // The primary key is server-generated on INSERT — the request cannot
+    // supply it — so it is read back from the returned row, never the body.
+    const row = result.rows[0] as Record<string, unknown>;
+    const pk = Object.fromEntries(target.pk.map((c) => [c.name, formatPkValue(row[c.name])]));
+    respondWrite(res, 201, { row }, audit, entryFor({ count: 1, outcome: "ok", pk, columns }));
   } catch (error) {
-    sendJson(res, 400, { error: (error as Error).message });
+    respondWrite(
+      res,
+      400,
+      { error: (error as Error).message },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "db-error", ...(extractSqlState(error) ? { code: extractSqlState(error) } : {}) }),
+    );
   }
 }
 
@@ -1220,14 +1376,17 @@ async function handleDeleteRow(
   res: import("node:http").ServerResponse,
   resolved: ResolvedSchema,
   db: StudioDb,
+  audit: AuditContext,
 ): Promise<void> {
   const tableName = decodeURIComponent(encodedTableName);
+  const entryFor = (rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">) =>
+    buildAuditEntry("delete", tableName, audit.session, rest);
 
   let body: { pk?: Record<string, unknown> };
   try {
     body = JSON.parse((await readBody(req)) || "{}");
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON body" });
+    respondWrite(res, 400, { error: "Invalid JSON body" }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
     return;
   }
   const pkInput = body.pk ?? {};
@@ -1237,7 +1396,7 @@ async function handleDeleteRow(
     target = resolveWriteTarget(resolved, tableName, []);
   } catch (error) {
     if (error instanceof WriteTargetError) {
-      sendJson(res, 400, { error: error.message });
+      respondWrite(res, 400, { error: error.message }, audit, entryFor({ count: 0, outcome: "error", reason: "invalid-request" }));
       return;
     }
     throw error;
@@ -1245,15 +1404,20 @@ async function handleDeleteRow(
 
   const missingPk = target.pk.filter((c) => !(c.name in pkInput));
   if (missingPk.length > 0) {
-    sendJson(res, 400, {
-      error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}`,
-    });
+    respondWrite(
+      res,
+      400,
+      { error: `Missing primary key value(s): ${missingPk.map((c) => c.name).join(", ")}` },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "invalid-request" }),
+    );
     return;
   }
 
   const whereParams = target.pk.map((c) => pkInput[c.name]);
   const whereClauses = target.pk.map((c, i) => `"${c.dbName}" = $${i + 1}`);
   const sql = `DELETE FROM ${target.quotedTable} WHERE ${whereClauses.join(" AND ")}`;
+  const pk = Object.fromEntries(target.pk.map((c) => [c.name, formatPkValue(pkInput[c.name])]));
 
   try {
     const result = await db.writable(async (query) => {
@@ -1266,12 +1430,24 @@ async function handleDeleteRow(
       return { deleted: true };
     });
     if (!result.deleted) {
-      sendJson(res, 404, { error: "No row matched the given primary key" });
+      respondWrite(
+        res,
+        404,
+        { error: "No row matched the given primary key" },
+        audit,
+        entryFor({ count: 0, outcome: "error", reason: "not-found", pk }),
+      );
       return;
     }
-    sendJson(res, 200, { ok: true });
+    respondWrite(res, 200, { ok: true }, audit, entryFor({ count: 1, outcome: "ok", pk }));
   } catch (error) {
-    sendJson(res, 400, { error: (error as Error).message });
+    respondWrite(
+      res,
+      400,
+      { error: (error as Error).message },
+      audit,
+      entryFor({ count: 0, outcome: "error", reason: "db-error", ...(extractSqlState(error) ? { code: extractSqlState(error) } : {}) }),
+    );
   }
 }
 
