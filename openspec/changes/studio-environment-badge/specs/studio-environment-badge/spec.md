@@ -97,22 +97,25 @@ The system MUST reject a structurally invalid `--env`/`INDIGODB_ENV` value — a
 empty string, a value longer than 32 UTF-16 code units, or a value containing any character below
 U+0020 or U+007F DEL — by exiting non-zero before the server binds. Interior control characters are
 rejected because they corrupt the startup log line; an unfamiliar *name* is never a reason to
-reject. The error message MUST name `--env` and `INDIGODB_ENV` as the source of
-the offending value. The system MUST NOT reject a value for being unrecognised.
+reject. The error message MUST name whichever source the offending value actually
+came from — `--env` when the flag supplied it, `INDIGODB_ENV` when the environment variable did
+— so the operator knows where to look. It need not name both. The system MUST NOT reject a value for being unrecognised.
 
 #### Scenario: An empty or whitespace-only value is rejected at startup
 
 - GIVEN `--env ""` or `--env "   "` is passed
 - WHEN the operator starts `indigodb studio`
 - THEN the process exits non-zero before binding
-- AND the error message names `--env` / `INDIGODB_ENV` as the source of the invalid value
+- AND the error message names the source the value came from (`--env` for a flag,
+  `INDIGODB_ENV` for the environment variable)
 
 #### Scenario: An over-length value is rejected at startup
 
 - GIVEN `--env` is passed a value longer than 32 UTF-16 code units after trimming
 - WHEN the operator starts `indigodb studio`
 - THEN the process exits non-zero before binding
-- AND the error message names `--env` / `INDIGODB_ENV` as the source of the invalid value
+- AND the error message names the source the value came from (`--env` for a flag,
+  `INDIGODB_ENV` for the environment variable)
 - AND a value of exactly 32 code units is ACCEPTED (boundary is inclusive)
 
 #### Scenario: An interior control character is rejected at startup
@@ -121,7 +124,8 @@ the offending value. The system MUST NOT reject a value for being unrecognised.
   `.env` line)
 - WHEN the operator starts `indigodb studio`
 - THEN the process exits non-zero before binding
-- AND the error message names `--env` / `INDIGODB_ENV` as the source of the invalid value
+- AND the error message names the source the value came from (`--env` for a flag,
+  `INDIGODB_ENV` for the environment variable)
 
 ### Requirement: Absent label renders no badge
 
