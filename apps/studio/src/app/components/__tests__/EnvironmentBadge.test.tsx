@@ -104,10 +104,9 @@ describe('EnvironmentBadge', () => {
     // The i18n context prefix renders as the raw dotted key in this test env
     // (no i18n instance configured) and must still be present as real content.
     expect(screen.getByText('environment.badge_aria', { exact: false })).toBeInTheDocument();
-    // Proxy for "the accessible name contains the environment value": with no
-    // aria-label present, the accessible-name algorithm falls back to the
-    // element's text content, so asserting the value is part of textContent
-    // proves it reaches the accessible name.
-    expect(badge.textContent).toContain('production');
+    // Not a proxy: `toHaveAccessibleName` (jest-dom v6) runs the real
+    // accessible-name computation, so this asserts what assistive tech will
+    // actually announce — the environment value must be part of it.
+    expect(badge).toHaveAccessibleName(/production/);
   });
 });
