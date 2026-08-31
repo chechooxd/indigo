@@ -18,7 +18,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/studio-server.mjs && node test/studio-write.mjs && node test/studio-pagination.mjs && node test/studio-auth.mjs && node test/studio-readonly.mjs && node test/studio-readonly-resolution.mjs && node test/studio-query-resolution.mjs && node test/studio-query-guardrails.mjs && node test/pull.mjs && node test/preflight.mjs && node test/realtime-secret-preflight.mjs && node test/studio-auth-preflight.mjs && node test/migrate-runner.mjs"
+    "test": "node test/studio-server.mjs && node test/studio-write.mjs && node test/studio-pagination.mjs && node test/studio-auth.mjs && node test/studio-readonly.mjs && node test/studio-readonly-resolution.mjs && node test/studio-query-resolution.mjs && node test/studio-query-guardrails.mjs && node test/studio-query-timeout-pg.mjs && node test/pull.mjs && node test/preflight.mjs && node test/realtime-secret-preflight.mjs && node test/studio-auth-preflight.mjs && node test/migrate-runner.mjs"
   },
   "dependencies": {
     "@indigodb/core": "workspace:*",
