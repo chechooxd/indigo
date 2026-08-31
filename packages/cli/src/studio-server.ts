@@ -79,6 +79,15 @@ export interface StudioOptions {
    * `/api/query` then runs exactly as it did before this change.
    */
   queryRowCap?: number;
+  /**
+   * Purely informational environment label (e.g. `"production"`), resolved
+   * once by `resolveStudioEnvironment` (util.ts) and threaded through
+   * unchanged. `undefined` (the default) is a structural no-op: the probe
+   * reports `environment: null` and the Studio badge renders nothing. This
+   * value is NEVER read by any auth/read-only/guardrail decision — it gates
+   * nothing.
+   */
+  environment?: string;
 }
 
 /**
@@ -703,6 +712,10 @@ export async function startStudio(
   // default) is a structural no-op on every request path.
   const readOnly = options.readOnly === true;
 
+  // Purely informational — `null` (the wire/store default) when unset.
+  // Never read by any auth/read-only/guardrail decision below.
+  const environment = options.environment ?? null;
+
   // `boundPort` starts as the requested port and is updated once `listen`
   // resolves the actual bound port — needed for `port: 0` (ephemeral, used
   // by tests). Captured by reference, so the request handler below always
@@ -757,7 +770,7 @@ export async function startStudio(
       if (path === "/api/auth/status" && req.method === "GET") {
         const authRequired = auth !== null;
         const authenticated = auth !== null && auth.verify(req.headers.cookie);
-        sendJson(res, 200, { authRequired, authenticated, readOnly, queryTimeoutMs, queryRowCap });
+        sendJson(res, 200, { authRequired, authenticated, readOnly, queryTimeoutMs, queryRowCap, environment });
         return;
       }
 
@@ -990,6 +1003,7 @@ export async function startStudio(
   console.log(`  URL:    http://${actualHost}:${boundPort}`);
   console.log(`  Auth:   ${auth ? "enabled (session password required)" : "disabled (no password configured)"}`);
   console.log(`  Read-only: ${readOnly ? "on" : "off"}`);
+  console.log(`  Environment: ${environment ?? "(unset)"}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
   }

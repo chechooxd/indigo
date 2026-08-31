@@ -293,6 +293,55 @@ export function resolveQueryRowCap(option: string | undefined, env: string | und
   return resolveGuardrailValue(option, env, 1000, "--query-row-cap", "INDIGODB_STUDIO_QUERY_ROW_CAP");
 }
 
+/**
+ * `indigodb studio`'s environment-label resolution: `--env` pairs with
+ * `INDIGODB_ENV`, `--env` taking precedence. Pure and THROWS (never
+ * `process.exit`) on a structurally invalid value, naming the offending
+ * source (`--env` or `INDIGODB_ENV`) so `index.ts`'s `studio` action can
+ * catch, print, and exit 1 itself — mirrors `resolveGuardrailValue`'s
+ * message shape and the "resolvers are pure and throw" design decision.
+ *
+ * The label set is deliberately OPEN: `development`/`staging`/`production`
+ * get distinct badge treatment downstream, but any other structurally valid
+ * string is accepted and returned verbatim — this function never rejects a
+ * value for being *unrecognised*, only for being *structurally invalid*
+ * (empty after trim, over 32 UTF-16 code units, or containing an interior
+ * C0/DEL control character). Trimmed before both the length/control-char
+ * check and the returned value, but NOT case-folded — the operator's own
+ * casing is preserved verbatim; only the UI's recognition matching does
+ * `.toLowerCase()`.
+ *
+ * Returns `undefined` when both `option` and `env` are absent — never a
+ * default label such as `"development"`.
+ */
+export function resolveStudioEnvironment(
+  option: string | undefined,
+  env: string | undefined,
+): string | undefined {
+  if (option !== undefined) return validateEnvironmentLabel(option, "--env");
+  if (env !== undefined) return validateEnvironmentLabel(env, "INDIGODB_ENV");
+  return undefined;
+}
+
+function validateEnvironmentLabel(raw: string, sourceName: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`${sourceName} must not be empty, got: ${JSON.stringify(raw)}`);
+  }
+  if (trimmed.length > 32) {
+    throw new Error(
+      `${sourceName} must be at most 32 characters after trimming, got ${trimmed.length}: ${JSON.stringify(raw)}`,
+    );
+  }
+  for (const ch of trimmed) {
+    const code = ch.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error(`${sourceName} must not contain control characters, got: ${JSON.stringify(raw)}`);
+    }
+  }
+  return trimmed;
+}
+
 export function assertStudioAuthForHost(host: string, password: string | undefined): void {
   const loopback = STUDIO_LOOPBACK_HOSTS.has(host);
   if (!loopback && !password) {
