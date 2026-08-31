@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ENVIRONMENTS } from '../constants';
+import { EnvironmentBadge } from './EnvironmentBadge';
 
 interface HeaderProps {
   currentCluster: string;
@@ -95,6 +96,8 @@ export default function Header({ currentCluster, onClusterChange, titleSuffix }:
       </div>
 
       <div className="flex items-center gap-3">
+        <EnvironmentBadge />
+
         {/* Connection Diagnostics Badge */}
         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 font-semibold uppercase tracking-wider">
           <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-pulse"></span>

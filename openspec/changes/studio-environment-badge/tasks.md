@@ -99,13 +99,13 @@ closed below (Gap A); everything else has a covering row.
 
 ## Phase 3: Frontend contracts — `apps/studio/src/lib/api.ts`, `useAuthStore.ts`
 
-- [ ] 3.1 RED: extend `apps/studio/src/store/__tests__/useAuthStore.test.ts` for row 24: default
+- [x] 3.1 RED: extend `apps/studio/src/store/__tests__/useAuthStore.test.ts` for row 24: default
       `environment` is `null`; `checkStatus` adopts a probe value; a fail-soft (`null`) probe
       leaves it `null` and never throws.
-- [ ] 3.2 GREEN: widen `AuthStatus` in `api.ts` with `environment: string | null`.
-- [ ] 3.3 GREEN: add `environment: string | null` (default `null`) to `useAuthStore.ts`, adopted
+- [x] 3.2 GREEN: widen `AuthStatus` in `api.ts` with `environment: string | null`.
+- [x] 3.3 GREEN: add `environment: string | null` (default `null`) to `useAuthStore.ts`, adopted
       in `checkStatus`.
-- [ ] 3.4 REQUIRED fixup: add `environment` to every existing `fetchAuthStatus`/`AuthStatus` mock
+- [x] 3.4 REQUIRED fixup: add `environment` to every existing `fetchAuthStatus`/`AuthStatus` mock
       literal in `useAuthStore.test.ts` and `App.test.tsx` (including the inline `resolveStatus`
       promise type near line 50) — `AuthStatus` gained a required field, so `tsc -b --noEmit`
       (both `pnpm lint` and `pnpm build`) fails until every literal is updated. Do this before
@@ -113,27 +113,27 @@ closed below (Gap A); everything else has a covering row.
 
 ## Phase 4: Badge + wiring — `apps/studio/src/app/components/`
 
-- [ ] 4.1 RED: create `EnvironmentBadge.test.tsx` covering rows 19–23: `environment: null` →
+- [x] 4.1 RED: create `EnvironmentBadge.test.tsx` covering rows 19–23: `environment: null` →
       nothing rendered (no `environment-badge` testid); each recognised label renders its own
       tone class, production most prominent; `qa` renders verbatim with the neutral tone; case-
       insensitive `"Production"` renders verbatim **and** picks the production tone; a 32-char
       label carries the truncation class + full value in `title`, and asserts no `role="status"`
       on the badge. Assert on i18n keys (`t()` returns raw dotted keys in this test env).
-- [ ] 4.2 RED: in `App.test.tsx`, add the collision regression named in design — `readOnly: true`
+- [x] 4.2 RED: in `App.test.tsx`, add the collision regression named in design — `readOnly: true`
       **and** `environment` set together: `getByRole('status')` still resolves uniquely to
       `ReadOnlyBanner`, and the environment badge (`data-testid`) is present too.
-- [ ] 4.3 GREEN: create `EnvironmentBadge.tsx` — `<span data-testid="environment-badge"
+- [x] 4.3 GREEN: create `EnvironmentBadge.tsx` — `<span data-testid="environment-badge"
       aria-label={t('environment.badge_aria')} title={label}>`, no `role="status"`; a frozen
       `RECOGNISED_TONES: Record<string, string>` of **complete static** Tailwind class strings
       (production rose/solid, staging amber/outlined, development zinc/muted) plus `NEUTRAL_TONE`,
       looked up as `RECOGNISED_TONES[label.trim().toLowerCase()] ?? NEUTRAL_TONE` — never
       interpolate a class name, Tailwind v4 JIT cannot see it; `max-w-[16ch] truncate`.
-- [ ] 4.4 GREEN: render `<EnvironmentBadge />` first in `Header.tsx`'s right-hand chip group,
+- [x] 4.4 GREEN: render `<EnvironmentBadge />` first in `Header.tsx`'s right-hand chip group,
       reading `useAuthStore` directly (no prop drilling).
-- [ ] 4.5 Add `environment.badge_aria` (+ any hint copy) to both
+- [x] 4.5 Add `environment.badge_aria` (+ any hint copy) to both
       `apps/studio/src/i18n/locales/en.json` and `es.json` in this same task.
 
 ## Phase 5: Verification
 
-- [ ] 5.1 Run `pnpm --filter @indigodb/cli test`, `pnpm --filter @indigodb/studio test`,
+- [x] 5.1 Run `pnpm --filter @indigodb/cli test`, `pnpm --filter @indigodb/studio test`,
       `pnpm build`, `pnpm lint` locally (CI is disabled) before each PR merges.
