@@ -230,6 +230,69 @@ export function resolveStudioReadOnly(optionReadOnly: boolean | undefined, envVa
   return optionReadOnly === true || isReadOnlyEnv(envValue);
 }
 
+/**
+ * Exact-match integer parser shared by both query-guardrail resolvers below:
+ * `/^\d+$/` only — no leading/trailing whitespace, no sign, no decimal
+ * point, no scientific notation, no `Infinity`. Returns `null` for
+ * `undefined` (absent) or anything that fails the exact match, never `NaN`.
+ */
+export function parseGuardrailInt(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  if (!/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+/**
+ * Precedence resolver shared by `resolveQueryTimeoutMs`/`resolveQueryRowCap`:
+ * CLI flag > environment variable > built-in default. A present-but-malformed
+ * flag or env value THROWS (never `process.exit`), naming the offending
+ * input, so `index.ts`'s `studio` action — the only caller that needs to
+ * exit the process — can catch, print, and exit 1 itself
+ * (design.md "resolvers are pure and throw" decision).
+ */
+function resolveGuardrailValue(
+  option: string | undefined,
+  env: string | undefined,
+  defaultValue: number,
+  flagName: string,
+  envName: string,
+): number {
+  if (option !== undefined) {
+    const parsed = parseGuardrailInt(option);
+    if (parsed === null) {
+      throw new Error(`${flagName} must be a non-negative integer, got: ${JSON.stringify(option)}`);
+    }
+    return parsed;
+  }
+  if (env !== undefined) {
+    const parsed = parseGuardrailInt(env);
+    if (parsed === null) {
+      throw new Error(`${envName} must be a non-negative integer, got: ${JSON.stringify(env)}`);
+    }
+    return parsed;
+  }
+  return defaultValue;
+}
+
+/**
+ * `indigodb studio`'s statement-timeout resolution: `--query-timeout` pairs
+ * with `INDIGODB_STUDIO_QUERY_TIMEOUT_MS`. Default `30000` (30s). `0`
+ * disables the guardrail entirely — Postgres already spells "no statement
+ * timeout" as `statement_timeout = 0`.
+ */
+export function resolveQueryTimeoutMs(option: string | undefined, env: string | undefined): number {
+  return resolveGuardrailValue(option, env, 30000, "--query-timeout", "INDIGODB_STUDIO_QUERY_TIMEOUT_MS");
+}
+
+/**
+ * `indigodb studio`'s `/api/query` row-cap resolution: `--query-row-cap`
+ * pairs with `INDIGODB_STUDIO_QUERY_ROW_CAP`. Default `1000`. `0` disables
+ * the guardrail entirely (uncapped, matching pre-change behavior).
+ */
+export function resolveQueryRowCap(option: string | undefined, env: string | undefined): number {
+  return resolveGuardrailValue(option, env, 1000, "--query-row-cap", "INDIGODB_STUDIO_QUERY_ROW_CAP");
+}
+
 export function assertStudioAuthForHost(host: string, password: string | undefined): void {
   const loopback = STUDIO_LOOPBACK_HOSTS.has(host);
   if (!loopback && !password) {

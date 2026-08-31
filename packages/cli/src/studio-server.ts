@@ -63,6 +63,22 @@ export interface StudioOptions {
    * object — this is a top-level server posture, not a query mode.
    */
   readOnly?: boolean;
+  /**
+   * Statement-timeout guardrail (ms), applied via `readOnlyPreamble` to both
+   * `/api/query` and `/api/tables/:name`. `undefined` falls back to `30000`
+   * — the same built-in default `resolveQueryTimeoutMs` (util.ts) applies at
+   * the CLI layer, kept independently here so `startStudio` remains directly
+   * testable/usable without going through the CLI's option resolution.
+   * `0` disables the guardrail (see `readOnlyPreamble`).
+   */
+  queryTimeoutMs?: number;
+  /**
+   * Row cap applied only to `POST /api/query`'s cursor-eligible statements
+   * (see `isCursorEligible`). `undefined` falls back to `1000`, mirroring
+   * `resolveQueryRowCap`'s default. `0` disables the cursor path entirely —
+   * `/api/query` then runs exactly as it did before this change.
+   */
+  queryRowCap?: number;
 }
 
 /**
@@ -110,13 +126,69 @@ export interface StudioDb {
   close(): Promise<void>;
 }
 
+/**
+ * Ordered statements issued at the top of every `db.readOnly` transaction,
+ * on both `createPgDb` (production) and `studio-harness.mjs`'s PGlite
+ * adapter (design.md "shared exported preamble builder" decision — without
+ * this export the production statement-timeout line would have zero runtime
+ * test coverage, since the harness injects its own `StudioDb`).
+ *
+ * `timeoutMs` is always a resolver-validated integer (`resolveQueryTimeoutMs`
+ * in util.ts, or `StudioOptions.queryTimeoutMs`'s own fallback) — never raw
+ * request input — so string-interpolating it here is safe. `0` is not
+ * special-cased: `SET LOCAL statement_timeout = 0` is itself how Postgres
+ * spells "no statement timeout", so this still emits that exact line.
+ */
+export function readOnlyPreamble(timeoutMs: number): string[] {
+  return ["SET TRANSACTION READ ONLY", `SET LOCAL statement_timeout = ${timeoutMs}`];
+}
+
+/**
+ * Capability classifier for the `/api/query` row-cap cursor path: after
+ * stripping leading whitespace, SQL line comments, block comments and
+ * leading `(`, does
+ * the remaining text start with `select`/`with`/`table`/`values`?
+ *
+ * `isReadOnlyQuery` deliberately admits `EXPLAIN`/`SHOW`/`TABLE`/`VALUES` (it
+ * dropped its old `^(select|with)` prefix test — see that function's
+ * comment), and `DECLARE CURSOR FOR <sql>` only accepts a genuine *query*.
+ * This classifier exists so a cursor is attempted only for statements that
+ * accept one. It is a CAPABILITY test, never a safety boundary: a false
+ * negative just degrades to today's uncapped-but-timeout-bounded behavior
+ * (`/api/query` runs `sql` directly), never a rejection of a valid
+ * statement — see the threat matrix in design.md.
+ */
+export function isCursorEligible(sql: string): boolean {
+  let rest = sql;
+  for (;;) {
+    const trimmed = rest.replace(/^\s+/, "");
+    if (trimmed.startsWith("--")) {
+      const newline = trimmed.indexOf("\n");
+      rest = newline === -1 ? "" : trimmed.slice(newline + 1);
+      continue;
+    }
+    if (trimmed.startsWith("/*")) {
+      const close = trimmed.indexOf("*/");
+      rest = close === -1 ? "" : trimmed.slice(close + 2);
+      continue;
+    }
+    if (trimmed.startsWith("(")) {
+      rest = trimmed.slice(1);
+      continue;
+    }
+    rest = trimmed;
+    break;
+  }
+  return /^(select|with|table|values)\b/i.test(rest);
+}
+
 /** Production `StudioDb`: `pg.Pool` for metadata reads, plus a small dedicated
  * pool (`max: 4`) for read-only work, and a third small dedicated pool
  * (`max: 4`) for writable work. Three separate pools so a hung read-only
  * query never starves `/api/schema` or `/api/tables/:name`, and so a write
  * can never run on a connection that ever issued `SET TRANSACTION READ
  * ONLY`. */
-function createPgDb(connectionString: string): StudioDb {
+function createPgDb(connectionString: string, queryTimeoutMs: number): StudioDb {
   const pool = new pg.Pool({ connectionString });
   const readOnlyPool = new pg.Pool({ connectionString, max: 4 });
   const writePool = new pg.Pool({ connectionString, max: 4 });
@@ -133,7 +205,9 @@ function createPgDb(connectionString: string): StudioDb {
       const client = await readOnlyPool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SET TRANSACTION READ ONLY");
+        for (const stmt of readOnlyPreamble(queryTimeoutMs)) {
+          await client.query(stmt);
+        }
         return await fn(async (sql, params) => toResult(await client.query(sql, params)));
       } finally {
         // Always ROLLBACK, never COMMIT: this path exists to run read-only
@@ -580,12 +654,40 @@ function sendJson(res: import("node:http").ServerResponse, status: number, body:
   res.end(payload);
 }
 
+/** True when `error` carries Postgres's `statement_timeout` SQLSTATE (`57014`). */
+function isStatementTimeoutError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === "57014";
+}
+
+/**
+ * The exact guidance message both read-only routes surface on a
+ * `statement_timeout` abort — no SQL, no connection details, no stack (see
+ * design.md's "57014 is translated" decision and the spec's `Interfaces`
+ * contract). Applied to BOTH `/api/query` and `/api/tables/:name`: the
+ * spec's "statement_timeout is enforced on both read-only routes"
+ * requirement names a 4xx on either path as a MUST, so both catch this
+ * error identically rather than leaving `/api/tables/:name` to fall through
+ * to the generic 500 handler.
+ */
+function statementTimeoutMessage(queryTimeoutMs: number): string {
+  return (
+    `Query exceeded the ${queryTimeoutMs}ms statement timeout. ` +
+    `Raise it with --query-timeout or INDIGODB_STUDIO_QUERY_TIMEOUT_MS.`
+  );
+}
+
 export async function startStudio(
   options: StudioOptions,
 ): Promise<{ port: number; host: string; close(): Promise<void> }> {
   const { resolved, source, connectionString, port, open = true } = options;
   const host = options.host ?? "127.0.0.1";
-  const db = options.db ?? createPgDb(connectionString);
+  // Mirrors `resolveQueryTimeoutMs`/`resolveQueryRowCap`'s own built-in
+  // defaults (util.ts) so a caller of `startStudio` that skips the CLI's
+  // option resolution entirely (tests, embedders) still gets guardrails on
+  // by default, matching the spec's "guardrails on by default" requirement.
+  const queryTimeoutMs = options.queryTimeoutMs ?? 30000;
+  const queryRowCap = options.queryRowCap ?? 1000;
+  const db = options.db ?? createPgDb(connectionString, queryTimeoutMs);
   const distDir = resolveStudioDist();
   const publicSchema = redactSchema(resolved);
   const publicSource = redactSource(source);
@@ -655,7 +757,7 @@ export async function startStudio(
       if (path === "/api/auth/status" && req.method === "GET") {
         const authRequired = auth !== null;
         const authenticated = auth !== null && auth.verify(req.headers.cookie);
-        sendJson(res, 200, { authRequired, authenticated, readOnly });
+        sendJson(res, 200, { authRequired, authenticated, readOnly, queryTimeoutMs, queryRowCap });
         return;
       }
 
@@ -743,7 +845,9 @@ export async function startStudio(
           .join(", ");
         const columns = target.table.columns.map((c) => c.name);
 
-        const result = await db.readOnly(async (query) => {
+        let result;
+        try {
+          result = await db.readOnly(async (query) => {
           const countResult = await query(
             `SELECT count(*)::int AS n FROM ${target.quotedTable}`,
           );
@@ -789,7 +893,14 @@ export async function startStudio(
           }
 
           return { columns, rows, nextCursor, prevCursor, total, paginated: true };
-        });
+          });
+        } catch (error) {
+          if (isStatementTimeoutError(error)) {
+            sendJson(res, 400, { error: statementTimeoutMessage(queryTimeoutMs) });
+            return;
+          }
+          throw error;
+        }
 
         sendJson(res, 200, result);
         return;
@@ -803,9 +914,30 @@ export async function startStudio(
           return;
         }
         try {
-          const result = await db.readOnly((query) => query(sql));
-          sendJson(res, 200, { columns: result.fields.map((f) => f.name), rows: result.rows });
+          if (queryRowCap > 0 && isCursorEligible(sql)) {
+            // Row cap via cursor: fetch `cap + 1` so a single extra row
+            // distinguishes "exactly cap rows" from "more than cap rows"
+            // without a second round trip (design.md "row cap via DECLARE
+            // cursor" decision). Never closed explicitly — `db.readOnly`
+            // always rolls back its transaction.
+            const fetched = await db.readOnly(async (query) => {
+              await query(`DECLARE _indigo_query_cursor NO SCROLL CURSOR FOR ${sql}`);
+              return query(`FETCH FORWARD ${queryRowCap + 1} FROM _indigo_query_cursor`);
+            });
+            const truncated = fetched.rows.length > queryRowCap;
+            const rows = truncated ? fetched.rows.slice(0, queryRowCap) : fetched.rows;
+            sendJson(res, 200, { columns: fetched.fields.map((f) => f.name), rows, truncated });
+          } else {
+            // queryRowCap: 0 (disabled) or a cursor-ineligible statement
+            // (EXPLAIN/SHOW/etc.) — run exactly as before this change.
+            const result = await db.readOnly((query) => query(sql));
+            sendJson(res, 200, { columns: result.fields.map((f) => f.name), rows: result.rows, truncated: false });
+          }
         } catch (error) {
+          if (isStatementTimeoutError(error)) {
+            sendJson(res, 400, { error: statementTimeoutMessage(queryTimeoutMs) });
+            return;
+          }
           sendJson(res, 400, { error: (error as Error).message });
         }
         return;
