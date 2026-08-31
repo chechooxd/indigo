@@ -96,14 +96,50 @@ fallback anyway.
 
 ### Decision: no `role="status"` on the badge
 
-**Choice**: `<span data-testid="environment-badge" aria-label={t('environment.badge_aria')}
-title={label}>`. No ARIA live region.
+**Choice**: `<span data-testid="environment-badge" title={label}>`. No ARIA live region.
 
 **Rationale**: two reasons, both load-bearing. Semantically it is persistent chrome present from
 first paint, not an event to announce. Mechanically,
 `apps/studio/src/app/__tests__/App.test.tsx` asserts `screen.getByRole('status')` (singular) for
 `ReadOnlyBanner`; a second `status` node makes that throw the moment both are active — exactly the
 read-only-production combination this change must support.
+
+### Decision: accessible name from real content (`sr-only` prefix + verbatim value), not `aria-label`
+
+**Corrected during apply.** The badge originally shipped as
+`<span data-testid="environment-badge" aria-label={t('environment.badge_aria')} title={label}>`
+with the environment string as the element's text content. On an element that already has text
+content, `aria-label` **overrides** that content when the accessible name is computed — so
+assistive tech announced only the static i18n key ("Environment label for this Studio instance")
+and never the actual value (`production`, `staging`, `qa`). That is exactly the one piece of
+information this badge exists to convey, so the original shape silently failed its own purpose
+for screen-reader users.
+
+**Choice**: drop `aria-label` entirely. Give the badge a visually-hidden `sr-only` span carrying
+`t('environment.badge_aria')` as a context prefix, followed by the verbatim environment text as a
+sibling text node:
+
+```tsx
+<span data-testid="environment-badge" title={environment} className={`... ${tone}`}>
+  <span className="sr-only">{t('environment.badge_aria')}: </span>
+  {environment}
+</span>
+```
+
+With no `aria-label` present, the accessible name falls back to the element's text content, which
+now includes both the prefix and the environment value — so the announced name always contains
+the actual label. `sr-only` is Tailwind v4's built-in utility, already used elsewhere in this
+codebase (`TableBrowserPage.tsx`'s pagination `<label>`), so nothing new was introduced.
+
+**Alternatives considered**: `aria-describedby` pointing at a hidden node (keeps `aria-label` but
+adds a second announced string — more complex than needed since the visible text already carries
+the value); dropping the context prefix entirely and relying on the bare visible text (loses the
+"this is an environment indicator" framing for AT users that sighted users get for free from
+surrounding chrome).
+
+**Rationale**: the accessible name MUST contain the actual environment string. Composing it from
+real content rather than `aria-label` is the only shape that satisfies that constraint while
+keeping the verbatim, case-preserved rendering (`Production` stays `Production`) untouched.
 
 ## Data Flow
 
@@ -135,7 +171,7 @@ Nothing downstream of the store reads `environment`. The read-only gate, `/api/r
 | `packages/cli/package.json` | Modify | Append both suites to the `test` chain |
 | `apps/studio/src/lib/api.ts` | Modify | `AuthStatus.environment: string \| null` |
 | `apps/studio/src/store/useAuthStore.ts` | Modify | `environment: string \| null` (default `null`), adopted in `checkStatus` |
-| `apps/studio/src/app/components/EnvironmentBadge.tsx` | Create | The badge; tone map + neutral fallback |
+| `apps/studio/src/app/components/EnvironmentBadge.tsx` | Create | The badge; tone map + neutral fallback; always visible (no responsive `hidden`); accessible name from `sr-only` prefix + verbatim value, not `aria-label` (corrected during apply, see Decision above) |
 | `apps/studio/src/app/components/__tests__/EnvironmentBadge.test.tsx` | Create | Component suite |
 | `apps/studio/src/app/components/Header.tsx` | Modify | Render `<EnvironmentBadge />` first in the right-hand chip group |
 | `apps/studio/src/i18n/locales/{en,es}.json` | Modify | `environment.badge_aria` (+ any hint copy), both locales in the same task |
@@ -203,6 +239,8 @@ three shapes that have slipped past this epic before: **symmetric pairs** (rows 
 | 23 | Component | A 32-char label carries the truncation class and the full `title`; the badge does not use `role="status"` | same |
 | 24 | Component | Store default is `null`; `checkStatus` adopts a probe value; a fail-soft (`null`) probe leaves it `null` and does not throw | `useAuthStore.test.ts` |
 | 25 | Component | With `readOnly: true` **and** an environment set, `getByRole('status')` still resolves uniquely to the banner and the badge is present too | `App.test.tsx` (the collision regression) |
+| 26 | Component | The badge never applies a responsive `hidden` utility class (proxy — jsdom does not evaluate media queries, so this checks the rendered class list rather than actual viewport visibility) | `EnvironmentBadge.test.tsx` (added in corrective batch) |
+| 27 | Component | No `aria-label` attribute; the `sr-only` i18n-key prefix is present as real content and the environment value is part of `textContent` (proxy for "the accessible name contains the environment value" — no `aria-label` means the accessible name falls back to text content) | `EnvironmentBadge.test.tsx` (added in corrective batch) |
 
 Component tests assert on i18n **keys**, not copy — `apps/studio`'s test environment has no i18n
 instance, so `t()` returns the raw dotted key.

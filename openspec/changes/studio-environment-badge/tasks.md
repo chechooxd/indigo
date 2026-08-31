@@ -132,6 +132,20 @@ closed below (Gap A); everything else has a covering row.
       reading `useAuthStore` directly (no prop drilling).
 - [x] 4.5 Add `environment.badge_aria` (+ any hint copy) to both
       `apps/studio/src/i18n/locales/en.json` and `es.json` in this same task.
+- [x] 4.6 CORRECTIVE (post-review, same branch): fix two committed defects in
+      `EnvironmentBadge.tsx` found during PR 2 review. (a) Drop `hidden sm:` from the badge's
+      className — the badge was invisible below the `sm` breakpoint, contradicting its purpose as
+      a persistent, always-visible signal (`ReadOnlyBanner` is never responsively hidden either);
+      width stays bounded by the existing `max-w-[16ch] truncate`. (b) Remove `aria-label` (it
+      overrides text-content-derived accessible names, so AT users never heard the actual
+      environment value) and replace it with an `sr-only` context-prefix span + the verbatim
+      label as real content, so the accessible name is composed from real content and always
+      contains the environment string. RED: two new tests in `EnvironmentBadge.test.tsx` —
+      no `hidden` utility in the rendered class list; no `aria-label` attribute plus the
+      environment value present in `textContent`. Both observed failing against the pre-fix
+      component before the fix landed. GREEN: both pass after the component fix; full
+      `EnvironmentBadge.test.tsx` (9/9), `App.test.tsx` (8/8, collision regression unaffected),
+      and the full `apps/studio` suite (20 files / 123 tests) all pass.
 
 ## Phase 5: Verification
 

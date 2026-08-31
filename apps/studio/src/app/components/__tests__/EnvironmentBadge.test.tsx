@@ -83,11 +83,31 @@ describe('EnvironmentBadge', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('carries an aria-label sourced from the i18n key (raw key in this test env)', () => {
+  it('never applies a responsive "hidden" utility class (proxy — jsdom does not evaluate media queries)', () => {
     useAuthStore.setState({ environment: 'production' });
     render(<EnvironmentBadge />);
 
     const badge = screen.getByTestId('environment-badge');
-    expect(badge).toHaveAttribute('aria-label', 'environment.badge_aria');
+    const classes = badge.className.split(/\s+/);
+    expect(classes).not.toContain('hidden');
+    expect(classes).toContain('inline-flex');
+  });
+
+  it('composes the accessible name from real content (i18n context prefix + the verbatim environment value), not aria-label', () => {
+    useAuthStore.setState({ environment: 'production' });
+    render(<EnvironmentBadge />);
+
+    const badge = screen.getByTestId('environment-badge');
+    // aria-label on an element with text content overrides that content when
+    // computing the accessible name — so the badge must not carry one.
+    expect(badge).not.toHaveAttribute('aria-label');
+    // The i18n context prefix renders as the raw dotted key in this test env
+    // (no i18n instance configured) and must still be present as real content.
+    expect(screen.getByText('environment.badge_aria', { exact: false })).toBeInTheDocument();
+    // Proxy for "the accessible name contains the environment value": with no
+    // aria-label present, the accessible-name algorithm falls back to the
+    // element's text content, so asserting the value is part of textContent
+    // proves it reaches the accessible name.
+    expect(badge.textContent).toContain('production');
   });
 });
