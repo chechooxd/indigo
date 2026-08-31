@@ -111,5 +111,8 @@
   "studio": {
     "sub_nav_query": "SQL Query Engine",
     "sub_nav_data": "Table Browser & Studio"
+  },
+  "readOnly": {
+    "banner": "Read-only mode — this Studio instance refuses all writes."
   }
 }

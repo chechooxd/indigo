@@ -29,12 +29,20 @@ describe('useAuthStore', () => {
   });
 
   it('checkStatus adopts the server-reported authRequired/authenticated values', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false });
 
     await useAuthStore.getState().checkStatus();
 
     expect(useAuthStore.getState().authRequired).toBe(true);
     expect(useAuthStore.getState().authenticated).toBe(false);
+  });
+
+  it('checkStatus adopts the server-reported readOnly value', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: true });
+
+    await useAuthStore.getState().checkStatus();
+
+    expect(useAuthStore.getState().readOnly).toBe(true);
   });
 
   it('checkStatus leaves state untouched when the status probe fails soft (null)', async () => {

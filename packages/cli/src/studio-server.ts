@@ -53,6 +53,16 @@ export interface StudioOptions {
    * gated, regardless of this option.
    */
   password?: string;
+  /**
+   * Global, server-side read-only mode: rejects every write to `/api/rows/`
+   * with `403` regardless of session auth. `undefined`/`false` (the default)
+   * is a structural no-op — the gate below never triggers.
+   *
+   * Naming note: unrelated to `StudioDb.readOnly()` above (a transaction
+   * helper on the database port). Same word, different type, different
+   * object — this is a top-level server posture, not a query mode.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -587,6 +597,10 @@ export async function startStudio(
   // logic.
   const auth: StudioAuth | null = options.password ? createStudioAuth(options.password) : null;
 
+  // Resolved ONCE at startup, exactly like `auth` above: `false` (the
+  // default) is a structural no-op on every request path.
+  const readOnly = options.readOnly === true;
+
   // `boundPort` starts as the requested port and is updated once `listen`
   // resolves the actual bound port — needed for `port: 0` (ephemeral, used
   // by tests). Captured by reference, so the request handler below always
@@ -624,12 +638,24 @@ export async function startStudio(
       }
     }
 
+    // ─── Read-only gate ─────────────────────────────────────────────────
+    // Method-agnostic: refuses every request under `/api/rows/` regardless
+    // of verb, so a future write route added under this prefix inherits the
+    // gate automatically instead of needing its own check. Runs strictly
+    // after the auth gate above (design.md: an unauthenticated write must
+    // answer 401, never 403 — the write route must not become an oracle for
+    // server posture). No DB connection or validation work happens here.
+    if (readOnly && path.startsWith("/api/rows/")) {
+      sendJson(res, 403, { error: "Studio is running in read-only mode" });
+      return;
+    }
+
     try {
       // ─── Auth routes ───────────────────────────────────────────────────
       if (path === "/api/auth/status" && req.method === "GET") {
         const authRequired = auth !== null;
         const authenticated = auth !== null && auth.verify(req.headers.cookie);
-        sendJson(res, 200, { authRequired, authenticated });
+        sendJson(res, 200, { authRequired, authenticated, readOnly });
         return;
       }
 
@@ -831,6 +857,7 @@ export async function startStudio(
   console.log(`  Tables: ${resolved.tables.length}`);
   console.log(`  URL:    http://${actualHost}:${boundPort}`);
   console.log(`  Auth:   ${auth ? "enabled (session password required)" : "disabled (no password configured)"}`);
+  console.log(`  Read-only: ${readOnly ? "on" : "off"}`);
   if (!distDir) {
     console.log(`  ⚠  Studio UI build not found — serving API only.`);
   }

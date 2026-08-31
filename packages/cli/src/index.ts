@@ -24,6 +24,7 @@ import {
   assertLogicalReplication,
   assertRealtimeSecretPresent,
   assertStudioAuthForHost,
+  resolveStudioReadOnly,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -297,10 +298,25 @@ program
     process.env.INDIGODB_STUDIO_HOST ?? "127.0.0.1",
   )
   .option("--no-open", "Do not open the browser automatically")
-  .action(async (options: { schema: string; port: string; host: string; open: boolean }) => {
+  .option(
+    "--read-only",
+    "Refuse every write to the Studio API (INSERT/UPDATE/DELETE), regardless of session auth. " +
+      "Defaults to INDIGODB_STUDIO_READONLY (exact match \"1\" or \"true\").",
+  )
+  .action(async (options: { schema: string; port: string; host: string; open: boolean; readOnly?: boolean }) => {
     loadEnv();
     const password = process.env.INDIGODB_STUDIO_PASSWORD;
     assertStudioAuthForHost(options.host, password);
+    // Resolved here, after `loadEnv()`, deliberately NOT as a commander
+    // option default like `--host` above: `--host`'s default is evaluated
+    // at module load, before `loadEnv()` runs, so a `.env` value never
+    // reaches it — acceptable for a bind address that fails loudly, but not
+    // for a guardrail that would otherwise fail open and silently.
+    // `resolveStudioReadOnly` (packages/cli/src/util.ts) is extracted so
+    // this exact resolution — `--read-only` OR exact-match
+    // `INDIGODB_STUDIO_READONLY` — is unit testable independent of
+    // commander's parsed options.
+    const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
     const { resolved, path: schemaPath } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
     await startStudio({
@@ -311,6 +327,7 @@ program
       host: options.host,
       open: options.open,
       password,
+      readOnly,
     });
   });
 

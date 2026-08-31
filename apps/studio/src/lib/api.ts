@@ -42,6 +42,7 @@ export function isBackendAvailable(): boolean {
 export interface AuthStatus {
   authRequired: boolean;
   authenticated: boolean;
+  readOnly: boolean;
 }
 
 export interface LoginResult {
