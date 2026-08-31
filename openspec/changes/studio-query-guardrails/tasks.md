@@ -68,19 +68,19 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: Frontend RED
 
-- [ ] 5.1 `useAuthStore.test.ts`: store holds `queryTimeoutMs`/`queryRowCap` from probe; standalone (no backend) falls back without throwing
-- [ ] 5.2 `QueryEnginePage` test: persistent cap/timeout hint renders from store
-- [ ] 5.3 `QueryEnginePage` test: truncation banner renders only when `truncated: true`
-- [ ] 5.4 `QueryEnginePage` test: 4xx timeout response renders a message naming the configured timeout (spec: "timeout error shown with actionable message" — **not in design's table; adding explicitly**)
-- [ ] 5.5 Add a static assertion test (grep-style or route-list check) that no cancel button, cancel route, or `pg_cancel_backend` reference exists anywhere in the diff (spec: "No cancel affordance exists" — **not in design's table; adding explicitly**)
+- [x] 5.1 `useAuthStore.test.ts`: store holds `queryTimeoutMs`/`queryRowCap` from probe; standalone (no backend) falls back without throwing
+- [x] 5.2 `QueryEnginePage` test: persistent cap/timeout hint renders from store
+- [x] 5.3 `QueryEnginePage` test: truncation banner renders only when `truncated: true`
+- [x] 5.4 `QueryEnginePage` test: 4xx timeout response renders a message naming the configured timeout (spec: "timeout error shown with actionable message" — **not in design's table; adding explicitly**)
+- [x] 5.5 Add a static assertion test (grep-style or route-list check) that no cancel button, cancel route, or `pg_cancel_backend` reference exists anywhere in the diff (spec: "No cancel affordance exists" — **not in design's table; adding explicitly**)
 
 ## Phase 6: Frontend GREEN
 
-- [ ] 6.1 Widen `AuthStatus`/`QueryResult` types in `apps/studio/src/lib/api.ts`
-- [ ] 6.2 Widen `useAuthStore.ts` to hold both guardrail values
-- [ ] 6.3 Implement hint + truncation banner + timeout message in `QueryEnginePage.tsx`
-- [ ] 6.4 Add hint/banner/timeout copy to `src/i18n/locales/{en,es}.json`
-- [ ] 6.5 Confirm Phase 5 tests pass (`pnpm --filter @indigodb/studio test`)
+- [x] 6.1 Widen `AuthStatus`/`QueryResult` types in `apps/studio/src/lib/api.ts`
+- [x] 6.2 Widen `useAuthStore.ts` to hold both guardrail values
+- [x] 6.3 Implement hint + truncation banner + timeout message in `QueryEnginePage.tsx`
+- [x] 6.4 Add hint/banner/timeout copy to `src/i18n/locales/{en,es}.json`
+- [x] 6.5 Confirm Phase 5 tests pass (`pnpm --filter @indigodb/studio test`)
 
 ## Phase 7: Verification
 

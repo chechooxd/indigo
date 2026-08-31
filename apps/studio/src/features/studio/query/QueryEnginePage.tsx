@@ -4,7 +4,9 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { useDataStore } from '../../../store/useDataStore';
+import { useAuthStore } from '../../../store/useAuthStore';
 import { isBackendAvailable } from '../../../lib/api';
 import { loadSchemaIntoStore } from '../../../lib/schema-loader';
 import { useQueryRunner } from './hooks/useQueryRunner';
@@ -13,7 +15,10 @@ import { SqlEditor } from './components/SqlEditor';
 import { ResultsTable } from './components/ResultsTable';
 
 export default function QueryEnginePage() {
+  const { t } = useTranslation();
   const { tables, setTables, setResolvedSchema } = useDataStore();
+  const queryTimeoutMs = useAuthStore((s) => s.queryTimeoutMs);
+  const queryRowCap = useAuthStore((s) => s.queryRowCap);
   const {
     selectedTableInBrowser,
     queryCode,
@@ -43,6 +48,17 @@ export default function QueryEnginePage() {
           onFormat={handleFormatCode}
           onRun={handleRunQuery}
         />
+        <div className="px-4 py-1 text-[11px] text-zinc-500 font-sans border-b border-zinc-900 shrink-0">
+          {t('queryEngine.limitsHint', { cap: queryRowCap, timeoutSeconds: Math.round(queryTimeoutMs / 1000) })}
+        </div>
+        {queryResults?.truncated && (
+          <div
+            role="status"
+            className="px-4 py-2 bg-amber-950/40 border-b border-amber-900/60 text-[11px] text-amber-300 font-sans font-medium shrink-0"
+          >
+            {t('queryEngine.truncatedBanner', { cap: queryRowCap })}
+          </div>
+        )}
         <ResultsTable results={queryResults} errorMsg={errorMsg} />
       </section>
     </div>
