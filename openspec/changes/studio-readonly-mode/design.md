@@ -46,8 +46,13 @@ with the *disclosure* path.
 ### Decision: `--read-only` resolved after `loadEnv()`, not as a commander module-load default
 
 **Choice**: `.option("--read-only", "…")` with no default; inside the action, after `loadEnv()`:
-`const readOnly = options.readOnly === true || isReadOnlyEnv(process.env.INDIGODB_STUDIO_READONLY)`,
-where `isReadOnlyEnv(v) => v === "1" || v === "true"` (exact match, no trim, no case folding).
+`const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY)`,
+where `resolveStudioReadOnly(optionValue, envValue) => optionValue === true || isReadOnlyEnv(envValue)`
+and `isReadOnlyEnv(v) => v === "1" || v === "true"` (exact match, no trim, no case folding). Both
+functions live in `packages/cli/src/util.ts` (exported) rather than as an inline closure in `index.ts`'s
+action, specifically so this resolution path is unit testable — a corrective apply batch found it had
+zero runtime coverage otherwise, since every integration test in `studio-readonly.mjs` drives
+`startStudio()` directly with a boolean and never exercises commander's parsed options or `process.env`.
 **Alternatives**: mirror `--host` literally — `process.env.INDIGODB_STUDIO_READONLY` as the option
 default (`index.ts:297`).
 **Rationale**: observably identical flag+env-default semantics, but `--host`'s default is evaluated at
@@ -88,19 +93,25 @@ option's doc comment.
 |------|--------|-------------|
 | `packages/cli/src/studio-server.ts` | Modify | `readOnly?: boolean` on `StudioOptions`; `const readOnly = options.readOnly === true` next to `auth` (line 588); prefix gate after line 625; `readOnly` on the status payload (line 632); startup log line after `Auth:` (line 833) |
 | `packages/cli/src/index.ts` | Modify | `--read-only` option + env resolution in the action; thread into `startStudio` |
+| `packages/cli/src/util.ts` | Modify | Exported `isReadOnlyEnv`/`resolveStudioReadOnly` (moved out of `index.ts`'s action closure so the flag/env resolution is unit testable) |
 | `apps/studio/src/lib/api.ts` | Modify | `AuthStatus.readOnly: boolean` (line 42) |
 | `apps/studio/src/store/useAuthStore.ts` | Modify | `readOnly: boolean` state (default `false`), set from the probe in `checkStatus` |
 | `apps/studio/src/app/components/ReadOnlyBanner.tsx` | Create | Non-dismissible banner, `SampleDataBanner` styling |
 | `apps/studio/src/app/App.tsx` | Modify | Render `<ReadOnlyBanner />` as the first child of `AppShell`'s content column, above `<Header>` |
 | `apps/studio/src/i18n/locales/{en,es}.json` | Modify | Banner copy |
 | `packages/cli/test/studio-readonly.mjs` | Create | Integration suite |
-| `packages/cli/package.json` | Modify | Append to the `test` chain after `studio-auth.mjs` |
+| `packages/cli/test/studio-readonly-resolution.mjs` | Create | Unit suite for `isReadOnlyEnv`/`resolveStudioReadOnly` |
+| `packages/cli/package.json` | Modify | Append both suites to the `test` chain after `studio-auth.mjs` |
 
 ## Interfaces / Contracts
 
 ```ts
 // studio-server.ts
 export interface StudioOptions { /* … */ readOnly?: boolean }
+
+// util.ts
+export function isReadOnlyEnv(v?: string): boolean; // exact match "1" | "true" only
+export function resolveStudioReadOnly(optionReadOnly: boolean | undefined, envValue: string | undefined): boolean;
 
 // 403 body — matches every other error on this server
 { error: "Studio is running in read-only mode" }
@@ -126,6 +137,8 @@ amber swapped for the same amber palette; it is the app's one existing banner pr
 | Integration | **Precedence**: auth on + read-only on, no cookie → write is **401**, body is `Authentication required`, DB unchanged | `{ password, readOnly: true }` |
 | Integration | Same server, valid cookie → write is **403** | login, reuse cookie |
 | Integration | Probe reports `readOnly` correctly across the 4 auth×read-only combinations | one compact loop asserting only `{authRequired, readOnly}` |
+| Unit | `--read-only` flag OR exact-match `INDIGODB_STUDIO_READONLY` enables read-only mode | `packages/cli/test/studio-readonly-resolution.mjs` against the exported `resolveStudioReadOnly`/`isReadOnlyEnv` (`util.ts`) — the exact resolution `index.ts`'s `studio` action runs after `loadEnv()` |
+| Unit | Malformed/near-miss env values (`"TRUE"`, `"yes"`, `"0"`, `"false"`, `""`, `" 1 "`, `"1.0"`, `"on"`) do NOT enable read-only mode | same suite — exact-match assertion, no truthy coercion |
 
 `withStudio(db, fixture, fn, options)` spreads `options` into `startStudio` (`studio-harness.mjs:89`),
 so `{ readOnly: true }` flows through with **zero harness changes**, exactly as `password` did. Structure

@@ -24,6 +24,7 @@ import {
   assertLogicalReplication,
   assertRealtimeSecretPresent,
   assertStudioAuthForHost,
+  resolveStudioReadOnly,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -311,8 +312,11 @@ program
     // at module load, before `loadEnv()` runs, so a `.env` value never
     // reaches it — acceptable for a bind address that fails loudly, but not
     // for a guardrail that would otherwise fail open and silently.
-    const isReadOnlyEnv = (v?: string) => v === "1" || v === "true";
-    const readOnly = options.readOnly === true || isReadOnlyEnv(process.env.INDIGODB_STUDIO_READONLY);
+    // `resolveStudioReadOnly` (packages/cli/src/util.ts) is extracted so
+    // this exact resolution — `--read-only` OR exact-match
+    // `INDIGODB_STUDIO_READONLY` — is unit testable independent of
+    // commander's parsed options.
+    const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
     const { resolved, path: schemaPath } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
     await startStudio({

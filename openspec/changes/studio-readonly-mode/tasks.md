@@ -20,7 +20,7 @@ Chain strategy: pending
 
 | Unit | Goal | Likely PR | Focused test command | Runtime harness | Rollback boundary |
 |------|------|-----------|----------------------|-----------------|-------------------|
-| 1 | Server: flag/env resolution, prefix gate, status field, log line, integration tests | PR 1 | `node packages/cli/test/studio-readonly.mjs` | `pnpm --filter @indigodb/cli test` (pglite-backed `withStudio` harness) | Revert `studio-server.ts`/`index.ts` changes; unset flag/env is a structural no-op |
+| 1 | Server: flag/env resolution, prefix gate, status field, log line, integration tests | PR 1 | `node packages/cli/test/studio-readonly.mjs && node packages/cli/test/studio-readonly-resolution.mjs` | `pnpm --filter @indigodb/cli test` (pglite-backed `withStudio` harness) | Revert `studio-server.ts`/`index.ts`/`util.ts` changes; unset flag/env is a structural no-op |
 | 2 | Frontend: `AuthStatus.readOnly`, store field, `ReadOnlyBanner`, `App.tsx` wiring, i18n copy | PR 1 (same PR — small, tightly coupled to Unit 1's contract) | `pnpm --filter @indigodb/studio test` | N/A — no Studio E2E harness (per design.md Testing Strategy); manually verify banner via `pnpm --filter @indigodb/cli exec node dist/index.js studio --read-only` against a local schema | Revert the 4 frontend files; banner is additive-only, no existing UI is altered |
 
 ## Phase 1: Server — Flag & Option Resolution
@@ -29,6 +29,8 @@ Chain strategy: pending
 - [x] 1.2 GREEN: add `readOnly?: boolean` to `StudioOptions` in `packages/cli/src/studio-server.ts`; add `const readOnly = options.readOnly === true;` next to the existing `auth` constant (near line 588), with a doc comment noting the naming collision with `StudioDb.readOnly()` (design.md "Naming note").
 - [x] 1.3 In `packages/cli/src/index.ts`, add `.option("--read-only", "…")` (no default) to the `studio` command, following the option's placement near `--host`/`--no-open`.
 - [x] 1.4 In the `studio` command's action, after `loadEnv()`, add `const isReadOnlyEnv = (v?: string) => v === "1" || v === "true";` and `const readOnly = options.readOnly === true || isReadOnlyEnv(process.env.INDIGODB_STUDIO_READONLY);`; thread `readOnly` into the `startStudio(...)` call. Add a comment noting the deliberate divergence from `--host`'s module-load-time default (design.md decision).
+- [x] 1.5 RED: in `packages/cli/test/studio-readonly-resolution.mjs` (new file), assert `isReadOnlyEnv`/`resolveStudioReadOnly` from `dist/util.js` are exact-match-only — `"1"`/`"true"` enable, malformed values (`"TRUE"`, `"yes"`, `"0"`, `"false"`, `""`, `" 1 "`, `"1.0"`, `"on"`) do not (spec: "Malformed env values do not enable read-only mode") — write the suite first; it fails to import the not-yet-exported functions.
+- [x] 1.6 GREEN: extract `isReadOnlyEnv` out of `index.ts`'s action closure into an exported `isReadOnlyEnv`/`resolveStudioReadOnly` pair in `packages/cli/src/util.ts` (spec: "CLI flag OR exact-match env var enables read-only mode"); update `index.ts`'s action to call `resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY)`. This closes the coverage gap `sdd-verify` found: prior to this task, `isReadOnlyEnv` and the `.option("--read-only", …)`/env resolution path in `index.ts` had zero runtime test coverage — every `studio-readonly.mjs` case called `startStudio()` directly with a boolean, bypassing this path entirely.
 
 ## Phase 2: Server — Write Gate & Status Field
 
@@ -50,6 +52,7 @@ Chain strategy: pending
 ## Phase 4: Server — Test Wiring
 
 - [x] 4.1 Append `node test/studio-readonly.mjs` to the `test` script chain in `packages/cli/package.json`, after `studio-auth.mjs` (per design.md File Changes).
+- [x] 4.3 Append `node test/studio-readonly-resolution.mjs` to the `test` script chain in `packages/cli/package.json`, after `studio-readonly.mjs`, wiring in task 1.5/1.6's resolver suite.
 - [x] 4.2 Run `pnpm --filter @indigodb/cli test` and confirm `studio-write.mjs`, `studio-auth.mjs`, `studio-auth-preflight.mjs` still pass unmodified (spec: "Default preserves existing write behavior").
 
 ## Phase 5: Frontend — Status Wiring
