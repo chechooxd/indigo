@@ -18,6 +18,10 @@ interface AuthState {
   authenticated: boolean;
   /** Whether the server reports global, server-side read-only mode is active. */
   readOnly: boolean;
+  /** Resolved startup statement timeout, in ms, from `GET /api/auth/status`; `0` means disabled. */
+  queryTimeoutMs: number;
+  /** Resolved startup row cap for `POST /api/query`, from the same probe; `0` means disabled. */
+  queryRowCap: number;
   loginError: string | null;
   /**
    * `true` while the initial `GET /api/auth/status` probe is in flight.
@@ -41,6 +45,16 @@ interface AuthState {
 }
 
 /**
+ * Backend startup defaults for the query guardrails (see @indigodb/cli's
+ * `resolveQueryTimeoutMs`/`resolveQueryRowCap`). Used here only as the
+ * fallback shown before `checkStatus()` resolves, or in standalone dev with
+ * no backend — the console's hint should never show `0`/`undefined` as if
+ * guardrails were disabled when they are, in fact, simply unprobed yet.
+ */
+const DEFAULT_QUERY_TIMEOUT_MS = 30000;
+const DEFAULT_QUERY_ROW_CAP = 1000;
+
+/**
  * Defaults to "no gate" (`authRequired: false, authenticated: true`) until
  * `checkStatus()` resolves — the same fail-soft posture as the rest of this
  * app's backend-optional design: standalone `pnpm dev` never blinks a login
@@ -51,13 +65,21 @@ export const useAuthStore = create<AuthState>((set) => ({
   authRequired: false,
   authenticated: true,
   readOnly: false,
+  queryTimeoutMs: DEFAULT_QUERY_TIMEOUT_MS,
+  queryRowCap: DEFAULT_QUERY_ROW_CAP,
   loginError: null,
   statusChecking: true,
 
   checkStatus: async () => {
     const status = await fetchAuthStatus();
     if (status) {
-      set({ authRequired: status.authRequired, authenticated: status.authenticated, readOnly: status.readOnly });
+      set({
+        authRequired: status.authRequired,
+        authenticated: status.authenticated,
+        readOnly: status.readOnly,
+        queryTimeoutMs: status.queryTimeoutMs,
+        queryRowCap: status.queryRowCap,
+      });
     }
     set({ statusChecking: false });
   },

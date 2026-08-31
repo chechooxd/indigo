@@ -11,6 +11,8 @@ import type { ResolvedSchema } from '@indigodb/core';
 export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
+  /** `true` when the server capped the row count at `queryRowCap` (see `AuthStatus`). */
+  truncated?: boolean;
 }
 
 /** Page size options the server accepts (see @indigodb/cli's `studio-server.ts`). */
@@ -43,6 +45,10 @@ export interface AuthStatus {
   authRequired: boolean;
   authenticated: boolean;
   readOnly: boolean;
+  /** Resolved startup statement timeout, in ms; `0` means disabled. */
+  queryTimeoutMs: number;
+  /** Resolved startup row cap for `POST /api/query`; `0` means disabled. */
+  queryRowCap: number;
 }
 
 export interface LoginResult {

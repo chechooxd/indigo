@@ -114,5 +114,9 @@
   },
   "readOnly": {
     "banner": "Modo de solo lectura — esta instancia de Studio rechaza toda escritura."
+  },
+  "queryEngine": {
+    "limitsHint": "Resultados limitados a {{cap}} filas; las consultas expiran a los {{timeoutSeconds}}s.",
+    "truncatedBanner": "Resultado truncado a {{cap}} filas — refina tu consulta para ver más."
   }
 }
