@@ -200,9 +200,14 @@ auth is required and no valid session exists, and MUST NOT show it otherwise.
 - WHEN the Studio SPA loads
 - THEN the application shell renders directly, with no login screen
 
-### Requirement: Status probe reports read-only posture
+### Requirement: Status probe reports read-only and guardrail posture
 
-`GET /api/auth/status` MUST additionally report a `readOnly: boolean` field alongside its existing `authRequired`/`authenticated` fields. This field MUST be populated correctly independent of auth configuration, across all four auth-on/off x read-only-on/off combinations, and this widening remains additive and non-breaking to the existing response shape.
+`GET /api/auth/status` MUST additionally report a `readOnly: boolean` field, a
+`queryTimeoutMs: number` field, and a `queryRowCap: number` field alongside its existing
+`authRequired`/`authenticated` fields. These fields MUST be populated correctly independent of
+auth configuration, and `queryTimeoutMs`/`queryRowCap` MUST reflect the exact values resolved at
+startup (per `studio-query-guardrails`'s CLI-flag > env-var > default precedence). This widening
+remains additive and non-breaking to the existing response shape.
 
 #### Scenario: readOnly reflects server posture across all auth combinations
 
@@ -215,4 +220,12 @@ auth is required and no valid session exists, and MUST NOT show it otherwise.
 
 - GIVEN a password is configured and read-only mode is active
 - WHEN a client with no session calls `GET /api/auth/status`
-- THEN the server responds 200 with the current `authRequired`, `authenticated`, and `readOnly` fields, not 401
+- THEN the server responds 200 with the current `authRequired`, `authenticated`, `readOnly`,
+  `queryTimeoutMs`, and `queryRowCap` fields, not 401
+
+#### Scenario: queryTimeoutMs and queryRowCap reflect resolved startup values without a session
+
+- GIVEN the server was started with `--query-timeout 9000` and `INDIGODB_STUDIO_QUERY_ROW_CAP=250`
+- AND a password is configured and no session cookie is presented
+- WHEN a client calls `GET /api/auth/status`
+- THEN the server responds 200 with `queryTimeoutMs: 9000` and `queryRowCap: 250`
