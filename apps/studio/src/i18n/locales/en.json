@@ -115,6 +115,9 @@
   "readOnly": {
     "banner": "Read-only mode — this Studio instance refuses all writes."
   },
+  "environment": {
+    "badge_aria": "Environment label for this Studio instance"
+  },
   "queryEngine": {
     "limitsHint": "Results capped at {{cap}} rows, queries time out after {{timeoutSeconds}}s.",
     "truncatedBanner": "Result truncated at {{cap}} rows — refine your query to see more."

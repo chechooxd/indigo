@@ -49,6 +49,8 @@ export interface AuthStatus {
   queryTimeoutMs: number;
   /** Resolved startup row cap for `POST /api/query`; `0` means disabled. */
   queryRowCap: number;
+  /** Resolved startup `--env`/`INDIGODB_ENV` label, verbatim; `null` when unset. Never an enforcement input. */
+  environment: string | null;
 }
 
 export interface LoginResult {

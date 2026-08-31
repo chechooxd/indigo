@@ -23,6 +23,7 @@ describe('useAuthStore', () => {
       loginError: null,
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
+      environment: null,
     });
     vi.mocked(fetchAuthStatus).mockReset();
     vi.mocked(login).mockReset();
@@ -41,6 +42,7 @@ describe('useAuthStore', () => {
       readOnly: false,
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
+      environment: null,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -56,6 +58,7 @@ describe('useAuthStore', () => {
       readOnly: true,
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
+      environment: null,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -70,6 +73,7 @@ describe('useAuthStore', () => {
       readOnly: false,
       queryTimeoutMs: 9000,
       queryRowCap: 250,
+      environment: null,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -94,6 +98,33 @@ describe('useAuthStore', () => {
 
     expect(useAuthStore.getState().authRequired).toBe(false);
     expect(useAuthStore.getState().authenticated).toBe(true);
+  });
+
+  it('defaults environment to null before any status check', () => {
+    expect(useAuthStore.getState().environment).toBeNull();
+  });
+
+  it('checkStatus adopts the server-reported environment value', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      authRequired: false,
+      authenticated: true,
+      readOnly: false,
+      queryTimeoutMs: 30000,
+      queryRowCap: 1000,
+      environment: 'production',
+    });
+
+    await useAuthStore.getState().checkStatus();
+
+    expect(useAuthStore.getState().environment).toBe('production');
+  });
+
+  it('checkStatus leaves environment null when the probe fails soft (standalone, no backend), and never throws', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(null);
+
+    await expect(useAuthStore.getState().checkStatus()).resolves.not.toThrow();
+
+    expect(useAuthStore.getState().environment).toBeNull();
   });
 
   it('a successful login sets authenticated true and clears any prior error', async () => {

@@ -22,6 +22,12 @@ interface AuthState {
   queryTimeoutMs: number;
   /** Resolved startup row cap for `POST /api/query`, from the same probe; `0` means disabled. */
   queryRowCap: number;
+  /**
+   * Resolved startup `--env`/`INDIGODB_ENV` label, verbatim, from the same
+   * probe; `null` when unset. Purely informational — never read by any
+   * auth/read-only/guardrail decision.
+   */
+  environment: string | null;
   loginError: string | null;
   /**
    * `true` while the initial `GET /api/auth/status` probe is in flight.
@@ -67,6 +73,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   readOnly: false,
   queryTimeoutMs: DEFAULT_QUERY_TIMEOUT_MS,
   queryRowCap: DEFAULT_QUERY_ROW_CAP,
+  environment: null,
   loginError: null,
   statusChecking: true,
 
@@ -79,6 +86,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         readOnly: status.readOnly,
         queryTimeoutMs: status.queryTimeoutMs,
         queryRowCap: status.queryRowCap,
+        environment: status.environment,
       });
     }
     set({ statusChecking: false });

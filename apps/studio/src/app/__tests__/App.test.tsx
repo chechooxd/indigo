@@ -47,7 +47,7 @@ describe('App auth gate', () => {
   });
 
   it('renders nothing and does not bootstrap the schema while the status probe is pending', async () => {
-    let resolveStatus!: (value: { authRequired: boolean; authenticated: boolean; readOnly: boolean; queryTimeoutMs: number; queryRowCap: number }) => void;
+    let resolveStatus!: (value: { authRequired: boolean; authenticated: boolean; readOnly: boolean; queryTimeoutMs: number; queryRowCap: number; environment: string | null }) => void;
     vi.mocked(fetchAuthStatus).mockReturnValue(
       new Promise((resolve) => {
         resolveStatus = resolve;
@@ -64,14 +64,14 @@ describe('App auth gate', () => {
     expect(document.getElementById('main-sidebar')).not.toBeInTheDocument();
     expect(fetchSchema).not.toHaveBeenCalled();
 
-    resolveStatus({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    resolveStatus({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
     expect(fetchSchema).toHaveBeenCalled();
   });
 
   it('renders the app shell directly when the status probe reports authRequired: false', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     render(<App />);
 
@@ -80,7 +80,7 @@ describe('App auth gate', () => {
   });
 
   it('renders the login screen when the status probe reports authRequired: true, authenticated: false', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     render(<App />);
 
@@ -88,7 +88,7 @@ describe('App auth gate', () => {
   });
 
   it('transitions from the login screen to the app shell on a successful login', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
     vi.mocked(login).mockResolvedValue({ ok: true });
     const user = userEvent.setup();
 
@@ -102,7 +102,7 @@ describe('App auth gate', () => {
   });
 
   it('renders the read-only banner in the app shell when the status probe reports readOnly: true', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: true, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: true, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     render(<App />);
 
@@ -110,8 +110,27 @@ describe('App auth gate', () => {
     expect(screen.getByRole('status')).toBeInTheDocument();
   });
 
+  it('with readOnly:true AND environment set together, role="status" still resolves to a single node (the banner), and the environment badge is also present', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      authRequired: false,
+      authenticated: true,
+      readOnly: true,
+      queryTimeoutMs: 30000,
+      queryRowCap: 1000,
+      environment: 'production',
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
+    // getByRole throws if more than one "status" node exists — this is the
+    // collision regression: EnvironmentBadge must never use role="status".
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByTestId('environment-badge')).toBeInTheDocument();
+  });
+
   it('does not render the read-only banner when the status probe reports readOnly: false', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     render(<App />);
 
@@ -120,7 +139,7 @@ describe('App auth gate', () => {
   });
 
   it('never renders the read-only banner on the login screen', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: true, queryTimeoutMs: 30000, queryRowCap: 1000 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: true, queryTimeoutMs: 30000, queryRowCap: 1000, environment: null });
 
     render(<App />);
 
