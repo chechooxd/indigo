@@ -200,13 +200,14 @@ auth is required and no valid session exists, and MUST NOT show it otherwise.
 - WHEN the Studio SPA loads
 - THEN the application shell renders directly, with no login screen
 
-### Requirement: Status probe reports read-only and guardrail posture
+### Requirement: Status probe reports read-only, guardrail, and environment posture
 
-`GET /api/auth/status` MUST additionally report a `readOnly: boolean` field, a
-`queryTimeoutMs: number` field, and a `queryRowCap: number` field alongside its existing
-`authRequired`/`authenticated` fields. These fields MUST be populated correctly independent of
-auth configuration, and `queryTimeoutMs`/`queryRowCap` MUST reflect the exact values resolved at
-startup (per `studio-query-guardrails`'s CLI-flag > env-var > default precedence). This widening
+`GET /api/auth/status` MUST additionally report an `environment: string | null` field alongside
+its existing `authRequired`/`authenticated`/`readOnly`/`queryTimeoutMs`/`queryRowCap` fields.
+`environment` MUST reflect the exact value resolved at startup by `resolveStudioEnvironment`
+(per `studio-environment-badge`'s CLI-flag `--env` > `INDIGODB_ENV` > unset precedence), or `null`
+when neither was set. This field MUST be populated correctly independent of auth configuration,
+and MUST NOT be read by, or influence, any authorization or guardrail decision. This widening
 remains additive and non-breaking to the existing response shape.
 
 #### Scenario: readOnly reflects server posture across all auth combinations
@@ -221,7 +222,7 @@ remains additive and non-breaking to the existing response shape.
 - GIVEN a password is configured and read-only mode is active
 - WHEN a client with no session calls `GET /api/auth/status`
 - THEN the server responds 200 with the current `authRequired`, `authenticated`, `readOnly`,
-  `queryTimeoutMs`, and `queryRowCap` fields, not 401
+  `queryTimeoutMs`, `queryRowCap`, and `environment` fields, not 401
 
 #### Scenario: queryTimeoutMs and queryRowCap reflect resolved startup values without a session
 
@@ -229,3 +230,16 @@ remains additive and non-breaking to the existing response shape.
 - AND a password is configured and no session cookie is presented
 - WHEN a client calls `GET /api/auth/status`
 - THEN the server responds 200 with `queryTimeoutMs: 9000` and `queryRowCap: 250`
+
+#### Scenario: environment reflects the resolved startup value without a session
+
+- GIVEN the server was started with `--env production`
+- AND a password is configured and no session cookie is presented
+- WHEN a client calls `GET /api/auth/status`
+- THEN the server responds 200 with `environment: "production"`
+
+#### Scenario: environment is null when unset
+
+- GIVEN neither `--env` nor `INDIGODB_ENV` was set at startup
+- WHEN a client calls `GET /api/auth/status`
+- THEN the server responds 200 with `environment: null`
