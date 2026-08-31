@@ -111,5 +111,8 @@
   "studio": {
     "sub_nav_query": "Motor de Consultas SQL",
     "sub_nav_data": "Explorador de Tablas"
+  },
+  "readOnly": {
+    "banner": "Modo de solo lectura — esta instancia de Studio rechaza toda escritura."
   }
 }

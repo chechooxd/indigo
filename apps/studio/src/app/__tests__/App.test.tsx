@@ -47,7 +47,7 @@ describe('App auth gate', () => {
   });
 
   it('renders nothing and does not bootstrap the schema while the status probe is pending', async () => {
-    let resolveStatus!: (value: { authRequired: boolean; authenticated: boolean }) => void;
+    let resolveStatus!: (value: { authRequired: boolean; authenticated: boolean; readOnly: boolean }) => void;
     vi.mocked(fetchAuthStatus).mockReturnValue(
       new Promise((resolve) => {
         resolveStatus = resolve;
@@ -64,14 +64,14 @@ describe('App auth gate', () => {
     expect(document.getElementById('main-sidebar')).not.toBeInTheDocument();
     expect(fetchSchema).not.toHaveBeenCalled();
 
-    resolveStatus({ authRequired: false, authenticated: true });
+    resolveStatus({ authRequired: false, authenticated: true, readOnly: false });
 
     await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
     expect(fetchSchema).toHaveBeenCalled();
   });
 
   it('renders the app shell directly when the status probe reports authRequired: false', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false });
 
     render(<App />);
 
@@ -80,7 +80,7 @@ describe('App auth gate', () => {
   });
 
   it('renders the login screen when the status probe reports authRequired: true, authenticated: false', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false });
 
     render(<App />);
 
@@ -88,7 +88,7 @@ describe('App auth gate', () => {
   });
 
   it('transitions from the login screen to the app shell on a successful login', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: false });
     vi.mocked(login).mockResolvedValue({ ok: true });
     const user = userEvent.setup();
 
@@ -99,5 +99,32 @@ describe('App auth gate', () => {
 
     await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
     expect(screen.queryByLabelText('auth.login.password_label')).not.toBeInTheDocument();
+  });
+
+  it('renders the read-only banner in the app shell when the status probe reports readOnly: true', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: true });
+
+    render(<App />);
+
+    await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
+    expect(screen.getByRole('status')).toBeInTheDocument();
+  });
+
+  it('does not render the read-only banner when the status probe reports readOnly: false', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: false, authenticated: true, readOnly: false });
+
+    render(<App />);
+
+    await waitFor(() => expect(document.getElementById('main-sidebar')).toBeInTheDocument());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('never renders the read-only banner on the login screen', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ authRequired: true, authenticated: false, readOnly: true });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('auth.login.password_label')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

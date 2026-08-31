@@ -16,6 +16,8 @@ interface AuthState {
   authRequired: boolean;
   /** Whether the current session already holds a valid session cookie. */
   authenticated: boolean;
+  /** Whether the server reports global, server-side read-only mode is active. */
+  readOnly: boolean;
   loginError: string | null;
   /**
    * `true` while the initial `GET /api/auth/status` probe is in flight.
@@ -48,13 +50,14 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   authRequired: false,
   authenticated: true,
+  readOnly: false,
   loginError: null,
   statusChecking: true,
 
   checkStatus: async () => {
     const status = await fetchAuthStatus();
     if (status) {
-      set({ authRequired: status.authRequired, authenticated: status.authenticated });
+      set({ authRequired: status.authRequired, authenticated: status.authenticated, readOnly: status.readOnly });
     }
     set({ statusChecking: false });
   },

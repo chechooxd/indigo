@@ -15,6 +15,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useSchemaBootstrap } from './hooks/useSchemaBootstrap';
 import { TAB_TITLE_KEYS } from './lib/tab-titles';
 import LoginScreen from '../features/auth/LoginScreen';
+import { ReadOnlyBanner } from './components/ReadOnlyBanner';
 
 export default function App() {
   const { themeAccent } = useThemeStore();
@@ -54,6 +55,7 @@ function AppShell() {
     <div className="flex h-screen bg-[#09090b] text-white overflow-hidden font-sans antialiased selection:bg-indigo-500/30">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 bg-[#09090b] border-l border-zinc-800/80">
+        <ReadOnlyBanner />
         <Header
           currentCluster={currentCluster}
           onClusterChange={setCurrentCluster}
