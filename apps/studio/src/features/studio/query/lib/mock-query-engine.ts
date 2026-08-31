@@ -46,5 +46,6 @@ export function executeMockQuery(sql: string, tables: Table[]): MockQueryOutcome
     return rowObj;
   });
 
-  return { ok: true, result: { columns, rows } };
+  // Mock/standalone simulation never caps rows — always untruncated.
+  return { ok: true, result: { columns, rows, truncated: false } };
 }

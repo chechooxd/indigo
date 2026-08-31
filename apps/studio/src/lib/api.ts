@@ -12,7 +12,7 @@ export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
   /** `true` when the server capped the row count at `queryRowCap` (see `AuthStatus`). */
-  truncated?: boolean;
+  truncated: boolean;
 }
 
 /** Page size options the server accepts (see @indigodb/cli's `studio-server.ts`). */

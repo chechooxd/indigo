@@ -16,7 +16,26 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const FORBIDDEN_PATTERNS = [/cancel[-_ ]?button/i, /cancel[-_ ]?route/i, /pg_cancel_backend/i];
+// Patterns are anchored to *query cancellation* specifically, not to bare
+// verbs like "cancel"/"abort"/"stop" — those alone are too generic (e.g.
+// `AbortController`/`AbortSignal` are legitimate DOM/fetch APIs unrelated to
+// cancelling a running query) and would make this test a nuisance someone
+// eventually deletes. Each pattern below targets a concrete shape a real
+// cancel-query feature would actually take in this codebase: a UI button, an
+// API route, a handler/function name, or a Postgres-side cancellation call.
+const FORBIDDEN_PATTERNS = [
+  // UI affordance: "Cancel query" / "Stop query" / "Abort query" buttons,
+  // in any casing/separator (cancelQuery, cancel-query, cancel_query, ...).
+  /cancel[-_ ]?button/i,
+  /(cancel|stop|abort)[-_ ]?quer(y|ies)/i,
+  /quer(y|ies)[-_ ]?(cancel|stop|abort)/i,
+  // API surface: a dedicated cancel/abort/stop route or handler.
+  /cancel[-_ ]?route/i,
+  /\/api\/query\/(cancel|abort|stop)/i,
+  // Postgres-side cancellation primitives (the substantive backend risk).
+  /pg_cancel_backend/i,
+  /pg_terminate_backend/i,
+];
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 

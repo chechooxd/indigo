@@ -16,7 +16,12 @@ All commands run from the repo root and fan out through Turborepo:
 - `pnpm install` — install workspace deps
 - `pnpm dev` — run all `dev` tasks (Studio dev server on :5555); `dev` depends on `^build`
 - `pnpm build` — build every package (`tsc`) and the Studio app (`tsc -b && vite build`)
-- `pnpm lint` — typecheck-as-lint: every package's `lint` is `tsc --noEmit`
+- `pnpm lint` — typecheck-as-lint: every package's `lint` is `tsc --noEmit`, except
+  `apps/studio`, whose `lint` is `tsc -b --noEmit`. The `-b` is load-bearing there: Studio's
+  root `tsconfig.json` is `files: []` plus project references, and plain `tsc --noEmit` does
+  not follow references — it silently typechecked **zero** files, so a blatant type error
+  passed `pnpm lint` with exit 0. `pnpm build` (`tsc -b && vite build`) always did catch it;
+  lint did not. Don't drop the `-b`.
 - `pnpm test` — wired via Turbo (`turbo test`, depends on `build`) and fans out to every
   package's own plain-Node test script (no shared runner/framework — each package's `test`
   is a `node test/a.mjs && node test/b.mjs && ...` chain, plus `apps/studio`'s `vitest run`).
