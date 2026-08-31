@@ -27,17 +27,17 @@ Backend-only change — no `apps/studio/*` diff in any unit; single-package (`@i
 
 ## Phase 1: RED — Unit tests (pure layer)
 
-- [ ] 1.1 `test/studio-audit-resolution.mjs`: resolver precedence + default (design rows 1–6; spec "resolved once at startup") — flag beats env both directions, exact-match env, default-on, malformed env throws naming `INDIGODB_STUDIO_AUDIT_LOG`, never `process.exit`
-- [ ] 1.2 Same file: correlator determinism/security (rows 7–11; spec "session field is correlator") — 12 lowercase hex, same key+token stable, **different keys → different correlator** (proves keying, row 9), token not a substring, `null` token → `undefined`
-- [ ] 1.3 Same file: log-injection + cap (rows 12–14) — `formatAuditLine` escapes `\n`/`\r`/spaces in table name and PK value; `formatPkValue` caps at 128 chars for number/null/undefined/Date/500-char string
-- [ ] 1.4 Same file: entry shape (rows 15–16) — `session: undefined` omits the key (`!("session" in parsed)`, mutation: emit `null` instead); exact key set per `outcome`, no extras
-- [ ] 1.5 Run the suite; confirm every case fails (no `util.ts` implementation yet)
+- [x] 1.1 `test/studio-audit-resolution.mjs`: resolver precedence + default (design rows 1–6; spec "resolved once at startup") — flag beats env both directions, exact-match env, default-on, malformed env throws naming `INDIGODB_STUDIO_AUDIT_LOG`, never `process.exit`
+- [x] 1.2 Same file: correlator determinism/security (rows 7–11; spec "session field is correlator") — 12 lowercase hex, same key+token stable, **different keys → different correlator** (proves keying, row 9), token not a substring, `null` token → `undefined`
+- [x] 1.3 Same file: log-injection + cap (rows 12–14) — `formatAuditLine` escapes `\n`/`\r`/spaces in table name and PK value; `formatPkValue` caps at 128 chars for number/null/undefined/Date/500-char string
+- [x] 1.4 Same file: entry shape (rows 15–16) — `session: undefined` omits the key (`!("session" in parsed)`, mutation: emit `null` instead); exact key set per `outcome`, no extras
+- [x] 1.5 Run the suite; confirm every case fails (no `util.ts` implementation yet)
 
 ## Phase 2: GREEN — `packages/cli/src/util.ts`
 
-- [ ] 2.1 Add `AuditOp`/`AuditOutcome`/`AuditReason`/`StudioAuditEntry` types and `resolveStudioAuditLog(option, env)` — precedence flag > env > default `true`, exact-match `"0"|"false"`/`"1"|"true"`, throw (never exit) naming the var on anything else — closes 1.1
-- [ ] 2.2 Add `formatAuditLine`, `formatPkValue`, `deriveSessionCorrelator(token, key)` — HMAC-SHA256 over `"indigodb-studio-audit-correlator-v1 " + token` keyed by a caller-supplied `Buffer`, hex, first 12 chars — closes 1.2–1.4
-- [ ] 2.3 Run Phase-1 suite to GREEN; verify row 17 (`pk: Record<string,string>` rejects a `Record<string,unknown>` body) via `pnpm lint` — this is a `tsc` strict-mode guarantee, not a runtime test; document that in a code comment on `StudioAuditEntry`
+- [x] 2.1 Add `AuditOp`/`AuditOutcome`/`AuditReason`/`StudioAuditEntry` types and `resolveStudioAuditLog(option, env)` — precedence flag > env > default `true`, exact-match `"0"|"false"`/`"1"|"true"`, throw (never exit) naming the var on anything else — closes 1.1
+- [x] 2.2 Add `formatAuditLine`, `formatPkValue`, `deriveSessionCorrelator(token, key)` — HMAC-SHA256 over `"indigodb-studio-audit-correlator-v1 " + token` keyed by a caller-supplied `Buffer`, hex, first 12 chars — closes 1.2–1.4
+- [x] 2.3 Run Phase-1 suite to GREEN; verify row 17 (`pk: Record<string,string>` rejects a `Record<string,unknown>` body) via `pnpm lint` — this is a `tsc` strict-mode guarantee, not a runtime test; document that in a code comment on `StudioAuditEntry`
 
 ## Phase 3: RED — Integration tests (`test/studio-audit.mjs`, PGlite + `console.log` capture)
 
