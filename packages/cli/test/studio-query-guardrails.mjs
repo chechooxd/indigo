@@ -312,6 +312,38 @@ await check("GET /api/auth/status reports positive built-in defaults when neithe
   });
 });
 
+// ── Combination gap: password configured + no session + resolved guardrails ─
+// Neither this suite's probe-echo checks above (no password) nor
+// `studio-auth.mjs`'s password-configured status checks (no non-default
+// guardrail values asserted) cover the combination the
+// "queryTimeoutMs/queryRowCap reflect resolved startup values without a
+// session" spec scenario requires: `password` set, no session cookie, AND
+// non-default resolved guardrail values, all in one request.
+
+await check(
+  "auth-required + no session: GET /api/auth/status still echoes the resolved guardrail values",
+  async () => {
+    await withDatabase(async (db) => {
+      await seedUsers(db, 1);
+      const fixture = loadFixture();
+      await withStudio(
+        db,
+        fixture,
+        async ({ baseUrl }) => {
+          const res = await fetch(`${baseUrl}/api/auth/status`);
+          assert(res.status === 200, `expected 200, got ${res.status}`);
+          const body = await res.json();
+          assert(body.authRequired === true, "expected authRequired:true with password configured");
+          assert(body.authenticated === false, "expected authenticated:false with no session cookie");
+          assert(body.queryTimeoutMs === 9000, `expected queryTimeoutMs:9000, got ${body.queryTimeoutMs}`);
+          assert(body.queryRowCap === 250, `expected queryRowCap:250, got ${body.queryRowCap}`);
+        },
+        { password: "correct horse battery staple", queryTimeoutMs: 9000, queryRowCap: 250 },
+      );
+    });
+  },
+);
+
 // ── 3.13: 57014 -> 400 with exact guidance message (deterministic double) ──
 
 function timeoutRejectingDb() {

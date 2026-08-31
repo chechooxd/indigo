@@ -54,6 +54,7 @@ Chain strategy: stacked-to-main
 - [x] 3.12 Probe echoes `queryTimeoutMs`/`queryRowCap` exactly as passed to `startStudio` (`{ queryTimeoutMs: 1234, queryRowCap: 7 }`)
 - [x] 3.13 `57014` → 400 with exact guidance message, no SQL echoed — inject a `StudioDb` double whose `readOnly` rejects `{ code: "57014" }` (deterministic, not live PGlite timeout)
 - [x] 3.14 Slow `GET /api/tables/:name` bounded by same timeout → 4xx naming timeout (spec: "slow table read bounded") — implemented via the same deterministic `StudioDb` double (see Deviations)
+- [x] 3.15 `password` configured + no session cookie + non-default `queryTimeoutMs`/`queryRowCap` (`withStudio(…, { password, queryTimeoutMs: 9000, queryRowCap: 250 })`) → `GET /api/auth/status` reports `authRequired: true`, `authenticated: false`, AND both guardrail fields at their resolved non-default values (spec: "queryTimeoutMs/queryRowCap reflect resolved startup values without a session" — combination gap found in verify, neither 3.12 (no password) nor `studio-auth.mjs`'s password-configured status checks (no non-default guardrail values) covered this exact combination; **not in design's table; added explicitly during corrective apply**)
 
 ## Phase 4: Integration GREEN
 
