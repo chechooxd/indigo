@@ -3,6 +3,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
 import { parse, resolve, IndigoParseError, validate, printSchema } from "@indigodb/core";
 import type { Schema, ResolvedSchema } from "@indigodb/core";
@@ -340,6 +341,139 @@ function validateEnvironmentLabel(raw: string, sourceName: string): string {
     }
   }
   return trimmed;
+}
+
+/**
+ * `indigodb studio`'s audit-log resolution: `--audit-log`/`--no-audit-log`
+ * pairs with `INDIGODB_STUDIO_AUDIT_LOG`. Precedence is flag > env > default
+ * `true` — deliberately NOT the `resolveStudioReadOnly` OR-shape, because
+ * this switch has a *disable* direction (design.md "env throws on anything
+ * ambiguous, default on" decision). Only an exact-match `"0"`/`"false"`
+ * disables and only an exact-match `"1"`/`"true"` (redundantly) confirms
+ * enabled; any other non-empty env value THROWS (never `process.exit`),
+ * naming `INDIGODB_STUDIO_AUDIT_LOG` — silently tolerating a malformed value
+ * would leave logging on while the operator believes they turned it off,
+ * which is the dangerous direction for a log that may carry table/column
+ * names. `index.ts`'s `studio` action is the only caller that exits the
+ * process, mirroring `resolveGuardrailValue`/`resolveStudioEnvironment`.
+ */
+export function resolveStudioAuditLog(option: boolean | undefined, env: string | undefined): boolean {
+  if (option === true) return true;
+  if (option === false) return false;
+  if (env !== undefined) {
+    if (env === "1" || env === "true") return true;
+    if (env === "0" || env === "false") return false;
+    throw new Error(
+      `INDIGODB_STUDIO_AUDIT_LOG must be "1", "0", "true", or "false", got: ${JSON.stringify(env)}`,
+    );
+  }
+  return true;
+}
+
+/** Op/outcome/reason closed sets for `StudioAuditEntry` — see below. */
+export type AuditOp = "insert" | "update" | "delete";
+export type AuditOutcome = "ok" | "denied" | "error";
+export type AuditReason = "read-only" | "invalid-request" | "not-found" | "db-error";
+
+/**
+ * `indigodb studio`'s audit log entry — one stdout JSON line per attempted
+ * write (design.md "row values are unreachable by type" decision).
+ *
+ * `pk` is `Record<string, string>` — ALREADY stringified through
+ * `formatPkValue`, never a raw row value — and `columns` is `string[]` of
+ * column NAMES only. `patchInput`/`valuesInput` in `studio-server.ts` are
+ * `Record<string, unknown>`; under `strict` mode neither assigns to
+ * `Record<string, string>` nor `string[]`, so passing a request body or a
+ * `RETURNING` row into an entry is a `tsc` compile error, not a review miss
+ * (Testing Strategy row 17 — verified by `pnpm lint`, not a runtime test).
+ *
+ * `reason` never carries a database error message — see `formatAuditLine`'s
+ * callers in `studio-server.ts`, which map every DB failure to the coarse
+ * `"db-error"` plus SQLSTATE `code` only.
+ */
+export interface StudioAuditEntry {
+  ts: string;
+  kind: "studio.audit.write";
+  op: AuditOp;
+  table: string;
+  /** Primary-key value(s), stringified column-by-column. Never other columns. */
+  pk?: Record<string, string>;
+  /** Column NAMES only, from `ResolvedColumn.name`. Never a value. */
+  columns?: string[];
+  count: number;
+  outcome: AuditOutcome;
+  reason?: AuditReason;
+  /** SQLSTATE only, `/^[0-9A-Z]{5}$/` — never the driver's message text. */
+  code?: string;
+  /** 12 hex chars from `deriveSessionCorrelator`. Absent when auth is off. */
+  session?: string;
+}
+
+/**
+ * Formats one `StudioAuditEntry` as a single JSON line. `JSON.stringify`
+ * both escapes control characters (`\n`, `\r`, etc.) inside string values —
+ * the log-injection defence for the read-only gate's unvalidated table name
+ * (design.md "denial line" decision) — and omits any key whose value is
+ * `undefined`, which is what makes `session` disappear entirely rather than
+ * serializing as `null` when auth is off (Testing Strategy row 15).
+ */
+export function formatAuditLine(entry: StudioAuditEntry): string {
+  return JSON.stringify(entry);
+}
+
+/**
+ * Stringifies one primary-key value for `StudioAuditEntry.pk`, capped at 128
+ * characters — long enough for any realistic PK, short enough to keep one
+ * audit line readable on a terminal. `null`/`undefined` render as the
+ * literal strings `"null"`/`"undefined"` (distinct from an absent `pk` key,
+ * which means "no PK returned", not "PK is null"); `Date` renders as its ISO
+ * string, matching `ts`'s own format.
+ */
+export function formatPkValue(value: unknown): string {
+  let text: string;
+  if (value === null) text = "null";
+  else if (value === undefined) text = "undefined";
+  else if (value instanceof Date) text = value.toISOString();
+  else if (typeof value === "string") text = value;
+  else text = String(value);
+  return text.length > 128 ? text.slice(0, 128) : text;
+}
+
+/**
+ * Fixed context string, domain-separating this HMAC from every other keyed
+ * HMAC in this codebase (`studio-auth.ts`'s `SESSION_SECRET_CONTEXT`,
+ * `@indigodb/realtime`'s `handle.ts`) — mirrors `SESSION_SECRET_CONTEXT`'s
+ * convention. The NUL byte after the label is a literal domain-separator
+ * byte (an actual `\0` character in this string, not the two-character
+ * sequence backslash-zero) — design.md documents it as the `\0` escape
+ * because a literal NUL made `design.md` register as binary to `rg`.
+ */
+const AUDIT_CORRELATOR_LABEL = "indigodb-studio-audit-correlator-v1\0";
+
+/**
+ * Derives the `session` audit correlator from a raw session cookie token and
+ * a per-process random key: `hex(HMAC-SHA256(key, LABEL + token))`, first 12
+ * characters (48 bits). `token === null` (auth off, or no cookie) returns
+ * `undefined` — never `"anonymous"`/`null` — so `formatAuditLine` omits the
+ * `session` key entirely (design.md "session key is absent, never null"
+ * decision).
+ *
+ * `key` MUST be a per-process `randomBytes(32)` generated inside
+ * `startStudio`, NEVER derived from the shared password or any secret
+ * derived from it (`deriveSessionSecret` in `studio-auth.ts`) — this is the
+ * security property that keeps the audit log from becoming an offline
+ * password-guessing oracle against the predictable session-cookie payload
+ * (design.md "the correlator is HMAC-SHA256 under a per-process random key"
+ * decision). This function stays pure and never imports `studio-auth.ts`;
+ * the caller in `studio-server.ts` is responsible for generating `key` once
+ * per server instance, not at module load, so a restart rotates it.
+ */
+export function deriveSessionCorrelator(token: string | null, key: Buffer): string | undefined {
+  if (token === null) return undefined;
+  return createHmac("sha256", key)
+    .update(AUDIT_CORRELATOR_LABEL + token)
+    .digest("hex")
+    .slice(0, 12);
 }
 
 export function assertStudioAuthForHost(host: string, password: string | undefined): void {
