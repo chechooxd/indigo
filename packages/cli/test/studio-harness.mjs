@@ -12,7 +12,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { startStudio } from "../dist/studio-server.js";
+import { startStudio, readOnlyPreamble } from "../dist/studio-server.js";
 
 /**
  * Runs `fn` against a fresh, isolated PGlite instance, always closing it
@@ -41,7 +41,21 @@ export function createPgliteStudioDb(db) {
     },
     async readOnly(fn) {
       return db.transaction(async (tx) => {
-        await tx.query("SET TRANSACTION READ ONLY");
+        // Uses the shared `readOnlyPreamble` builder — the exact statements
+        // `createPgDb` issues in production — so the preamble mechanism gets
+        // real runtime coverage through this harness. The timeout value
+        // itself is pinned to `0` (disabled) rather than threaded through
+        // from `withStudio`'s `queryTimeoutMs` option: empirically confirmed
+        // (see apply-progress) that PGlite ACCEPTS `SET LOCAL
+        // statement_timeout` without error but does NOT abort a
+        // long-running statement once it elapses — a positive value here
+        // would give false confidence of enforcement this harness cannot
+        // actually prove. Real timeout enforcement is covered by
+        // `readOnlyPreamble`'s own unit test plus a deterministic injected
+        // `StudioDb` double that rejects with `{ code: "57014" }`.
+        for (const stmt of readOnlyPreamble(0)) {
+          await tx.query(stmt);
+        }
         return fn(async (sql, params) => {
           const result = await tx.query(sql, params);
           return { rows: result.rows, fields: toFields(result.fields) };

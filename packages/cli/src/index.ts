@@ -25,6 +25,8 @@ import {
   assertRealtimeSecretPresent,
   assertStudioAuthForHost,
   resolveStudioReadOnly,
+  resolveQueryTimeoutMs,
+  resolveQueryRowCap,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -303,32 +305,69 @@ program
     "Refuse every write to the Studio API (INSERT/UPDATE/DELETE), regardless of session auth. " +
       "Defaults to INDIGODB_STUDIO_READONLY (exact match \"1\" or \"true\").",
   )
-  .action(async (options: { schema: string; port: string; host: string; open: boolean; readOnly?: boolean }) => {
-    loadEnv();
-    const password = process.env.INDIGODB_STUDIO_PASSWORD;
-    assertStudioAuthForHost(options.host, password);
-    // Resolved here, after `loadEnv()`, deliberately NOT as a commander
-    // option default like `--host` above: `--host`'s default is evaluated
-    // at module load, before `loadEnv()` runs, so a `.env` value never
-    // reaches it — acceptable for a bind address that fails loudly, but not
-    // for a guardrail that would otherwise fail open and silently.
-    // `resolveStudioReadOnly` (packages/cli/src/util.ts) is extracted so
-    // this exact resolution — `--read-only` OR exact-match
-    // `INDIGODB_STUDIO_READONLY` — is unit testable independent of
-    // commander's parsed options.
-    const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
-    const { resolved, path: schemaPath } = loadSchema(options.schema);
-    const connectionString = resolveConnectionString(resolved);
-    await startStudio({
-      resolved,
-      source: readFileSync(schemaPath, "utf-8"),
-      connectionString,
-      port: Number(options.port),
-      host: options.host,
-      open: options.open,
-      password,
-      readOnly,
-    });
-  });
+  .option(
+    "--query-timeout <ms>",
+    "Statement timeout (ms) applied to /api/query and /api/tables/:name. " +
+      "0 disables it. Defaults to INDIGODB_STUDIO_QUERY_TIMEOUT_MS, or 30000.",
+  )
+  .option(
+    "--query-row-cap <n>",
+    "Row cap applied to /api/query's result set. 0 disables it. " +
+      "Defaults to INDIGODB_STUDIO_QUERY_ROW_CAP, or 1000.",
+  )
+  .action(
+    async (options: {
+      schema: string;
+      port: string;
+      host: string;
+      open: boolean;
+      readOnly?: boolean;
+      queryTimeout?: string;
+      queryRowCap?: string;
+    }) => {
+      loadEnv();
+      const password = process.env.INDIGODB_STUDIO_PASSWORD;
+      assertStudioAuthForHost(options.host, password);
+      // Resolved here, after `loadEnv()`, deliberately NOT as a commander
+      // option default like `--host` above: `--host`'s default is evaluated
+      // at module load, before `loadEnv()` runs, so a `.env` value never
+      // reaches it — acceptable for a bind address that fails loudly, but not
+      // for a guardrail that would otherwise fail open and silently.
+      // `resolveStudioReadOnly` (packages/cli/src/util.ts) is extracted so
+      // this exact resolution — `--read-only` OR exact-match
+      // `INDIGODB_STUDIO_READONLY` — is unit testable independent of
+      // commander's parsed options.
+      const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
+
+      // `resolveQueryTimeoutMs`/`resolveQueryRowCap` THROW (never
+      // `process.exit`) on a present-but-malformed value — caught here so
+      // the process exits 1 before binding, per the spec's "startup
+      // resolution" requirement.
+      let queryTimeoutMs: number;
+      let queryRowCap: number;
+      try {
+        queryTimeoutMs = resolveQueryTimeoutMs(options.queryTimeout, process.env.INDIGODB_STUDIO_QUERY_TIMEOUT_MS);
+        queryRowCap = resolveQueryRowCap(options.queryRowCap, process.env.INDIGODB_STUDIO_QUERY_ROW_CAP);
+      } catch (error) {
+        console.error(`❌ ${(error as Error).message}`);
+        process.exit(1);
+      }
+
+      const { resolved, path: schemaPath } = loadSchema(options.schema);
+      const connectionString = resolveConnectionString(resolved);
+      await startStudio({
+        resolved,
+        source: readFileSync(schemaPath, "utf-8"),
+        connectionString,
+        port: Number(options.port),
+        host: options.host,
+        open: options.open,
+        password,
+        readOnly,
+        queryTimeoutMs,
+        queryRowCap,
+      });
+    },
+  );
 
 program.parseAsync();
