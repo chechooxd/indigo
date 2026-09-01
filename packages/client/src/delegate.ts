@@ -430,7 +430,7 @@ export class ModelDelegate<
    * defaulted-generic precedent without renumbering anything). Defaults to
    * `never` so hand-authored `ModelDelegate` usage cannot call `upsert` at
    * all unless it opts in; the generated client passes
-   * `<Model>UpsertWhereInput` — a union of one object shape per declared
+   * `<Model>WhereUniqueInput` — a union of one object shape per declared
    * unique group in `__meta.uniqueGroups` — making a `where` that doesn't
    * match a declared group a compile-time error, on top of `upsertImpl`'s
    * runtime `NO_MATCHING_UNIQUE_CONSTRAINT` guard.
@@ -1321,17 +1321,55 @@ export class ModelDelegate<
    * unbounded `update()` (design.md's confirmed product decision: `set: []`
    * disconnects the entire currently-linked set, deletes nothing).
    */
-  update(args: UpdateArgs<Row, UpdateInput, Where>): IndigoPromise<Row> {
+  /**
+   * Guards `update`/`delete`'s `where` against a non-unique selector
+   * (client-unique-write-selector spec, design.md Decision D4/D5): applies
+   * ONLY when `__meta.uniqueGroups` is present and non-empty — every
+   * hand-authored test meta omits it, so an unconditional guard would throw
+   * on every `update`/`delete` in the existing suite (D4). Kept as a
+   * separate sibling function from `resolveUpsertConflictTarget`, not a
+   * reuse, per design.md's write-side/read-side separation, even though the
+   * key-set-equality check is the same shape. Runs FIRST, before
+   * `splitData`/`findMany` (D5): `NO_MATCHING_UNIQUE_CONSTRAINT` wins over
+   * both `EMPTY_UPDATE_DATA` and `AMBIGUOUS_UPDATE_TARGET`.
+   */
+  private assertUniqueWhere(where: Record<string, unknown>, op: "update" | "delete"): void {
+    const groups = this.meta.uniqueGroups;
+    if (!groups || groups.length === 0) return;
+
+    for (const [key, value] of Object.entries(where)) {
+      if (isFilterObject(value)) {
+        throw new IndigoArgumentError(
+          "NO_MATCHING_UNIQUE_CONSTRAINT",
+          `IndigoDB: \`${op}\` \`where\` on "${this.meta.name}" must contain only plain scalar equalities — ` +
+            `"${key}" is an operator object, which cannot target a single unique row.`,
+        );
+      }
+    }
+
+    const keySet = new Set(Object.keys(where));
+    const match = groups.find((g) => g.length === keySet.size && g.every((f) => keySet.has(f)));
+    if (!match) {
+      throw new IndigoArgumentError(
+        "NO_MATCHING_UNIQUE_CONSTRAINT",
+        `IndigoDB: \`${op}\` \`where\` on "${this.meta.name}" (keys: ${[...keySet].join(", ")}) does not ` +
+          `exactly match any declared unique constraint — check the generated <Model>WhereUniqueInput type.`,
+      );
+    }
+  }
+
+  update(args: UpdateArgs<Row, UpdateInput, UniqueWhere>): IndigoPromise<Row> {
     return defer(this.meta.name, "update", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "update" }, () => d.updateImpl(args)),
     );
   }
 
-  private async updateImpl(args: UpdateArgs<Row, UpdateInput, Where>): Promise<Row> {
+  private async updateImpl(args: UpdateArgs<Row, UpdateInput, UniqueWhere>): Promise<Row> {
+    this.assertUniqueWhere(args.where as Record<string, unknown>, "update");
     const data = args.data as Record<string, unknown>;
     const { scalars, relOps } = this.splitData(data);
     if (Object.keys(relOps).length === 0) {
-      return this.rawUpdate(args.where, scalars);
+      return this.rawUpdate(args.where as unknown as Where | undefined, scalars);
     }
 
     return this.runAtomic(async (tx) => {
@@ -1401,7 +1439,10 @@ export class ModelDelegate<
         }
         updatedRow = match;
       } else {
-        updatedRow = (await self.rawUpdate(args.where, finalScalars)) as unknown as Record<string, unknown>;
+        updatedRow = (await self.rawUpdate(
+          args.where as unknown as Where | undefined,
+          finalScalars,
+        )) as unknown as Record<string, unknown>;
       }
 
       // Phase 3: non-fkSide ops run AFTER the parent update — they need the
@@ -1417,16 +1458,17 @@ export class ModelDelegate<
     });
   }
 
-  delete(args: DeleteArgs<Row, Where>): IndigoPromise<Row> {
+  delete(args: DeleteArgs<Row, UniqueWhere>): IndigoPromise<Row> {
     return defer(this.meta.name, "delete", this, (d) =>
       withQueryContext({ model: d.meta.name, operation: "delete" }, () => d.deleteImpl(args)),
     );
   }
 
-  private async deleteImpl(args: DeleteArgs<Row, Where>): Promise<Row> {
+  private async deleteImpl(args: DeleteArgs<Row, UniqueWhere>): Promise<Row> {
+    this.assertUniqueWhere(args.where as Record<string, unknown>, "delete");
     const params = new Params();
     let sql = `DELETE FROM ${quote(this.meta.table)}`;
-    sql += this.buildWhere(args.where, params);
+    sql += this.buildWhere(args.where as unknown as Where | undefined, params);
     sql += ` RETURNING ${this.selectList()}`;
     const rows = await this.exec(sql, params.values);
     const row = rows[0] as Row | undefined;
@@ -1768,7 +1810,7 @@ export class ModelDelegate<
       throw new IndigoArgumentError(
         "NO_MATCHING_UNIQUE_CONSTRAINT",
         `IndigoDB: \`upsert\` \`where\` on "${this.meta.name}" (keys: ${[...keySet].join(", ")}) does not ` +
-          `exactly match any declared unique constraint — check the generated <Model>UpsertWhereInput type.`,
+          `exactly match any declared unique constraint — check the generated <Model>WhereUniqueInput type.`,
       );
     }
     return [...match];

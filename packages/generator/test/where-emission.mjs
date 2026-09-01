@@ -97,13 +97,13 @@ check("no flat generic WhereInput<Row> type is emitted for a model", () => {
 check("ModelDelegate/RealtimeModelDelegate instantiations reference <Model>WhereInput as the 5th generic", () => {
   deepStrictEqual(
     output.includes(
-      "new ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserUpsertWhereInput>(",
+      "new ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserWhereUniqueInput>(",
     ),
     true,
   );
   deepStrictEqual(
     output.includes(
-      "readonly post: ModelDelegate<Post, PostCreateInput, PostUpdateInput, PostRelations, PostWhereInput, PostCreateManyInput, PostCursorInput, PostNumericFields, PostUpsertWhereInput>;",
+      "readonly post: ModelDelegate<Post, PostCreateInput, PostUpdateInput, PostRelations, PostWhereInput, PostCreateManyInput, PostCursorInput, PostNumericFields, PostWhereUniqueInput>;",
     ),
     true,
   );

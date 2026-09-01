@@ -55,10 +55,26 @@ check("emits a __delegates(exec, realtime, runAtomic?) factory returning { tx, b
   deepStrictEqual(output.includes("return { tx: client, byModel: reg };"), true);
 });
 
+// UPS-3 (client-unique-write-selector spec PR 2, design.md Testing Strategy):
+// exactly one `WhereUniqueInput` type is emitted per model, and `upsert`,
+// `update`, `delete` all reference the SAME literal type name — proven here
+// by the type declaration appearing exactly once and the `UpsertArgs`
+// instantiation naming it; `update`/`delete`'s reference is the shared 9th
+// `ModelDelegate` generic already asserted below (they take no separately
+// emitted arg-interface name).
+check("UPS-3: exactly one UserWhereUniqueInput type is emitted, and UserUpsertArgs references it", () => {
+  const declarationCount = output.split("export type UserWhereUniqueInput = ").length - 1;
+  deepStrictEqual(declarationCount, 1, `expected exactly one declaration, found ${declarationCount}`);
+  deepStrictEqual(
+    output.includes("export type UserUpsertArgs = UpsertArgs<UserCreateInput, UserUpdateInput, UserWhereUniqueInput>;"),
+    true,
+  );
+});
+
 check("__delegates builds the plain model's ModelDelegate", () => {
   deepStrictEqual(
     output.includes(
-      "new ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserUpsertWhereInput>(",
+      "new ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserWhereUniqueInput>(",
     ),
     true,
   );
@@ -67,7 +83,7 @@ check("__delegates builds the plain model's ModelDelegate", () => {
 check("__delegates builds the @@realtime model's RealtimeModelDelegate", () => {
   deepStrictEqual(
     output.includes(
-      "new RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageUpsertWhereInput>(",
+      "new RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageWhereUniqueInput>(",
     ),
     true,
   );
@@ -83,13 +99,13 @@ check("TransactionClient exposes one readonly delegate field per model", () => {
   const block = output.slice(start, end + 1);
   deepStrictEqual(
     block.includes(
-      "readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserUpsertWhereInput>;",
+      "readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserWhereUniqueInput>;",
     ),
     true,
   );
   deepStrictEqual(
     block.includes(
-      "readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageUpsertWhereInput>;",
+      "readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageWhereUniqueInput>;",
     ),
     true,
   );
@@ -112,13 +128,13 @@ check("TransactionClient never exposes $transaction", () => {
 check("IndigoClient declares readonly delegate fields without initializers", () => {
   deepStrictEqual(
     output.includes(
-      "readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserUpsertWhereInput>;",
+      "readonly user: ModelDelegate<User, UserCreateInput, UserUpdateInput, UserRelations, UserWhereInput, UserCreateManyInput, UserCursorInput, UserNumericFields, UserWhereUniqueInput>;",
     ),
     true,
   );
   deepStrictEqual(
     output.includes(
-      "readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageUpsertWhereInput>;",
+      "readonly message: RealtimeModelDelegate<Message, MessageCreateInput, MessageUpdateInput, MessageRelations, MessageWhereInput, MessageCreateManyInput, MessageCursorInput, MessageNumericFields, MessageWhereUniqueInput>;",
     ),
     true,
   );

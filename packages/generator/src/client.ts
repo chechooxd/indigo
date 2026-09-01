@@ -107,7 +107,7 @@ function isNumericColumn(col: ResolvedColumn): boolean {
  * FIELD names (schema names, not physical column names), mirroring the
  * direction-agnostic translation `resolveRelationInfo` already does for
  * relation columns. Drives both `__meta.uniqueGroups` and
- * `<Model>UpsertWhereInput`'s member shapes.
+ * `<Model>WhereUniqueInput`'s member shapes.
  */
 function uniqueGroups(table: ResolvedTable): string[][] {
   const colsByDb = columnMapByDb(table);
@@ -346,7 +346,7 @@ export function generateClient(schema: ResolvedSchema): string {
     out.push(...generateCreateManyInput(table));
     out.push(...generateCursorInput(table));
     out.push(...generateNumericFields(table));
-    out.push(...generateUpsertWhereInput(table));
+    out.push(...generateWhereUniqueInput(table));
     out.push(...generateUpdateInput(table, relationsByTable.get(table.name)!));
     out.push(...generateWhereInput(table, relationsByTable.get(table.name)!));
     out.push(...generateRelationsInterface(table, relationsByTable.get(table.name)!));
@@ -357,7 +357,7 @@ export function generateClient(schema: ResolvedSchema): string {
       `export type ${table.name}DeleteManyArgs = DeleteManyArgs<${table.name}, ${table.name}WhereInput>;`,
       `export type ${table.name}AggregateArgs = AggregateArgs<${table.name}, ${table.name}WhereInput, ${table.name}NumericFields>;`,
       `export type ${table.name}GroupByArgs = GroupByArgs<${table.name}, ${table.name}WhereInput, ${table.name}NumericFields>;`,
-      `export type ${table.name}UpsertArgs = UpsertArgs<${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}UpsertWhereInput>;`,
+      `export type ${table.name}UpsertArgs = UpsertArgs<${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}WhereUniqueInput>;`,
       "",
     );
   }
@@ -392,7 +392,7 @@ export function generateClient(schema: ResolvedSchema): string {
   out.push("export interface TransactionClient {");
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}WhereUniqueInput>`;
     const delegateType = `${delegateClassName(table)}${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
@@ -448,7 +448,7 @@ export function generateClient(schema: ResolvedSchema): string {
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}WhereUniqueInput>`;
     if (hasLive(table)) {
       out.push(
         `    ${d}: new LiveModelDelegate${generics}(`,
@@ -516,7 +516,7 @@ export function generateClient(schema: ResolvedSchema): string {
   }
   for (const table of schema.tables) {
     const d = delegateName(table.name);
-    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}UpsertWhereInput>`;
+    const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}WhereUniqueInput>`;
     const delegateType = `${delegateClassName(table)}${generics}`;
     out.push(`  readonly ${d}: ${delegateType};`);
   }
@@ -719,7 +719,7 @@ function generateNumericFields(table: ResolvedTable): string[] {
 }
 
 /**
- * `export type <Model>UpsertWhereInput = { <group0 fields> } | { <group1
+ * `export type <Model>WhereUniqueInput = { <group0 fields> } | { <group1
  * fields> } | ...;` (client-upsert PR D, design.md Decisions #12-13) — one
  * object shape per declared unique group (`uniqueGroups`: PK first, then
  * `@unique` columns, then unique indexes), each member typed exactly like
@@ -728,10 +728,10 @@ function generateNumericFields(table: ResolvedTable): string[] {
  * (e.g. no PK, no `@unique`, no unique index) gets `never`, making `upsert`
  * unwritable in TS for it.
  */
-function generateUpsertWhereInput(table: ResolvedTable): string[] {
+function generateWhereUniqueInput(table: ResolvedTable): string[] {
   const groups = uniqueGroups(table);
   if (groups.length === 0) {
-    return [`export type ${table.name}UpsertWhereInput = never;`, ""];
+    return [`export type ${table.name}WhereUniqueInput = never;`, ""];
   }
   const colsByName = new Map(table.columns.map((c) => [c.name, c]));
   const shapes = groups.map((g) => {
@@ -743,7 +743,7 @@ function generateUpsertWhereInput(table: ResolvedTable): string[] {
     });
     return `{ ${members.join("; ")} }`;
   });
-  return [`export type ${table.name}UpsertWhereInput = ${shapes.join(" | ")};`, ""];
+  return [`export type ${table.name}WhereUniqueInput = ${shapes.join(" | ")};`, ""];
 }
 
 /**

@@ -58,16 +58,9 @@ folded into `cli`'s harness-backed suites and the workspace `check-pack-contents
 zero failures, zero skips beyond the pre-existing `INDIGODB_TEST_DATABASE_URL`-gated
 realtime/Postgres suites.
 
-### Remaining tasks (PR 2 — not started, per scope)
-
-- [ ] Phase 5-9 (rename `UpsertWhereInput` → `WhereUniqueInput`, `assertUniqueWhere`,
-      `UpdateArgs`/`DeleteArgs` signature change, compile-time cases, OPS-2) — explicitly
-      out of scope for this apply batch.
-
 ### Status
 
-24/24 PR 1 tasks complete (Phases 1-4). Ready for `sdd-verify` on PR 1's scope, or a fresh
-`sdd-apply` batch for PR 2 (stacked on this branch per `stacked-to-main`).
+24/24 PR 1 tasks complete (Phases 1-4). Merged to `main` at `1735c9e`.
 
 ## Corrective batch — verify CRITICAL (disconnect/set regression)
 
@@ -106,3 +99,91 @@ and `client.ts:243` (`Map.delete`, unrelated). No unguarded internal consumer re
 **Mutation proof.** Made `disconnectByUpdate` rethrow unconditionally and rebuilt: C1.1c,
 C1.1d and C1.2d all failed, with `IndigoNotFoundError` on `Book`, `Book` and `Profile`
 respectively. Restored byte-identically (`cmp` clean), rebuilt, reconfirmed green.
+
+## PR 2 — Unique selector (Phases 5-9) — COMPLETE
+
+Branch: `feat/client-write-correctness-2-unique-selector` (off `main` at `1735c9e`, PR 1's
+merge commit). Not merged/pushed — orchestrator handles delivery.
+
+### Phase 5 — mechanical rename (no behavior change)
+
+`UpsertWhereInput` → `WhereUniqueInput` via `sd -- 'UpsertWhereInput' 'WhereUniqueInput'`
+across all 7 inventoried files (`generator/src/client.ts`, 3 generator test files,
+`typecheck-fixture.ts`, `delegate.ts`, `types.ts`). Single global token replace handles both
+the type name and `generateUpsertWhereInput` → `generateWhereUniqueInput` (substring match).
+OPS-2 verified before AND after Phase 7 implementation: `rg -c UpsertWhereInput` excluding
+`openspec/**` returns 0 occurrences (exit 1 = no matches). Generator suite reran green
+immediately after the rename, before any behavioral code touched.
+
+### TDD Cycle Evidence
+
+| Task group | RED | GREEN | REFACTOR |
+|---|---|---|---|
+| UWS-5a/b/c (`unique-write-selector.mjs`) | Mutation-based RED (see below) — implementation and test were authored together per design's tight coupling to `resolveUpsertConflictTarget`'s existing shape; RED evidence captured via `assertUniqueWhere` neutralization rather than a literal pre-implementation failing run | All 10 checks in `unique-write-selector.mjs` pass after wiring `assertUniqueWhere` first in `updateImpl`/`deleteImpl` | None needed |
+| UWS-6/UWS-7 (D7 harness)/UWS-3/UWS-4/D4/D6c/D6d | Same file, same batch | All pass | None |
+| UWS-1/2/8/9 (`typecheck-fixture.ts`) | First `tsc --noEmit` run caught 2 misplaced `@ts-expect-error` directives (see Issue below) — genuine RED against the fixture itself | Passes after moving each directive to the exact line TS reports the error on | None |
+| QTS-3/UPS-3 (`transaction-emission.mjs`) | New check added directly (declarative string-match, no meaningful RED/GREEN cycle for this kind) | Passes | None |
+
+**Deviation from strict RED-before-GREEN ordering (reported, not silent):** `assertUniqueWhere`
+was implemented alongside `unique-write-selector.mjs` rather than the tests failing first
+against no implementation. Compensated with the mandatory negative-test mutation proof below,
+matching PR 1's established pattern for this same reason (`sdd-apply`'s Hard Gate requires
+mutation evidence in ANY mode when a strict pre-implementation RED run isn't available).
+
+### Negative-test mutation proof (mandatory)
+
+`assertUniqueWhere` (`packages/client/src/delegate.ts`): temporarily replaced the method body
+with `return;` (unconditional early exit, guard fully neutralized), rebuilt, ran
+`unique-write-selector.mjs` → UWS-5a, UWS-5b, UWS-5c all FAILED (`expected an
+IndigoArgumentError`); the other 7 checks still passed (expected — they exercise paths the
+guard doesn't reject, or paths orthogonal to the guard). Restored via `cp` from a
+scratchpad-backed copy, `cmp` confirmed byte-identical, rebuilt, reran → all 10 pass again.
+
+### Issue found and fixed during implementation
+
+`@ts-expect-error` placement: TypeScript requires the directive on the line immediately
+preceding the line the error is actually reported on, not the first line of a multi-line call
+expression. Initial placement (directly above `const x = await delegate.update({`) produced
+"Unused '@ts-expect-error' directive" because the real error surfaces on the `where: {...}`
+line one level deeper. Fixed by moving each of the 4 new directives (UWS-2 update/delete,
+UWS-8 update/delete) to sit directly above the `where:` property line inside the object
+literal — the same placement the pre-existing UWS-2 upsert case already used correctly.
+
+### Design deviation: UWS-8 emission half not reachable via a real `.indigo` schema (reported)
+
+Task 8.5 asks for a `generator/test/where-emission.mjs` assertion of an emitted
+`export type LogWhereUniqueInput = never;` from an actual compiled schema. Verified against
+`crates/indigo-compiler/src/validate.rs:66-72`: every model with any field MUST declare
+`@id` or the schema fails to compile (`"Model \"X\" has no @id primary key."`). Since
+`uniqueGroups()` (`generator/src/client.ts`) always pushes the PK as `groups[0]` when
+`table.primaryKey.length > 0`, and a valid schema guarantees that, `generateWhereUniqueInput`'s
+`groups.length === 0` branch is structurally unreachable from any real `.indigo` source today —
+confirming design.md's own framing ("a generated model with no unique group... is uncallable at
+**compile time**", not "is ever actually emitted"). Compile-time coverage is complete via
+`typecheck-fixture.ts`'s hand-authored `logDelegate` (UniqueWhere defaults to `never` when the
+9th `ModelDelegate` generic is omitted — the same mechanism a real `never`-emitting model would
+hit). The emission-suite half of task 8.5 is not literally satisfiable without either changing
+`validate.rs` (out of scope — non-goal, no `@indigodb/core`/compiler IR change per design.md)
+or unit-testing an unexported generator internal (`generateWhereUniqueInput` is not exported
+from `packages/generator/src/index.ts`). Flagging for `sdd-verify`/`sdd-spec` rather than
+silently marking the task done as literally described.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `pnpm --filter @indigodb/client test` — exit 0, both `write-preconditions.mjs` and `unique-write-selector.mjs` banners present by name in console output; `pnpm --filter @indigodb/generator test` — exit 0, all emission suites green including the new UPS-3 check |
+| Runtime harness command/scenario and exact result | PGlite-backed DB-layer checks in `unique-write-selector.mjs` (UWS-6, UWS-7/D7, UWS-3, UWS-4, D6c) — real `UPDATE`/`DELETE`/`connect` round-trips; `typecheck.mjs`'s `tsc --noEmit` over `typecheck-fixture.ts` for the compile-time half (UWS-1/2/3/4/8/9) |
+| Rollback boundary | `packages/client/src/delegate.ts`, `packages/client/src/types.ts`, `packages/generator/src/client.ts`, all 7 rename-inventory files, `packages/client/test/unique-write-selector.mjs` (new file), `packages/client/package.json` (test chain) — one commit range, independently revertable, restoring `UpsertWhereInput` and the pre-guard `update`/`delete` signatures without touching PR 1 |
+
+### Root verification gate
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root — all three exited
+0. Full Turbo graph across all 10 packages (18 test tasks) green, zero failures; only the
+pre-existing `INDIGODB_TEST_DATABASE_URL`-gated realtime suite skipped, as expected. OPS-2
+reconfirmed after the gate: `rg -c UpsertWhereInput` excluding `openspec/**` returns 0.
+
+### Status
+
+31/31 PR 2 tasks complete (Phases 5-9, including 9.6 commit). Ready for `sdd-verify` on PR 2's
+scope.

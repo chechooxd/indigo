@@ -201,13 +201,22 @@ export interface CreateArgs<CreateInput> {
   data: CreateInput;
 }
 
-export interface UpdateArgs<Row, UpdateInput, Where = WhereInput<Row>> {
-  where: Where;
+/**
+ * `update`'s `where` is restricted to a declared unique-constraint selector
+ * (client-unique-write-selector spec, design.md Decisions D4/D5): the
+ * generic slot is named `UniqueWhere`, reusing `ModelDelegate`'s 9th
+ * generic (the same one `upsert` already uses), defaulted to
+ * `WhereInput<Row>` so hand-authored `ModelDelegate` usage (which passes no
+ * 9th generic and therefore no `uniqueGroups`) keeps compiling unchanged.
+ */
+export interface UpdateArgs<Row, UpdateInput, UniqueWhere = WhereInput<Row>> {
+  where: UniqueWhere;
   data: UpdateInput;
 }
 
-export interface DeleteArgs<Row, Where = WhereInput<Row>> {
-  where: Where;
+/** `delete`'s `where` — same unique-selector restriction as `UpdateArgs`. */
+export interface DeleteArgs<Row, UniqueWhere = WhereInput<Row>> {
+  where: UniqueWhere;
 }
 
 export interface CountArgs<Row, Where = WhereInput<Row>> {
@@ -320,7 +329,7 @@ export type GroupByResult<Row> = Partial<Row> & AggregateResult;
 // renumbered): the per-model UNION of exact unique-constraint-group shapes
 // sourced from generated `__meta.uniqueGroups`. Defaults to `never` so
 // hand-authored `ModelDelegate` usage cannot call `upsert` at all unless it
-// opts in; the generated client passes `<Model>UpsertWhereInput` — a union
+// opts in; the generated client passes `<Model>WhereUniqueInput` — a union
 // of one object shape per declared unique group (PK first, then `@unique`
 // columns, then unique indexes) — making a `where` that doesn't exactly
 // match a declared group a compile-time error, on top of `upsertImpl`'s

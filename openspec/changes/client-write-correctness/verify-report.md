@@ -331,3 +331,229 @@ branches their names claim, the mutation proof reproduces cleanly with an exact 
 restore, the commit is clean conventional-commits with no AI attribution, and the root gate
 (`pnpm clean && pnpm build --force && pnpm lint && pnpm test`) exits 0. No new issues introduced.
 Ready for archive pending PR 2 (Phases 5-9), which remains genuinely unstarted.
+
+---
+
+## PR 2 verification — unique write selector (Phases 5-9)
+
+**Scope**: branch `feat/client-write-correctness-2-unique-selector`, single commit `41f12d7`,
+off `main`@`1735c9e` (PR 1, already merged and verified — out of scope here). 702 insertions /
+88 deletions across 11 files. Against `tasks.md` Phases 5-9 (31 tasks, all claimed `[x]`),
+`design.md` rows UWS-1..9, QTS-1..3, UPS-1..3, D4, D5, D7, D6c-d, OPS-1 (PR2 half), OPS-2, and
+`specs/client-unique-write-selector`, `specs/client-query-type-safety`, `specs/client-upsert`
+(9 + 3 + 3 = 15 scenarios).
+
+### 1. Root verification gate — exit 0
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test`, run from repo root, backgrounded
+and polled to completion. `clean`: 10/10. `build --force`: 10/10, no `cache hit` lines in that
+phase (genuinely rebuilt, not replayed). `lint`: 19/19 (fully cache-hit against the fresh
+build's content hash, expected and valid). `test`: 18 Turbo test tasks + `check-pack-contents.mjs`
+guard, all green, workspace pack-contents guard all green. **Exit 0.**
+
+### 2. OPS-1 — `unique-write-selector.mjs` wired and executed, not just present on disk
+
+- `packages/client/package.json`'s hand-maintained `test` chain: confirmed `&& node
+  test/unique-write-selector.mjs` inserted immediately after `write-preconditions.mjs` (diff
+  reviewed directly).
+- Independently executed (not trusting the Turbo-cached root-gate replay): ran
+  `node test/write-preconditions.mjs && node test/unique-write-selector.mjs` directly from
+  `packages/client/`. Real console output: `@indigodb/client: unique write selector` banner,
+  10/10 checks `ok`, closing line `@indigodb/client unique-write-selector: all checks passed`.
+  **OPS-1 confirmed by direct execution, not disk presence.**
+
+### 3. OPS-2 — zero `UpsertWhereInput` occurrences repo-wide
+
+Ran `rg -c "UpsertWhereInput" --glob '!openspec/**' .` myself: **0 occurrences.** Matches the
+apply-progress claim and task 9.5's re-run.
+
+### 4. The four (actually three) new `as unknown as` casts — assessed, none erase a real hole
+
+Diffed `packages/client/src/delegate.ts` directly. The task brief describes "four" cast sites;
+independent count found **three** `as unknown as Where | undefined` casts (line 1372 —
+`rawUpdate` scalar path in `updateImpl`; line 1443 — `rawUpdate` inside the relation-ops
+branch; line 1471 — `buildWhere` in `deleteImpl`), plus two unrelated `as Record<string,
+unknown>` casts feeding `assertUniqueWhere` itself (not `as unknown as`). Correcting the
+factual count for the record; it does not change the substantive assessment below.
+
+`Where` (5th generic, defaults to `WhereInput<Row>`) and `UniqueWhere` (9th generic, the
+generated union of unique-group shapes) are **independently parameterized generic slots** on
+`ModelDelegate` — TypeScript has no structural basis to know a `UniqueWhere` value is a valid
+`Where` value, so the cast is required regardless of runtime safety. The question is whether
+runtime safety actually holds. It does: `assertUniqueWhere(args.where, op)` is called as the
+**first statement** in both `updateImpl` (line 1368) and `deleteImpl` (line 1468), strictly
+before any of the three cast-and-use sites, and it rejects (a) any operator-object value on a
+where key (`isFilterObject`) and (b) any key-set that doesn't exactly equal a declared unique
+group. By the time any of the three casts fire, `args.where` is guaranteed to be a plain
+scalar-equality object whose keys exactly match a declared unique group — a strict subset of
+`WhereInput<Row>`'s accepted shapes. **Verdict: all three casts bridge an artificial
+generic-parameter mismatch, not a real type hole.** No CRITICAL.
+
+### 5. Strict-TDD deviation — mutation proof independently re-run, reproduces exactly as claimed
+
+Apply's claim: RED for UWS-5a/b/c was captured via mutation-after-the-fact (neutralize guard →
+3 checks fail → restore → green), not a literal pre-implementation failing run.
+
+Independently reproduced, start to finish:
+1. Backed up `delegate.ts` to scratchpad.
+2. Patched `assertUniqueWhere` to `return;` unconditionally as its first statement (dead code
+   below, harmless).
+3. Rebuilt `@indigodb/client` (`tsc`, clean compile, no errors).
+4. Ran `node test/unique-write-selector.mjs` directly: **UWS-5a, UWS-5b, UWS-5c FAILed** with
+   `Error: expected an IndigoArgumentError`; the other 7 checks (UWS-6, UWS-7, UWS-3, UWS-4,
+   D4, D6c, D6d) still passed unaffected — exactly the claimed 3-fail/7-pass split.
+5. Restored via `git checkout -- packages/client/src/delegate.ts`; `cmp` against the scratchpad
+   backup confirmed **byte-identical**.
+6. Rebuilt; ran `node test/unique-write-selector.mjs` again: **all 10 pass.**
+
+**Verdict**: the mutation evidence is genuinely equivalent to RED-before-GREEN for this case —
+it proves the exact 3 assertions the guard exists for actually depend on the guard's code path,
+and nothing else in the suite silently depended on it. Accepted, not merely on trust.
+
+### 6. Task 8.5 — independently re-derived against compiler source: TRUE, legitimate coverage limit
+
+Independently confirmed against `crates/indigo-compiler/src/validate.rs:66-72`:
+`if pk_count == 0 && !model.fields.is_empty() { errors.push(...) }` — any model with at least
+one field MUST declare `@id`. Independently confirmed the parser (`parser.rs:86-117`,
+`parse_model`) allows a model block to have **zero fields** (`while !RBrace { ... }`, no
+minimum), and `validate.rs`'s check is gated on `!model.fields.is_empty()` — so the *only* way
+to compile a real `.indigo` model with `pk_count == 0` is a genuinely empty model with no
+columns at all. Independently confirmed `uniqueGroups()` in `packages/generator/src/client.ts`
+pushes `table.primaryKey` as `groups[0]` whenever `table.primaryKey.length > 0`, which a
+field-bearing model always satisfies once `@id` is mandatory. So `groups.length === 0` (the
+precondition for the emitted `never` type) is unreachable from any `.indigo` schema with usable
+columns — a zero-field model has no columns to select, filter, or return, and is not a
+meaningful "generated model" in the sense the spec scenario intends.
+
+**Verdict: apply's claim holds.** Task 8.5's literal ask (a `where-emission.mjs` assertion of
+an *emitted* `LogWhereUniqueInput = never` from a *compiled* schema) is structurally
+unreachable for any realistic model. The compile-time fixture (`typecheck-fixture.ts`'s
+hand-authored `logDelegate`/`LogWhereUniqueInput`, 9th generic omitted → defaults to `never`)
+is the only reachable proof of the *behavioral* outcome (uncallability), and it is complete for
+that purpose.
+
+**WARNING** (bookkeeping, not behavior): task 8.5 is marked `[x]` in `tasks.md`, but its literal
+text ("Add UWS-8: emitted `LogWhereUniqueInput = never` ... in `where-emission.mjs`") was not
+fulfilled — independently confirmed via `rg -n "Log|never" packages/generator/test/where-emission.mjs`
+(zero matches). The substitution to `typecheck-fixture.ts` was disclosed prominently in
+apply-progress as a documented deviation, not silently marked done, which is the right call —
+but the task-list bookkeeping doesn't reflect the substitution. Recommend a follow-up: either
+reword task 8.5 in a future spec/tasks correction to match the reachable proof, or add an
+explicit note in `tasks.md` itself. Non-blocking.
+
+Separately, `specs/client-unique-write-selector/spec.md`'s "No-unique-group model cannot call
+update/delete" scenario's GIVEN ("a model `Log` with no PK... WHEN the client is generated")
+is, per the same finding, not achievable through the real compiler pipeline for any model with
+fields. This is a pre-existing spec-wording gap (not introduced by this PR) worth a future spec
+correction, flagged here as **SUGGESTION**, not blocking this PR.
+
+### 7. D4 — conditional guard confirmed, and no generated model is unguarded in practice
+
+Confirmed in code: `assertUniqueWhere` returns immediately when
+`!this.meta.uniqueGroups || this.meta.uniqueGroups.length === 0` (delegate.ts). Confirmed
+D4's own test (`unique-write-selector.mjs`, "D4: a delegate whose meta declares no
+uniqueGroups issues SQL unconditionally") proves the opt-in behavior with a hand-authored meta
+lacking `uniqueGroups`.
+
+Critically: cross-referenced against finding #6 above — every **generated** model's
+`__meta[Model].uniqueGroups` is populated by `uniqueGroups(table)` in
+`packages/generator/src/client.ts`, which always includes the PK group whenever
+`table.primaryKey.length > 0`; and every field-bearing `.indigo` model is required to declare
+`@id` (validate.rs). So in practice, **every real generated model is guarded** — the
+`uniqueGroups`-absent escape hatch is reachable only by hand-authored `ModelDelegate` test
+metas (deliberately, so the pre-existing suite doesn't need touching), never by generated
+code. No CRITICAL.
+
+### 8. D5 / D7 — confirmed independently
+
+- **D5**: `nested-writes-update.mjs` diffed directly against `main` — **zero changes** in this
+  PR. C1.4b ("`where` matching more than one row + relation ops throws
+  `AMBIGUOUS_UPDATE_TARGET`") still asserts `err.code === "AMBIGUOUS_UPDATE_TARGET"` at its
+  original line, unchanged.
+- **D7**: read `unique-write-selector.mjs`'s UWS-7 test in full. The DDL (`seedDup`) creates
+  `Author(id, name)` with **no** `UNIQUE` constraint on `name`; two `Author` rows are inserted
+  with `name: "Dup"`; `assertUniqueWhere` passes (its keys exactly match the declared
+  `uniqueGroups: [["name"]]` shape — it checks shape only, not DB enforcement); the subsequent
+  `findMany`-based ambiguity check then finds 2 matches and throws `IndigoNestedWriteError`
+  code `AMBIGUOUS_UPDATE_TARGET`. The test's own header comment and inline assertion message
+  ("assertUniqueWhere already passed") state the rationale explicitly, so a reviewer will not
+  misread the missing DB constraint as a fixture bug. Confirmed reachable, confirmed the
+  rationale is present.
+
+### 9. UWS-1 positive control — confirmed, not negative-only
+
+`typecheck-fixture.ts` lines 493-501: `userUpsertDelegate.update({ where: { email: "a@x.com"
+}, data: { name: "Ada 2" } })` and the matching `.delete({ where: { email: "a@x.com" } })` —
+**no cast, no `@ts-expect-error`**, immediately preceding the negative UWS-2 case at line
+505-515 which does carry `@ts-expect-error`. The fixture distinguishes "correctly accepts" from
+"rejects everything." Confirmed.
+
+### 10. No scope creep, no error-class re-homing, clean commit
+
+- `findUnique` (delegate.ts:861): still typed against the 5th `Where` generic
+  (`FindUniqueArgs<Row, Rel, Where>`) — unchanged. Confirmed by grep and by the UWS-3
+  compile-time + runtime scenario, both passing.
+- `updateMany`/`deleteMany` (delegate.ts:1548, 1572): still typed against the 5th `Where`
+  generic — unchanged. Confirmed by grep and by the UWS-4/UWS-9 scenarios.
+- `AMBIGUOUS_UPDATE_TARGET` still thrown as `IndigoNestedWriteError` — confirmed at
+  delegate.ts:1393-1394 (`updateImpl`'s pre-existing relation-ops ambiguity check, untouched by
+  this diff) and independently exercised by UWS-7 and C1.4b.
+- Commit `41f12d7`: `git show -s --format='%B'` checked with `rg -i "co-authored|claude|
+  anthropic|generated with"` — zero matches. Subject `feat(client): restrict update/delete
+  where to declared unique selector` is conventional-commits shaped.
+
+### 11. Task completeness — 31/31 Phase 5-9 tasks read individually against code
+
+All 31 tasks read from `tasks.md` and cross-checked against the diff and test output above.
+30/31 fulfilled as literally described; task 8.5 fulfilled in substance but not literal text
+(see finding #6 — WARNING, disclosed, non-blocking).
+
+### Spec Compliance Matrix (PR 2, 15 scenarios)
+
+| Capability | Scenario | Covering test | Result |
+|---|---|---|---|
+| client-unique-write-selector | Declared unique-group where type-checks | typecheck-fixture.ts:493 (UWS-1) | PASS |
+| client-unique-write-selector | Non-unique where fails to type-check | typecheck-fixture.ts:505 (UWS-2) | PASS |
+| client-unique-write-selector | findUnique unaffected | typecheck-fixture.ts:519 + unique-write-selector.mjs UWS-3 | PASS |
+| client-unique-write-selector | updateMany/deleteMany keep broad where | typecheck-fixture.ts:525 + unique-write-selector.mjs UWS-4 | PASS |
+| client-unique-write-selector | as any bypass, non-unique where throws pre-SQL | unique-write-selector.mjs UWS-5a/b/c | PASS (mutation-proven) |
+| client-unique-write-selector | as any bypass, valid unique where accepted | unique-write-selector.mjs UWS-6 | PASS |
+| client-unique-write-selector | Ambiguous target still throws AMBIGUOUS_UPDATE_TARGET | unique-write-selector.mjs UWS-7 + nested-writes-update.mjs C1.4b | PASS |
+| client-unique-write-selector | No-unique-group model: update/delete uncallable | typecheck-fixture.ts logDelegate (UWS-8) | PASS via reachable proxy — compiled-emission half structurally unreachable (finding #6) |
+| client-unique-write-selector | No-unique-group model: updateMany/deleteMany remain callable | typecheck-fixture.ts logUpdatedMany/logDeletedMany (UWS-9) | PASS |
+| client-query-type-safety | New arg interfaces emitted per model | transaction-emission.mjs (pre-existing, re-confirmed green) | PASS |
+| client-query-type-safety | Existing generated clients keep compiling | typecheck-fixture.ts full suite | PASS |
+| client-query-type-safety | UpdateArgs/DeleteArgs where typed as shared unique-selector type | where-emission.mjs, transaction-emission.mjs UPS-3 check | PASS |
+| client-upsert | where on non-unique field rejected | upsert.mjs (pre-existing, re-confirmed green) | PASS |
+| client-upsert | Compile-time restriction to declared unique groups | typecheck-fixture.ts (pre-existing upsert case, retargeted) | PASS |
+| client-upsert | Generated type name shared with update/delete | transaction-emission.mjs UPS-3 (exactly-one-declaration check) | PASS |
+
+### PR 2 Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `tasks.md` task 8.5 marked `[x]` but its literal text was not fulfilled; the substitution
+   (compile-time fixture only) is correct and disclosed in apply-progress, but the task
+   bookkeeping doesn't reflect it. Non-blocking — recommend a tasks.md annotation on archive.
+
+**SUGGESTION**:
+1. `specs/client-unique-write-selector/spec.md`'s "No-unique-group model cannot call
+   update/delete" scenario's GIVEN/WHEN implies compiler-generated reachability that does not
+   exist given `validate.rs`'s mandatory-`@id` rule for any field-bearing model. Worth a future
+   spec wording correction; does not affect this PR's behavioral correctness.
+
+### PR 2 Verdict
+
+**PASS WITH WARNINGS** — 0 CRITICAL, 1 WARNING (bookkeeping only, disclosed), 1 SUGGESTION
+(pre-existing spec wording, non-blocking). Root gate exits 0. All three `as unknown as` casts
+verified safe (validated by `assertUniqueWhere` before every use, not silencing a real hole).
+Strict-TDD mutation evidence independently reproduced byte-for-byte. Task 8.5's declared
+unreachability independently re-derived as true against compiler source. D4's conditional
+guard confirmed to cover every real generated model despite being opt-in. D5/D7 both confirmed
+reachable with inline rationale. UWS-1 positive control confirmed. OPS-1/OPS-2 confirmed by
+direct execution, not disk presence. No scope creep. Clean conventional commit, no AI
+attribution.
+
+**Combined change status**: PR 1 (merged, re-verified PASS) + PR 2 (this pass, PASS WITH
+WARNINGS) — both PRs of `client-write-correctness` are now verified. Ready for `sdd-archive`.
