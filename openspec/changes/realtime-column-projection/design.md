@@ -138,7 +138,7 @@ unset. Only `wal-source.mjs`, `dispatch.mjs` and `handle.mjs` run unconditionall
 | ID | Spec scenario | Test file + assertion | Default checkout |
 |---|---|---|---|
 | RCP-1 | Bare `@@realtime` is unaffected | `ir.rs` omit-when-absent unit; **fixtures 01–19 snapshots byte-identical** after `regen-snapshots.mjs` | Yes (cargo + `packages/compiler/test/parity.mjs`) |
-| RCP-2 | Listed columns narrow the payload | `resolve.rs` `#[cfg(test)]` + `fixtures/20` snapshot; `wal-source.mjs` `fakeWriter` (`:266`) — `Object.keys(JSON.parse(params[4]))` deep-equals the allowlist | Yes |
+| RCP-2 | Listed columns narrow the payload | `resolve.rs` `#[cfg(test)]` + `fixtures/20` snapshot; `wal-source.mjs` `fakeWriter` (`:266`) — `Object.keys(JSON.parse(params[5]))` deep-equals the allowlist | Yes |
 | RCP-3 | `columns` on a non-`@@realtime` attribute is rejected | `rules.rs` unit: `columns` is absent from `INDEX_ARG_KEYS`/`RELATION_ARG_KEYS`, so `@@index([a], columns: [b])` errors; fixture 21 carries one instance | Yes |
 | RCP-4 | **A newly added field is excluded until opted in** | fixture 20's model declares a field absent from `columns`; `resolve.rs` unit asserts `realtimeColumns` excludes it, **and** `wal-source.mjs` feeds a pgoutput tuple containing that column and asserts it is absent from the INSERT params *and* from the dispatched event. This is the safe-by-default property that motivated allowlist-over-denylist, so it is proven on both sides, not just in the IR | Yes |
 | RCP-5 | Unknown column name rejected | `validate.rs` unit + fixture 21 | Yes |
