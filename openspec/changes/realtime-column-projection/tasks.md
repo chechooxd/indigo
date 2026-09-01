@@ -25,22 +25,27 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Compiler grammar + IR (PR 1)
 
-- [ ] 1.1 `crates/indigo-compiler/src/rules.rs`: add `ArgShape::Realtime`, `REALTIME_ARG_KEYS = ["columns"]`, wire `@@realtime` rule row to the new shape.
-- [ ] 1.2 RED: `crates/indigo-compiler/src/validate.rs` unit — unknown field in `@@realtime(columns:…)` on a fixture model fails before the fix (covers RCP-5, DX-1 relation/non-scalar case).
-- [ ] 1.3 GREEN: implement `validate_realtime_columns` in `validate.rs` (unknown/non-scalar field, duplicate entry, unknown named key/positional arg — messages per design's Diagnostics table), called beside the existing `@@realtime` + no-`@id` check at `:75-80`. Covers RCP-3, RCP-5, RCP-6, DX-1, DX-3.
-- [ ] 1.4 RED: `resolve.rs` `#[cfg(test)]` — resolving `columns:[id,email]` must produce physical `dbName`s in declaration order, excluding an unlisted field (RCP-4), before implementation.
-- [ ] 1.5 GREEN: `crates/indigo-compiler/src/resolve.rs` — resolve `columns` into `ResolvedTable.realtimeColumns: Option<Vec<String>>`, using `@map`ped physical names (DX-2).
-- [ ] 1.6 RED: `crates/indigo-compiler/src/ir.rs` — extend `allow_serializes_after_group_when_present` (`:324-336`) to assert `realtime_columns` serializes last, after `allow`; the existing assertion must fail against the pre-change struct.
-- [ ] 1.7 GREEN: `ir.rs` — add `realtime_columns: Option<Vec<String>>` as the new last field of `ResolvedTable`, `#[serde(skip_serializing_if = "Option::is_none", default)]`; make 1.6 pass.
-- [ ] 1.8 RED: `resolve.rs`/`ir.rs` unit — `columns: []` must serialize as present-and-empty `[]`, never omitted (RCP-7), written before confirming current behavior.
-- [ ] 1.9 GREEN: confirm the empty-list path from 1.5/1.7 satisfies 1.8; no special-case rejection exists anywhere in the pipeline (decision 5b — no empty-list diagnostic).
-- [ ] 1.10 Create `fixtures/20-realtime-columns.indigo` — bare `@@realtime`, `@@realtime(columns:[...])` with a `@map`ped field, and a field intentionally excluded from `columns` (RCP-2, RCP-4, RCP-8, RCP-9, DX-2).
-- [ ] 1.11 Create `fixtures/21-rejected-realtime-columns.indigo` — one instance per rejection class: unknown field, duplicate entry, `columns:` on `@@index` (RCP-3, RCP-5, RCP-6, DX-1, DX-3).
-- [ ] 1.12 `packages/core/src/ir.ts`: add `realtimeColumns?: string[]` mirroring `ir.rs` field order/optionality.
-- [ ] 1.13 Run `cd crates && cargo test --locked` — all Rust unit tests green, including 1.2–1.9.
-- [ ] 1.14 Run `pnpm --filter @indigodb/compiler build:wasm`; commit both `packages/compiler/wasm/` and `wasm-sources.sha256`.
-- [ ] 1.15 Run `node packages/compiler/test/regen-snapshots.mjs`; verify fixtures 01–19 are byte-identical (RCP-1) and only new snapshots for 20/21 appear.
-- [ ] 1.16 Run `pnpm build && pnpm lint && pnpm test` at repo root — confirms `wasm-freshness.mjs` passes and `packages/compiler/test/parity.mjs` is green.
+- [x] 1.1 `crates/indigo-compiler/src/rules.rs`: add `ArgShape::Realtime`, `REALTIME_ARG_KEYS = ["columns"]`, wire `@@realtime` rule row to the new shape.
+- [x] 1.2 RED: `crates/indigo-compiler/src/validate.rs` unit — unknown field in `@@realtime(columns:…)` on a fixture model fails before the fix (covers RCP-5, DX-1 relation/non-scalar case).
+- [x] 1.3 GREEN: implement `validate_realtime_columns` in `validate.rs` (unknown/non-scalar field, duplicate entry, unknown named key/positional arg — messages per design's Diagnostics table), called beside the existing `@@realtime` + no-`@id` check at `:75-80`. Covers RCP-3, RCP-5, RCP-6, DX-1, DX-3.
+- [x] 1.4 RED: `resolve.rs` `#[cfg(test)]` — resolving `columns:[id,email]` must produce physical `dbName`s in declaration order, excluding an unlisted field (RCP-4), before implementation.
+- [x] 1.5 GREEN: `crates/indigo-compiler/src/resolve.rs` — resolve `columns` into `ResolvedTable.realtimeColumns: Option<Vec<String>>`, using `@map`ped physical names (DX-2).
+- [x] 1.6 RED: `crates/indigo-compiler/src/ir.rs` — extend `allow_serializes_after_group_when_present` (`:324-336`) to assert `realtime_columns` serializes last, after `allow`; the existing assertion must fail against the pre-change struct.
+- [x] 1.7 GREEN: `ir.rs` — add `realtime_columns: Option<Vec<String>>` as the new last field of `ResolvedTable`, `#[serde(skip_serializing_if = "Option::is_none", default)]`; make 1.6 pass.
+- [x] 1.8 RED: `resolve.rs`/`ir.rs` unit — `columns: []` must serialize as present-and-empty `[]`, never omitted (RCP-7), written before confirming current behavior.
+- [x] 1.9 GREEN: confirm the empty-list path from 1.5/1.7 satisfies 1.8; no special-case rejection exists anywhere in the pipeline (decision 5b — no empty-list diagnostic).
+- [x] 1.10 Create `fixtures/20-realtime-columns.indigo` — bare `@@realtime`, `@@realtime(columns:[...])` with a `@map`ped field, and a field intentionally excluded from `columns` (RCP-2, RCP-4, RCP-8, RCP-9, DX-2).
+- [x] 1.11 Create `fixtures/21-rejected-realtime-columns.indigo` — one instance per rejection class: unknown field, duplicate entry, `columns:` on `@@index` (RCP-3, RCP-5, RCP-6, DX-1, DX-3).
+- [x] 1.12 `packages/core/src/ir.ts`: add `realtimeColumns?: string[]` mirroring `ir.rs` field order/optionality.
+- [x] 1.13 Run `cd crates && cargo test --locked` — all Rust unit tests green, including 1.2–1.9.
+- [x] 1.14 Run `pnpm --filter @indigodb/compiler build:wasm`; commit both `packages/compiler/wasm/` and `wasm-sources.sha256`.
+- [x] 1.15 Run `node packages/compiler/test/regen-snapshots.mjs`; verify fixtures 01–19 are byte-identical (RCP-1) and only new snapshots for 20/21 appear.
+- [x] 1.16 Run `pnpm build && pnpm lint && pnpm test` at repo root — confirms `wasm-freshness.mjs` passes and `packages/compiler/test/parity.mjs` is green.
+
+### Notes (PR 1 closeout)
+
+- **Deviation from design's File Changes table (necessary, in-scope fix)**: `packages/core/test/print.mjs`'s pure fixture round-trip test iterates every `.indigo` fixture automatically, so adding fixtures 20/21 broke it — the printer (`print.ts`) doesn't know about `realtimeColumns` and design's File Changes table intentionally left `print.ts` untouched for PR 1. Fixed by extending `normalizeForRoundTrip`'s existing drop-list (which already dropped `allow` for the identical reason — `@@allow` is likewise out of the printer's scope) to also drop `realtimeColumns`, mirroring the established precedent instead of adding new printer scope. `print.ts` itself is unmodified.
+- Fixture 20/21 also got dedicated `crates/indigo-compiler/tests/fixtures.rs` integration tests (`fixture_20_*`, `fixture_21_*`, `corpus_fixtures_01_through_19_are_unaffected_by_realtime_columns`) beyond the task list's minimum, following the existing convention set by fixtures 18/19.
 
 ## Phase 2: Shared projection helper (PR 2)
 
