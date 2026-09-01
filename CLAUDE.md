@@ -61,9 +61,31 @@ Each CI job now has a local equivalent: `ts` is the hook's build/lint/test; `rus
 switched off, nobody noticing a stale WASM artifact — is enforced by
 `packages/compiler/test/wasm-freshness.mjs` (see the `build:wasm` bullet above).
 
-What local verification does **not** replace is reproducibility from a clean clone: a working
-tree has warm `node_modules`, `dist/` and Turbo cache, so green locally does not prove a fresh
-clone builds. Run the cycle in a container periodically if that matters.
+That gap — reproducibility from a clean clone — is covered by
+[`act`](https://nektosact.com), configured in `.actrc`: **`pnpm ci:local`** runs the real
+workflow's `ts` job in a container, installing with `--frozen-lockfile` from scratch. That is
+precisely the check a warm local install hides. The hook is the cheap trigger on every push; act
+is the expensive, occasional check in a clean environment.
+
+**Run `pnpm ci:local`, never a bare `act`.** A bare `act` runs every job, and `wasm-drift` must
+not run locally: its self-heal step fires when the rebuild differs from the committed artifact AND
+the event is a push AND the actor is not `github-actions[bot]` — under act the last two are true by
+default, and the first is all but guaranteed, since this workflow's own header states identical
+toolchains produce different bytes on different hosts. It would then `git commit` as the bot and
+`git push origin HEAD:main`; the push fails without credentials, but under `act --bind` the commit
+can land in your real tree. That job assumes CI is the canonical source of those bytes — a premise
+that is false locally. Staleness is already covered by `wasm-freshness.mjs`.
+
+**`pnpm clean && pnpm build` does NOT purge stale build output.** Turbo caches build outputs and
+restores `dist/` wholesale on a cache hit, stale files included — `clean` removes the directory,
+then the very next build puts the same dead files back. This is not theoretical: it was found by
+diffing act's container build against the local one, which disagreed on two packages.
+`packages/parser/dist/` still carried `lexer.js`/`parser.js` (the pre-Rust Chevrotain lexer and
+parser) and `packages/core/dist/legacy/` still carried the pre-Rust resolver/validator, long after
+those sources were deleted — 32 dead files that a publish from that machine would have shipped.
+The cure is **`pnpm clean && pnpm build --force`**; do that before any real publish. The
+`check-pack-contents` guard counts what is in `dist/`, so it cannot tell fresh output from
+resurrected output on its own.
 
 If it is re-enabled, move the file back; it still describes three independent jobs (no
 `needs:`, so one red job never hides another):

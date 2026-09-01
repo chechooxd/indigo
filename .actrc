@@ -1,0 +1,43 @@
+# act (https://nektosact.com) — run the GitHub Actions workflow locally, in a
+# container, as the clean-environment counterpart to .githooks/pre-push.
+#
+# The hook is fast and runs on every push, but against a warm tree: your
+# node_modules, dist/ and Turbo cache are already there, so it cannot prove a
+# fresh clone builds. act can — its `ts` job does `pnpm install --frozen-lockfile`
+# from scratch, which is exactly the check a warm local install hides.
+#
+# The workflow lives in .github/workflows-disabled/ (GitHub Actions is off for
+# billing reasons, see commit 8acd5d4), so act has to be pointed at it — it does
+# not scan that directory on its own. If CI is ever re-enabled and the file moves
+# back to .github/workflows/, drop the -W line below.
+-W .github/workflows-disabled/ci.yml
+
+# Pinned explicitly so act never drops into its interactive "which image size?"
+# prompt on a fresh machine.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run `pnpm ci:local` (act -j ts), not a bare `act`.
+#
+# A bare `act` runs EVERY job, and `wasm-drift` must not run here. Its self-heal
+# step fires when the rebuilt artifact differs from the committed one AND the
+# event is a push AND the actor is not github-actions[bot] — and under act, two
+# of those three are true by default. The third is all but guaranteed: the
+# workflow's own header states that identical rustc/wasm-pack/wasm-bindgen
+# versions still produce different bytes on different hosts, and this repo's
+# committed artifact was built on macOS while act runs Linux.
+#
+# With all three true the job runs `git add packages/compiler/wasm/`,
+# `git commit` as github-actions[bot], and `git push origin HEAD:main`. The push
+# fails without credentials, but under `act --bind` the commit can land in your
+# real working tree.
+#
+# That job is built on the premise that CI is the canonical source of those
+# bytes. Locally that premise is false, so the job does not just add nothing —
+# it would assert something untrue. Staleness is already covered locally by
+# packages/compiler/test/wasm-freshness.mjs, which hashes the Rust sources
+# rather than comparing bytes.
+#
+# The `rust` job is safe to run (`act -j rust`) but pulls a full Rust toolchain
+# into the container; it is cheaper as `cd crates && cargo test` on the host.
+# ─────────────────────────────────────────────────────────────────────────────
