@@ -18,7 +18,7 @@
  */
 
 import { IndigoClientBase } from "../dist/client.js";
-import { ModelDelegate, IndigoNestedWriteError } from "../dist/delegate.js";
+import { ModelDelegate, IndigoNestedWriteError, IndigoNotFoundError } from "../dist/delegate.js";
 import { withDatabase, createPgliteExecutor, createPgliteDb } from "./pglite-harness.mjs";
 
 let failures = 0;
@@ -49,6 +49,30 @@ const authorMeta = {
   },
   relations: {
     books: { target: "Book", from: "id", to: "authorId", list: true, fkSide: false, optional: false, optionalFk: true },
+    profile: {
+      target: "Profile",
+      from: "id",
+      to: "authorId",
+      list: false,
+      fkSide: false,
+      optional: true,
+      optionalFk: true,
+    },
+  },
+};
+
+// 1-1 inverse relation (non-fkSide, optional) — reaches applyNonFkSideOp's
+// single-value disconnect/set branch, which C1.x's to-many fixtures cannot:
+// Author.books is list:true (the array branch), and Book.author/.publisher
+// are fkSide:true (folded into the parent's own scalars, never call
+// target.update at all).
+const profileMeta = {
+  name: "Profile",
+  table: "Profile",
+  fields: {
+    id: { db: "id", pk: true },
+    bio: { db: "bio" },
+    authorId: { db: "author_id" },
   },
 };
 
@@ -105,6 +129,7 @@ async function seed(db) {
       author_id INT REFERENCES "Author"(id),
       publisher_id INT NOT NULL REFERENCES "Publisher"(id)
     );
+    CREATE TABLE "Profile" (id SERIAL PRIMARY KEY, bio TEXT, author_id INT REFERENCES "Author"(id));
   `);
 }
 
@@ -114,6 +139,7 @@ function buildDelegates(exec, runAtomic) {
   registry.Author = new ModelDelegate(authorMeta, exec, siblings, runAtomic);
   registry.Publisher = new ModelDelegate(publisherMeta, exec, siblings, runAtomic);
   registry.Book = new ModelDelegate(bookMeta, exec, siblings, runAtomic);
+  registry.Profile = new ModelDelegate(profileMeta, exec, siblings, runAtomic);
   return registry;
 }
 
@@ -163,6 +189,65 @@ await check("C1.1b: disconnect on a REQUIRED to-many (publisherId NOT NULL) thro
     assert(after[0].publisherId === publisher.id, "expected the book's publisherId to be UNCHANGED");
   });
 });
+
+// ─── C1.1c-e: disconnect/set matching NOTHING is a no-op, not a throw ──────
+// Regression coverage for the verify finding: applyNonFkSideOp's
+// disconnect/set handling reuses target.update() to clear an FK, which now
+// throws IndigoNotFoundError on a zero-row match (this PR's own guard).
+// C1.3a (below) always seeds two pre-linked books before calling `set: []`,
+// so it never exercises the zero-currently-linked branch — the same blind
+// spot C1.4c had before its rewrite. These seed an EMPTY relation instead.
+
+await check("C1.1c: set: [] on an author with ZERO currently-linked books is a no-op, does not throw", async () => {
+  await withDatabase(async (db) => {
+    const exec = createPgliteExecutor(db);
+    await seed(db);
+    const { Author } = buildDelegates(exec);
+    const author = await Author.create({ data: { name: "Ada" } });
+
+    // No book was ever created/linked — Author.books is empty.
+    const result = await Author.update({ where: { id: author.id }, data: { books: { set: [] } } });
+    assert(result.id === author.id, "expected update() to resolve with the author row, not throw");
+  });
+});
+
+await check(
+  "C1.1d: disconnect naming a book id that does not exist at all is a no-op, does not throw",
+  async () => {
+    await withDatabase(async (db) => {
+      const exec = createPgliteExecutor(db);
+      await seed(db);
+      const { Author } = buildDelegates(exec);
+      const author = await Author.create({ data: { name: "Ada" } });
+
+      // No Book row with id 999999 exists anywhere — `where: { id }` on the
+      // per-item disconnect loop matches zero rows (distinct from C1.1c's
+      // "author has zero linked books" — this is "the named row is not
+      // there at all").
+      const result = await Author.update({
+        where: { id: author.id },
+        data: { books: { disconnect: [{ id: 999999 }] } },
+      });
+      assert(result.id === author.id, "expected update() to resolve with the author row, not throw");
+    });
+  },
+);
+
+await check(
+  "C1.2d: disconnect on an OPTIONAL to-one non-fkSide relation (Author.profile) with nothing linked is a no-op",
+  async () => {
+    await withDatabase(async (db) => {
+      const exec = createPgliteExecutor(db);
+      await seed(db);
+      const { Author } = buildDelegates(exec);
+      const author = await Author.create({ data: { name: "Ada" } });
+
+      // No Profile row was ever created for this author.
+      const result = await Author.update({ where: { id: author.id }, data: { profile: { disconnect: true } } });
+      assert(result.id === author.id, "expected update() to resolve with the author row, not throw");
+    });
+  },
+);
 
 // ─── C1.2: required to-one disconnect/set throws REQUIRED_RELATION_DISCONNECT ──
 
@@ -303,7 +388,16 @@ await check("C1.4b: `where` matching more than one row + relation ops throws AMB
   });
 });
 
-await check("C1.4c: `where` matching zero rows with relation ops is a no-op (no AMBIGUOUS_UPDATE_TARGET)", async () => {
+// C1.4c previously asserted the resolved value was strictly equal to
+// `undefined` on a zero-row match with relation-ops-only `data` — ratifying
+// the pre-existing defect where a zero-row write silently resolved with a
+// value typed as the row but actually absent at runtime. This
+// is a deliberate behavior flip (client-write-preconditions spec WP-6,
+// client-nested-writes spec NW-4, design.md Data Flow): the call now throws
+// `IndigoNotFoundError` code `RECORD_NOT_FOUND` instead. The no-partial-write
+// assertion (`after[0].authorId === null`) is KEPT so that guarantee is
+// still proven at its new location, not dropped.
+await check("C1.4c: `where` matching zero rows with relation ops throws RECORD_NOT_FOUND (no partial write)", async () => {
   await withDatabase(async (db) => {
     const exec = createPgliteExecutor(db);
     await seed(db);
@@ -311,8 +405,15 @@ await check("C1.4c: `where` matching zero rows with relation ops is a no-op (no 
     const publisher = await Publisher.create({ data: { name: "Pub" } });
     const book = await Book.create({ data: { title: "B1", publisherId: publisher.id } });
 
-    const result = await Author.update({ where: { id: 999 }, data: { books: { connect: [{ id: book.id }] } } });
-    assert(result === undefined, "expected no row to be returned");
+    let threw = false;
+    try {
+      await Author.update({ where: { id: 999 }, data: { books: { connect: [{ id: book.id }] } } });
+    } catch (err) {
+      threw = true;
+      assert(err instanceof IndigoNotFoundError, "expected an IndigoNotFoundError");
+      assert(err.code === "RECORD_NOT_FOUND", `expected code RECORD_NOT_FOUND, got ${err.code}`);
+    }
+    assert(threw, "expected update() to reject");
     const after = await Book.findMany({ where: { id: book.id } });
     assert(after[0].authorId === null, "expected NO connect to have happened for a nonexistent parent");
   });
