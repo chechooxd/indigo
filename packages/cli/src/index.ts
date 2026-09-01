@@ -28,6 +28,7 @@ import {
   resolveQueryTimeoutMs,
   resolveQueryRowCap,
   resolveStudioEnvironment,
+  resolveStudioAuditLog,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -322,6 +323,19 @@ program
       "name) shown in the Studio badge and status probe. Purely informational — gates " +
       "nothing. Defaults to INDIGODB_ENV, or unset.",
   )
+  // Declared in THIS order — `--audit-log` before `--no-audit-log` —
+  // deliberately: declaring the negated flag first would make commander
+  // force a `true` default, which collapses the flag>env>default tri-state
+  // `resolveStudioAuditLog` needs (its option arg must be able to observe
+  // "neither flag was passed" as `undefined`). Reordering these silently
+  // breaks that precedence — see design.md's "env throws on anything
+  // ambiguous, default on" decision.
+  .option(
+    "--audit-log",
+    "Log each attempted row write to stdout (column names, never values; a session " +
+      "correlator, never an identity). Enabled by default.",
+  )
+  .option("--no-audit-log", "Disable the stdout audit log.")
   .action(
     async (options: {
       schema: string;
@@ -332,6 +346,7 @@ program
       queryTimeout?: string;
       queryRowCap?: string;
       env?: string;
+      auditLog?: boolean;
     }) => {
       loadEnv();
       const password = process.env.INDIGODB_STUDIO_PASSWORD;
@@ -358,10 +373,12 @@ program
       let queryTimeoutMs: number;
       let queryRowCap: number;
       let environment: string | undefined;
+      let auditLog: boolean;
       try {
         queryTimeoutMs = resolveQueryTimeoutMs(options.queryTimeout, process.env.INDIGODB_STUDIO_QUERY_TIMEOUT_MS);
         queryRowCap = resolveQueryRowCap(options.queryRowCap, process.env.INDIGODB_STUDIO_QUERY_ROW_CAP);
         environment = resolveStudioEnvironment(options.env, process.env.INDIGODB_ENV);
+        auditLog = resolveStudioAuditLog(options.auditLog, process.env.INDIGODB_STUDIO_AUDIT_LOG);
       } catch (error) {
         console.error(`❌ ${(error as Error).message}`);
         process.exit(1);
@@ -381,6 +398,7 @@ program
         queryTimeoutMs,
         queryRowCap,
         environment,
+        auditLog,
       });
     },
   );
