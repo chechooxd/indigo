@@ -27,38 +27,38 @@ Chain strategy: stacked-to-main
 
 ### Phase 1: RED — write-preconditions.mjs (WP-1..7, D6a, D6b)
 
-- [ ] 1.1 Create `packages/client/test/write-preconditions.mjs`; RED test for WP-1: all-undefined `data`, no relation ops → expect `IndigoArgumentError` code `EMPTY_UPDATE_DATA`, `calls.length === 0`.
-- [ ] 1.2 RED test WP-2: relation-ops-only path still guarded — no `UPDATE … SET  ` SQL emitted; pre-existing guard unchanged.
-- [ ] 1.3 RED test WP-3: single defined scalar accepted, SQL matches `UPDATE "user" SET "name" = $1 WHERE`.
-- [ ] 1.4 RED test WP-4: zero-row direct-scalar update throws `IndigoNotFoundError` code `RECORD_NOT_FOUND`.
-- [ ] 1.5 RED test WP-5: zero-row delete throws `IndigoNotFoundError` code `RECORD_NOT_FOUND`.
-- [ ] 1.6 RED test WP-7: matching update resolves with the updated row (no throw).
-- [ ] 1.7 RED test D6a: zero-row `where` × all-undefined `data` — `EMPTY_UPDATE_DATA` wins, no SQL issued.
-- [ ] 1.8 RED test D6b: multi-row `where` × scalar-only `data` — still updates many, returns `rows[0]`, no `RECORD_NOT_FOUND`/`AMBIGUOUS_UPDATE_TARGET`.
-- [ ] 1.9 Confirm all 1.1-1.8 tests fail (RED) before touching `delegate.ts`.
+- [x] 1.1 Create `packages/client/test/write-preconditions.mjs`; RED test for WP-1: all-undefined `data`, no relation ops → expect `IndigoArgumentError` code `EMPTY_UPDATE_DATA`, `calls.length === 0`.
+- [x] 1.2 RED test WP-2: relation-ops-only path still guarded — no `UPDATE … SET  ` SQL emitted; pre-existing guard unchanged.
+- [x] 1.3 RED test WP-3: single defined scalar accepted, SQL matches `UPDATE "user" SET "name" = $1 WHERE`.
+- [x] 1.4 RED test WP-4: zero-row direct-scalar update throws `IndigoNotFoundError` code `RECORD_NOT_FOUND`.
+- [x] 1.5 RED test WP-5: zero-row delete throws `IndigoNotFoundError` code `RECORD_NOT_FOUND`.
+- [x] 1.6 RED test WP-7: matching update resolves with the updated row (no throw).
+- [x] 1.7 RED test D6a: zero-row `where` × all-undefined `data` — `EMPTY_UPDATE_DATA` wins, no SQL issued.
+- [x] 1.8 RED test D6b: multi-row `where` × scalar-only `data` — still updates many, returns `rows[0]`, no `RECORD_NOT_FOUND`/`AMBIGUOUS_UPDATE_TARGET`.
+- [x] 1.9 Confirm all 1.1-1.8 tests fail (RED) before touching `delegate.ts`.
 
 ### Phase 2: GREEN — delegate.ts guards
 
-- [ ] 2.1 Add `IndigoNotFoundError` class (`code: "RECORD_NOT_FOUND"`) to `packages/client/src/delegate.ts`; export it from `packages/client/src/index.ts`.
-- [ ] 2.2 Add empty-`SET` guard at the top of `rawUpdate` (delegate.ts:1229-1240): throw `IndigoArgumentError("EMPTY_UPDATE_DATA")` pre-SQL when no assignments.
-- [ ] 2.3 Throw `IndigoNotFoundError` when `rawUpdate`'s `RETURNING` yields zero rows (was: silent `undefined`).
-- [ ] 2.4 Throw `IndigoNotFoundError` in `updateImpl`'s relation-ops-only branch (1331-1339) when `matches[0]` is absent (WP-6/NW-4).
-- [ ] 2.5 Throw `IndigoNotFoundError` in `deleteImpl` (1360-1367) when `RETURNING` yields zero rows (WP-5).
-- [ ] 2.6 Run Phase 1 tests; confirm 1.1-1.8 now pass (GREEN).
+- [x] 2.1 Add `IndigoNotFoundError` class (`code: "RECORD_NOT_FOUND"`) to `packages/client/src/delegate.ts`; export it from `packages/client/src/index.ts`.
+- [x] 2.2 Add empty-`SET` guard at the top of `rawUpdate` (delegate.ts:1229-1240): throw `IndigoArgumentError("EMPTY_UPDATE_DATA")` pre-SQL when no assignments.
+- [x] 2.3 Throw `IndigoNotFoundError` when `rawUpdate`'s `RETURNING` yields zero rows (was: silent `undefined`).
+- [x] 2.4 Throw `IndigoNotFoundError` in `updateImpl`'s relation-ops-only branch (1331-1339) when `matches[0]` is absent (WP-6/NW-4).
+- [x] 2.5 Throw `IndigoNotFoundError` in `deleteImpl` (1360-1367) when `RETURNING` yields zero rows (WP-5).
+- [x] 2.6 Run Phase 1 tests; confirm 1.1-1.8 now pass (GREEN).
 
 ### Phase 3: RED→GREEN — C1.4c rewrite (WP-6, NW-1..4, RT-3)
 
-- [ ] 3.1 In `packages/client/test/nested-writes-update.mjs` lines 306-319 (C1.4c): replace the `result === undefined` assertion with an expected `IndigoNotFoundError` throw; keep the existing `after[0].authorId === null` assertion so the no-partial-write guarantee is proven at its new location, not dropped.
-- [ ] 3.2 Confirm C1.4b (282-304) is unchanged and stays green — untyped `.mjs`, no `uniqueGroups` in `authorMeta`, still fires `AMBIGUOUS_UPDATE_TARGET` (D5, deferred verification in PR 2).
-- [ ] 3.3 Confirm NW-1, NW-2, NW-3 (existing connect/connectOrCreate cases) remain unchanged and green.
-- [ ] 3.4 `rg -c "result === undefined" packages/client/test/nested-writes-update.mjs` returns 0 (RT-3).
+- [x] 3.1 In `packages/client/test/nested-writes-update.mjs` lines 306-319 (C1.4c): replace the `result === undefined` assertion with an expected `IndigoNotFoundError` throw; keep the existing `after[0].authorId === null` assertion so the no-partial-write guarantee is proven at its new location, not dropped.
+- [x] 3.2 Confirm C1.4b (282-304) is unchanged and stays green — untyped `.mjs`, no `uniqueGroups` in `authorMeta`, still fires `AMBIGUOUS_UPDATE_TARGET` (D5, deferred verification in PR 2).
+- [x] 3.3 Confirm NW-1, NW-2, NW-3 (existing connect/connectOrCreate cases) remain unchanged and green.
+- [x] 3.4 `rg -c "result === undefined" packages/client/test/nested-writes-update.mjs` returns 0 (RT-3).
 
 ### Phase 4: OPS-1 (PR 1 half) + verification
 
-- [ ] 4.1 Append `write-preconditions.mjs` to the `test` chain in `packages/client/package.json`.
-- [ ] 4.2 Run `pnpm --filter @indigodb/client test`; confirm `write-preconditions.mjs` name appears in console output (not just present on disk).
-- [ ] 4.3 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root; confirm green.
-- [ ] 4.4 Commit PR 1 as a standalone, independently revertable range.
+- [x] 4.1 Append `write-preconditions.mjs` to the `test` chain in `packages/client/package.json`.
+- [x] 4.2 Run `pnpm --filter @indigodb/client test`; confirm `write-preconditions.mjs` name appears in console output (not just present on disk).
+- [x] 4.3 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root; confirm green.
+- [x] 4.4 Commit PR 1 as a standalone, independently revertable range.
 
 ## PR 2 — Unique selector (stacks on PR 1)
 
