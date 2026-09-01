@@ -521,6 +521,11 @@ const UNPRINTABLE_FIXTURES = new Set(["05-relations.indigo"]);
  *    added grammar/validation/resolve — `print.ts` was not touched by that
  *    change), so a reprinted schema never carries `@@allow` and re-resolving
  *    it always yields `allow: undefined`. Dropped on both sides.
+ * 5. `@@realtime(columns:…)`: same precedent as (4) — `realtime-column-
+ *    projection` PR 1 only adds grammar/validation/resolve/IR
+ *    (`realtimeColumns`); `print.ts` is intentionally untouched (see that
+ *    change's design doc File Changes table). A reprinted schema always
+ *    yields `realtimeColumns: undefined`. Dropped on both sides.
  *
  * NOTE on the design doc's identity-column caveat ("introspect.ts emits
  * `{autoincrement:true}` with no `default`, while resolve.rs emits
@@ -537,7 +542,7 @@ function normalizeForRoundTrip(resolved) {
     ...resolved,
     tableGroups: [],
     tables: resolved.tables.map((t) => {
-      const { color, group, allow, ...rest } = t;
+      const { color, group, allow, realtimeColumns, ...rest } = t;
       const indexes = [...t.indexes.filter((i) => i.unique), ...t.indexes.filter((i) => !i.unique)];
       return { ...rest, indexes, foreignKeys: [], relations: [] };
     }),

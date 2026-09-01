@@ -208,10 +208,18 @@ export interface ResolvedTable {
   group?: string;
   /**
    * Resolved `@@allow` rules, one entry per canonical action after alias
-   * expansion. Declared LAST and absent (not `null`) when the model has no
-   * `@@allow`, so every pre-existing `.snapshot.json` stays byte-identical.
+   * expansion. Absent (not `null`) when the model has no `@@allow`, so every
+   * pre-existing `.snapshot.json` stays byte-identical.
    */
   allow?: AllowRule[];
+  /**
+   * Resolved `@@realtime(columns:…)` allowlist, physical `dbName`s in
+   * declaration order. Declared LAST (after `allow`) and absent (not
+   * `null`) when `@@realtime` carries no `columns` argument — never `[]`
+   * unless the schema explicitly wrote `columns: []` (present-and-empty is
+   * the identity-only signal, distinct from "no allowlist at all").
+   */
+  realtimeColumns?: string[];
 }
 
 /** A single enum member: its schema name plus its physical (`@map`) label. */
