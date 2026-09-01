@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# Local stand-in for the CI that lives in .github/workflows-disabled/.
+#
+# GitHub Actions was switched off in 8acd5d4 ("private pre-product repo, billed
+# minutes with no payoff yet"), which left verification depending on whoever was
+# pushing remembering to run it. This hook is the trigger that was missing — the
+# checks themselves already existed.
+#
+# It runs on PUSH, not on commit, deliberately: the full suite takes ~8 minutes,
+# and a hook that blocks every commit for that long gets bypassed with
+# --no-verify within a week and then abandoned. Once per push is roughly the
+# cadence CI gave.
+#
+# Escape hatch, for when you genuinely need it:
+#
+#     SKIP_PREPUSH=1 git push
+#
+# Prefer that over `--no-verify`: it is greppable in your shell history, and it
+# skips only this hook rather than every hook silently.
+#
+# What this canNOT replace: reproducibility from a clean clone. Your working
+# tree has warm node_modules, dist/ and Turbo cache. Green here does not prove a
+# fresh clone builds. For that, run the cycle in a container periodically.
+
+set -euo pipefail
+
+if [ "${SKIP_PREPUSH:-}" = "1" ]; then
+  echo "pre-push: skipped (SKIP_PREPUSH=1)"
+  exit 0
+fi
+
+# stdin gives one line per ref being pushed:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# A deletion has an all-zero local sha. If every ref is a deletion there is no
+# new code to verify, so don't spend eight minutes proving it.
+zero=$(git hash-object --stdin </dev/null | tr '[:xdigit:]' '0')
+has_content=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ -z "${local_sha:-}" ] && continue
+  if [ "$local_sha" != "$zero" ]; then
+    has_content=1
+  fi
+done
+
+if [ "$has_content" -eq 0 ]; then
+  echo "pre-push: only ref deletions in this push — nothing to verify."
+  exit 0
+fi
+
+started=$(date +%s)
+echo "pre-push: verifying before push (build -> lint -> test, ~8 min; SKIP_PREPUSH=1 to skip)"
+
+# Ordered cheapest-first so an obvious break fails in seconds, not minutes.
+for step in build lint test; do
+  echo "pre-push: pnpm $step"
+  if ! pnpm "$step"; then
+    echo ""
+    echo "pre-push: FAILED at \`pnpm $step\` — push aborted."
+    echo "pre-push: fix it, or push anyway with SKIP_PREPUSH=1 git push"
+    exit 1
+  fi
+done
+
+echo "pre-push: all green in $(( $(date +%s) - started ))s"

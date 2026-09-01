@@ -42,12 +42,28 @@ or `pnpm --filter @indigodb/studio dev`.
 
 ## CI
 
-**CI is currently disabled and nothing runs on push or PR.** The workflow was moved to
+**GitHub Actions is disabled; verification runs locally instead.** The workflow was moved to
 `.github/workflows-disabled/ci.yml` in commit `8acd5d4` ("private pre-product repo, billed
-minutes with no payoff yet"), and `.github/workflows/` is empty. Verification is therefore
-local: `pnpm build`, `pnpm lint`, `pnpm test` before landing on `main`. The one CI guarantee
-that could not survive being switched off — nobody noticing a stale WASM artifact — is now
-enforced by `packages/compiler/test/wasm-freshness.mjs` (see the `build:wasm` bullet above).
+minutes with no payoff yet"), and `.github/workflows/` is empty. Verification is
+local: `pnpm build`, `pnpm lint`, `pnpm test` before landing on `main`.
+
+The checks themselves survived the switch-off; what was missing was a trigger, so
+**`.githooks/pre-push` runs all three on every push**. It is wired by the root `prepare`
+script (`git config core.hooksPath .githooks`), which pnpm runs on install — so a fresh clone
+arms it after `pnpm install`, with no per-clone setup step to forget. It runs on push rather
+than commit deliberately: the full suite is ~8 minutes, and a hook that blocks every commit for
+that long gets bypassed and then abandoned. Use `SKIP_PREPUSH=1 git push` when you genuinely
+need to bypass it — greppable in shell history, and it skips only this hook, unlike
+`--no-verify`.
+
+Each CI job now has a local equivalent: `ts` is the hook's build/lint/test; `rust` is
+`cd crates && cargo test`; and `wasm-drift` — the one guarantee that could not survive being
+switched off, nobody noticing a stale WASM artifact — is enforced by
+`packages/compiler/test/wasm-freshness.mjs` (see the `build:wasm` bullet above).
+
+What local verification does **not** replace is reproducibility from a clean clone: a working
+tree has warm `node_modules`, `dist/` and Turbo cache, so green locally does not prove a fresh
+clone builds. Run the cycle in a container periodically if that matters.
 
 If it is re-enabled, move the file back; it still describes three independent jobs (no
 `needs:`, so one red job never hides another):
