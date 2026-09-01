@@ -117,7 +117,8 @@ idempotent no-op into a hard throw. Same failure class this PR exists to fix, re
 - [x] 8.2 Add UWS-2: `@ts-expect-error` on `db.user.update({ where: { name: "A" }, … })` and matching `@ts-expect-error` on `db.user.delete({ where: { name: "A" } })`.
 - [x] 8.3 Add UWS-3 compile-time half: `db.user.findUnique({ where: { name: "A" } })` compiles with no cast.
 - [x] 8.4 Add UWS-4 compile-time half: `updateMany`/`deleteMany` compile against full `WhereInput<Row>` with a non-unique `where`.
-- [x] 8.5 Add UWS-8: emitted `LogWhereUniqueInput = never` (no-unique-group model) in `where-emission.mjs`; `@ts-expect-error` on `db.log.update(...)` and `db.log.delete(...)` in the fixture.
+- [x] 8.5 Add UWS-8: `@ts-expect-error` on `db.log.update(...)` and `db.log.delete(...)` in `typecheck-fixture.ts` against a `logDelegate` with the 9th generic omitted.
+  - **Amended after apply.** The task originally also asked for an emitted `LogWhereUniqueInput = never` assertion in `where-emission.mjs`. That half is **structurally unreachable** and was dropped, not skipped: `crates/indigo-compiler/src/validate.rs:66-72` requires every field-bearing model to declare `@id`, and the generator's `uniqueGroups()` always includes the PK group when one exists, so `groups.length === 0` cannot fire from any real `.indigo` schema. The compile-time fixture is the only reachable proof of UWS-8. Independently re-derived against the compiler source during verify and accepted as a legitimate coverage limit.
 - [x] 8.6 Add UWS-9: `db.log.updateMany(...)`/`db.log.deleteMany(...)` compile with no cast, no `@ts-expect-error`.
 - [x] 8.7 QTS-1: confirm existing per-model arg-interface emission assertions in `{where,transaction,live}-emission.mjs` stay green after rename.
 - [x] 8.8 QTS-2: confirm every pre-existing fixture call site not deliberately edited still compiles; `@ts-expect-error` count grows only by UWS-2/8 markers.
