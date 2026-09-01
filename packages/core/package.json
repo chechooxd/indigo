@@ -1,6 +1,7 @@
 {
   "name": "@indigodb/core",
   "version": "0.0.1",
+  "files": ["dist"],
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
