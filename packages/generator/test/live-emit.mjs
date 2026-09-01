@@ -46,7 +46,7 @@ check("emits LiveModelDelegate for Order (@@realtime + @@allow)", () => {
   deepStrictEqual(output.includes("new LiveModelDelegate<"), true);
   deepStrictEqual(
     output.includes(
-      `  readonly order: LiveModelDelegate<Order, OrderCreateInput, OrderUpdateInput, OrderRelations, OrderWhereInput, OrderCreateManyInput, OrderCursorInput, OrderNumericFields, OrderUpsertWhereInput>;`,
+      `  readonly order: LiveModelDelegate<Order, OrderCreateInput, OrderUpdateInput, OrderRelations, OrderWhereInput, OrderCreateManyInput, OrderCursorInput, OrderNumericFields, OrderWhereUniqueInput>;`,
     ),
     true,
   );

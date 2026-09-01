@@ -81,59 +81,59 @@ idempotent no-op into a hard throw. Same failure class this PR exists to fix, re
 
 ### Phase 5: Rename inventory (mechanical, no behavior change)
 
-- [ ] 5.1 `packages/generator/src/client.ts`: rename all 10 occurrences (`generateUpsertWhereInput` → `generateWhereUniqueInput`, `<Model>UpsertWhereInput` → `<Model>WhereUniqueInput`, 3× `generics` templates); `uniqueGroups` derivation logic untouched.
-- [ ] 5.2 `packages/generator/test/transaction-emission.mjs`: rename 6 literals.
-- [ ] 5.3 `packages/generator/test/live-emit.mjs`: rename 1 literal.
-- [ ] 5.4 `packages/generator/test/where-emission.mjs`: rename 2 literals.
-- [ ] 5.5 `packages/client/test/fixtures/typecheck-fixture.ts`: rename 5 literals (lines 178, 182, 193, 418, 439).
-- [ ] 5.6 `packages/client/src/delegate.ts`: rename 2 occurrences (doc comment 406-418, resolver reference ~1701).
-- [ ] 5.7 `packages/client/src/types.ts`: rename 1 occurrence (`UniqueWhere` doc, 318-333).
-- [ ] 5.8 OPS-2: run `rg -c UpsertWhereInput` repo-wide (excluding `openspec/changes/archive/**` and this change's own docs); confirm 0.
+- [x] 5.1 `packages/generator/src/client.ts`: rename all 10 occurrences (`generateUpsertWhereInput` → `generateWhereUniqueInput`, `<Model>UpsertWhereInput` → `<Model>WhereUniqueInput`, 3× `generics` templates); `uniqueGroups` derivation logic untouched.
+- [x] 5.2 `packages/generator/test/transaction-emission.mjs`: rename 6 literals.
+- [x] 5.3 `packages/generator/test/live-emit.mjs`: rename 1 literal.
+- [x] 5.4 `packages/generator/test/where-emission.mjs`: rename 2 literals.
+- [x] 5.5 `packages/client/test/fixtures/typecheck-fixture.ts`: rename 5 literals (lines 178, 182, 193, 418, 439).
+- [x] 5.6 `packages/client/src/delegate.ts`: rename 2 occurrences (doc comment 406-418, resolver reference ~1701).
+- [x] 5.7 `packages/client/src/types.ts`: rename 1 occurrence (`UniqueWhere` doc, 318-333).
+- [x] 5.8 OPS-2: run `rg -c UpsertWhereInput` repo-wide (excluding `openspec/changes/archive/**` and this change's own docs); confirm 0.
 
 ### Phase 6: RED — unique-write-selector.mjs (UWS-3..7, D4, D5, D6c, D6d)
 
-- [ ] 6.1 Create `packages/client/test/unique-write-selector.mjs`; RED test UWS-5: `as any` bypass with non-unique `where` throws `IndigoArgumentError` code `NO_MATCHING_UNIQUE_CONSTRAINT`, `calls.length === 0`; sub-cases: operator-object `where`, partial composite key.
-- [ ] 6.2 RED test UWS-6: `as any` bypass with a valid unique `where` proceeds and returns the row (guard does not over-reject).
-- [ ] 6.3 RED test UWS-7 with D7 harness: hand-authored meta declares `uniqueGroups: [["name"]]`; PGlite DDL creates no unique constraint on `name`; insert two rows sharing `name: "Dup"`. State the rationale inline (declared-but-unenforced constraint = schema-drift scenario) so it isn't misread as a fixture bug. Assert `assertUniqueWhere` passes, then `IndigoNestedWriteError` code `AMBIGUOUS_UPDATE_TARGET` fires; no `connect` happened.
-- [ ] 6.4 RED test UWS-3 (runtime half): `findUnique({ where: { name: "A" } })` still resolves `Payload | null` (non-regression).
-- [ ] 6.5 RED test UWS-4 (runtime half): `updateMany`/`deleteMany` with a multi-row `where` still update/delete every match.
-- [ ] 6.6 RED test D4: delegate whose meta declares no `uniqueGroups` issues SQL unguarded (`update({ where: { name: "x" } })`) — guard is opt-in.
-- [ ] 6.7 RED test D6c: unique `where` × zero rows — passes the guard, then throws PR 1's `RECORD_NOT_FOUND`.
-- [ ] 6.8 RED test D6d: unique `where` × all-undefined `data` — `EMPTY_UPDATE_DATA` still reached through the new signature.
-- [ ] 6.9 Confirm nested-writes-update.mjs C1.4b (D5) still throws `AMBIGUOUS_UPDATE_TARGET` unchanged — guard did not shadow it.
-- [ ] 6.10 Confirm all 6.1-6.8 tests fail (RED) before implementing `assertUniqueWhere`.
+- [x] 6.1 Create `packages/client/test/unique-write-selector.mjs`; RED test UWS-5: `as any` bypass with non-unique `where` throws `IndigoArgumentError` code `NO_MATCHING_UNIQUE_CONSTRAINT`, `calls.length === 0`; sub-cases: operator-object `where`, partial composite key.
+- [x] 6.2 RED test UWS-6: `as any` bypass with a valid unique `where` proceeds and returns the row (guard does not over-reject).
+- [x] 6.3 RED test UWS-7 with D7 harness: hand-authored meta declares `uniqueGroups: [["name"]]`; PGlite DDL creates no unique constraint on `name`; insert two rows sharing `name: "Dup"`. State the rationale inline (declared-but-unenforced constraint = schema-drift scenario) so it isn't misread as a fixture bug. Assert `assertUniqueWhere` passes, then `IndigoNestedWriteError` code `AMBIGUOUS_UPDATE_TARGET` fires; no `connect` happened.
+- [x] 6.4 RED test UWS-3 (runtime half): `findUnique({ where: { name: "A" } })` still resolves `Payload | null` (non-regression).
+- [x] 6.5 RED test UWS-4 (runtime half): `updateMany`/`deleteMany` with a multi-row `where` still update/delete every match.
+- [x] 6.6 RED test D4: delegate whose meta declares no `uniqueGroups` issues SQL unguarded (`update({ where: { name: "x" } })`) — guard is opt-in.
+- [x] 6.7 RED test D6c: unique `where` × zero rows — passes the guard, then throws PR 1's `RECORD_NOT_FOUND`.
+- [x] 6.8 RED test D6d: unique `where` × all-undefined `data` — `EMPTY_UPDATE_DATA` still reached through the new signature.
+- [x] 6.9 Confirm nested-writes-update.mjs C1.4b (D5) still throws `AMBIGUOUS_UPDATE_TARGET` unchanged — guard did not shadow it.
+- [x] 6.10 Confirm all 6.1-6.8 tests fail (RED) before implementing `assertUniqueWhere`.
 
 ### Phase 7: GREEN — assertUniqueWhere + type narrowing
 
-- [ ] 7.1 Implement `assertUniqueWhere(where, op)` in `delegate.ts` as a separate sibling function to `resolveUpsertConflictTarget` (not a reuse) — applies only when `meta.uniqueGroups` is present and non-empty (D4); exact key-set equality check.
-- [ ] 7.2 Wire `assertUniqueWhere` first in `updateImpl`/`deleteImpl`, before `splitData`/`findMany` (D5); precedence: `NO_MATCHING_UNIQUE_CONSTRAINT` → `EMPTY_UPDATE_DATA` → `AMBIGUOUS_UPDATE_TARGET` → `RECORD_NOT_FOUND` (D6).
-- [ ] 7.3 Change `update`/`delete` signatures in `delegate.ts` to accept the 9th generic `UniqueWhere` instead of `WhereInput<Row>`.
-- [ ] 7.4 Update `UpdateArgs`/`DeleteArgs` in `types.ts` (204-211) to take a `UniqueWhere` parameter.
-- [ ] 7.5 Run Phase 6 tests; confirm 6.1-6.8 now pass (GREEN).
+- [x] 7.1 Implement `assertUniqueWhere(where, op)` in `delegate.ts` as a separate sibling function to `resolveUpsertConflictTarget` (not a reuse) — applies only when `meta.uniqueGroups` is present and non-empty (D4); exact key-set equality check.
+- [x] 7.2 Wire `assertUniqueWhere` first in `updateImpl`/`deleteImpl`, before `splitData`/`findMany` (D5); precedence: `NO_MATCHING_UNIQUE_CONSTRAINT` → `EMPTY_UPDATE_DATA` → `AMBIGUOUS_UPDATE_TARGET` → `RECORD_NOT_FOUND` (D6).
+- [x] 7.3 Change `update`/`delete` signatures in `delegate.ts` to accept the 9th generic `UniqueWhere` instead of `WhereInput<Row>`.
+- [x] 7.4 Update `UpdateArgs`/`DeleteArgs` in `types.ts` (204-211) to take a `UniqueWhere` parameter.
+- [x] 7.5 Run Phase 6 tests; confirm 6.1-6.8 now pass (GREEN).
 
 ### Phase 8: Compile-time cases + emission assertions (UWS-1,2,8,9, QTS-1..3, UPS-1..3)
 
-- [ ] 8.1 Add UWS-1 positive control to `typecheck-fixture.ts`: `db.user.update({ where: { email: "a@x.com" }, data: … })` compiles with no cast, no `@ts-expect-error`.
-- [ ] 8.2 Add UWS-2: `@ts-expect-error` on `db.user.update({ where: { name: "A" }, … })` and matching `@ts-expect-error` on `db.user.delete({ where: { name: "A" } })`.
-- [ ] 8.3 Add UWS-3 compile-time half: `db.user.findUnique({ where: { name: "A" } })` compiles with no cast.
-- [ ] 8.4 Add UWS-4 compile-time half: `updateMany`/`deleteMany` compile against full `WhereInput<Row>` with a non-unique `where`.
-- [ ] 8.5 Add UWS-8: emitted `LogWhereUniqueInput = never` (no-unique-group model) in `where-emission.mjs`; `@ts-expect-error` on `db.log.update(...)` and `db.log.delete(...)` in the fixture.
-- [ ] 8.6 Add UWS-9: `db.log.updateMany(...)`/`db.log.deleteMany(...)` compile with no cast, no `@ts-expect-error`.
-- [ ] 8.7 QTS-1: confirm existing per-model arg-interface emission assertions in `{where,transaction,live}-emission.mjs` stay green after rename.
-- [ ] 8.8 QTS-2: confirm every pre-existing fixture call site not deliberately edited still compiles; `@ts-expect-error` count grows only by UWS-2/8 markers.
-- [ ] 8.9 QTS-3: assert emitted `UserUpdateArgs`/`UserDeleteArgs` reference `UserWhereUniqueInput`, not `UserWhereInput`, in `where-emission.mjs` and the fixture.
-- [ ] 8.10 UPS-1: confirm existing `upsert` `NO_MATCHING_UNIQUE_CONSTRAINT` case in `upsert.mjs` stays green after rename.
-- [ ] 8.11 UPS-2: confirm existing `upsert` `@ts-expect-error` case, retargeted to the renamed type, still errors.
-- [ ] 8.12 UPS-3: assert exactly one `WhereUniqueInput` type is emitted per model and `upsert`/`update`/`delete` all reference it, in `transaction-emission.mjs`.
+- [x] 8.1 Add UWS-1 positive control to `typecheck-fixture.ts`: `db.user.update({ where: { email: "a@x.com" }, data: … })` compiles with no cast, no `@ts-expect-error`.
+- [x] 8.2 Add UWS-2: `@ts-expect-error` on `db.user.update({ where: { name: "A" }, … })` and matching `@ts-expect-error` on `db.user.delete({ where: { name: "A" } })`.
+- [x] 8.3 Add UWS-3 compile-time half: `db.user.findUnique({ where: { name: "A" } })` compiles with no cast.
+- [x] 8.4 Add UWS-4 compile-time half: `updateMany`/`deleteMany` compile against full `WhereInput<Row>` with a non-unique `where`.
+- [x] 8.5 Add UWS-8: emitted `LogWhereUniqueInput = never` (no-unique-group model) in `where-emission.mjs`; `@ts-expect-error` on `db.log.update(...)` and `db.log.delete(...)` in the fixture.
+- [x] 8.6 Add UWS-9: `db.log.updateMany(...)`/`db.log.deleteMany(...)` compile with no cast, no `@ts-expect-error`.
+- [x] 8.7 QTS-1: confirm existing per-model arg-interface emission assertions in `{where,transaction,live}-emission.mjs` stay green after rename.
+- [x] 8.8 QTS-2: confirm every pre-existing fixture call site not deliberately edited still compiles; `@ts-expect-error` count grows only by UWS-2/8 markers.
+- [x] 8.9 QTS-3: assert emitted `UserUpdateArgs`/`UserDeleteArgs` reference `UserWhereUniqueInput`, not `UserWhereInput`, in `where-emission.mjs` and the fixture.
+- [x] 8.10 UPS-1: confirm existing `upsert` `NO_MATCHING_UNIQUE_CONSTRAINT` case in `upsert.mjs` stays green after rename.
+- [x] 8.11 UPS-2: confirm existing `upsert` `@ts-expect-error` case, retargeted to the renamed type, still errors.
+- [x] 8.12 UPS-3: assert exactly one `WhereUniqueInput` type is emitted per model and `upsert`/`update`/`delete` all reference it, in `transaction-emission.mjs`.
 
 ### Phase 9: OPS-1 (PR 2 half) + verification
 
-- [ ] 9.1 Append `unique-write-selector.mjs` to the `test` chain in `packages/client/package.json`.
-- [ ] 9.2 Run `pnpm --filter @indigodb/client test`; confirm both `write-preconditions.mjs` and `unique-write-selector.mjs` names appear in console output.
-- [ ] 9.3 Run `pnpm --filter @indigodb/generator test`; confirm rename-affected emission suites pass.
-- [ ] 9.4 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root (mandatory for this cross-package type change); confirm green.
-- [ ] 9.5 Re-run OPS-2 (`rg -c UpsertWhereInput` repo-wide, excluding archive/docs) — confirm 0.
-- [ ] 9.6 Commit PR 2 stacked on PR 1.
+- [x] 9.1 Append `unique-write-selector.mjs` to the `test` chain in `packages/client/package.json`.
+- [x] 9.2 Run `pnpm --filter @indigodb/client test`; confirm both `write-preconditions.mjs` and `unique-write-selector.mjs` names appear in console output.
+- [x] 9.3 Run `pnpm --filter @indigodb/generator test`; confirm rename-affected emission suites pass.
+- [x] 9.4 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root (mandatory for this cross-package type change); confirm green.
+- [x] 9.5 Re-run OPS-2 (`rg -c UpsertWhereInput` repo-wide, excluding archive/docs) — confirm 0.
+- [x] 9.6 Commit PR 2 stacked on PR 1.
 
 ## Non-goals (do not touch)
 

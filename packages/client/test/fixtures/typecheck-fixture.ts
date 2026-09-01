@@ -133,6 +133,33 @@ interface PostWhereInput {
   NOT?: PostWhereInput;
 }
 
+// ── no-declared-unique-group model (client-unique-write-selector spec,
+//    UWS-8/UWS-9): `Log` has no `@unique`/PK-worthy column in this fixture,
+//    mirroring the generator emitting `export type LogWhereUniqueInput =
+//    never;` for such a model — `update`/`delete` become uncallable at
+//    compile time, but `updateMany`/`deleteMany` (gated by `Where`, not
+//    `UniqueWhere`) stay callable. ──
+interface Log {
+  id: number;
+  level: string;
+}
+
+interface LogCreateInput {
+  level: string;
+}
+
+interface LogUpdateInput {
+  level?: string;
+}
+
+interface LogWhereInput {
+  id?: WhereValue<number>;
+  level?: WhereValue<string>;
+  AND?: LogWhereInput[];
+  OR?: LogWhereInput[];
+  NOT?: LogWhereInput;
+}
+
 declare const userDelegate: ModelDelegate<
   User,
   UserCreateInput,
@@ -175,11 +202,11 @@ declare const postAggDelegate: ModelDelegate<
 >;
 
 // ── uniqueGroups-gated upsert `where` narrowing (client-upsert PR D) —
-//    mirrors the generator's `<Model>UpsertWhereInput`: a union of one
+//    mirrors the generator's `<Model>WhereUniqueInput`: a union of one
 //    object shape per declared unique group. `User` has PK `id` and a
 //    unique `email` column, so its upsert `where` accepts either shape, but
 //    NOT `name` (not declared unique) and NOT a partial/extra-field shape. ──
-type UserUpsertWhereInput = { id: number } | { email: string };
+type UserWhereUniqueInput = { id: number } | { email: string };
 
 declare const userUpsertDelegate: ModelDelegate<
   User,
@@ -190,7 +217,18 @@ declare const userUpsertDelegate: ModelDelegate<
   UserCreateInput,
   never,
   never,
-  UserUpsertWhereInput
+  UserWhereUniqueInput
+>;
+
+// `logDelegate` deliberately omits the 9th `UniqueWhere` generic (defaults
+// to `never`, `ModelDelegate`'s class default) — mirrors the generator's
+// `never` emission for a model with no declared unique group (UWS-8/UWS-9).
+declare const logDelegate: ModelDelegate<
+  Log,
+  LogCreateInput,
+  LogUpdateInput,
+  Record<string, never>,
+  LogWhereInput
 >;
 
 // ── const-object enum: value position + type position (client-query-type-
@@ -415,7 +453,7 @@ async function scenarios() {
   void distinctPosts;
 
   // ── upsert (client-upsert PR D) — `where` only accepts a declared
-  //    unique-constraint group shape (`UserUpsertWhereInput`). ──
+  //    unique-constraint group shape (`UserWhereUniqueInput`). ──
   const upsertByEmail = await userUpsertDelegate.upsert({
     where: { email: "a@x.com" },
     create: { name: "Ada", email: "a@x.com" },
@@ -436,13 +474,85 @@ async function scenarios() {
   // `groupBy`/`having` proof above documents) — so the rejection is proven
   // against the GENERATED arg type directly, exactly as `<Model>UpsertArgs`
   // shapes it.
-  const upsertArgsWithNonUniqueWhere: UpsertArgs<UserCreateInput, UserUpdateInput, UserUpsertWhereInput> = {
+  const upsertArgsWithNonUniqueWhere: UpsertArgs<UserCreateInput, UserUpdateInput, UserWhereUniqueInput> = {
     // @ts-expect-error `name` is not a declared unique-constraint group on User
     where: { name: "A" },
     create: { name: "A", email: "a@x.com" },
     update: { name: "A" },
   };
   void upsertArgsWithNonUniqueWhere;
+
+  // ── update/delete unique-selector narrowing (client-unique-write-selector
+  //    spec, design.md Decisions D4/D5) — `where` is restricted to the same
+  //    declared unique-constraint group shape `upsert` already uses,
+  //    reusing `ModelDelegate`'s 9th `UniqueWhere` generic. ──
+
+  // UWS-1: a declared unique-group `where` type-checks with NO cast and NO
+  // `@ts-expect-error` — the positive control proving the fixture is not
+  // merely rejecting everything.
+  const updatedByEmail = await userUpsertDelegate.update({
+    where: { email: "a@x.com" },
+    data: { name: "Ada 2" },
+  });
+  updatedByEmail.id;
+  void updatedByEmail;
+
+  const deletedByEmail = await userUpsertDelegate.delete({ where: { email: "a@x.com" } });
+  void deletedByEmail;
+
+  // UWS-2: a non-unique-looking `where` fails to type-check on both update
+  // and delete.
+  const updateWithNonUniqueWhere = await userUpsertDelegate.update({
+    // @ts-expect-error `name` is not a declared unique-constraint group on User
+    where: { name: "A" },
+    data: { name: "Ada 2" },
+  });
+  void updateWithNonUniqueWhere;
+  const deleteWithNonUniqueWhere = await userUpsertDelegate.delete({
+    // @ts-expect-error `name` is not a declared unique-constraint group on User
+    where: { name: "A" },
+  });
+  void deleteWithNonUniqueWhere;
+
+  // UWS-3 (compile-time half): `findUnique` is unaffected (non-regression)
+  // — still typed against the full `WhereInput`, no cast needed.
+  const foundUnique = await userDelegate.findUnique({ where: { name: "A" } });
+  void foundUnique;
+
+  // UWS-4 (compile-time half): `updateMany`/`deleteMany` keep the broad
+  // `WhereInput<Row>` (non-regression) — a non-unique `where` compiles with
+  // no cast.
+  const updatedMany = await userDelegate.updateMany({
+    where: { name: "A" },
+    data: { name: "B" },
+  });
+  void updatedMany;
+  const deletedMany = await userDelegate.deleteMany({ where: { name: "A" } });
+  void deletedMany;
+
+  // UWS-8: a model with no declared unique group (`Log`) cannot call
+  // `update`/`delete` at all — its `UniqueWhere` defaults to `never`.
+  const logUpdateRejected = await logDelegate.update({
+    // @ts-expect-error Log declares no unique group — UniqueWhere is `never`
+    where: { id: 1 },
+    data: { level: "error" },
+  });
+  void logUpdateRejected;
+  const logDeleteRejected = await logDelegate.delete({
+    // @ts-expect-error Log declares no unique group — UniqueWhere is `never`
+    where: { id: 1 },
+  });
+  void logDeleteRejected;
+
+  // UWS-9: `updateMany`/`deleteMany` remain callable on that same model —
+  // only `update`/`delete` are gated by `UniqueWhere`.
+  const logUpdatedMany = await logDelegate.updateMany({
+    where: { level: "error" },
+    data: { level: "warn" },
+  });
+  void logUpdatedMany;
+  const logDeletedMany = await logDelegate.deleteMany({ where: { level: "error" } });
+  void logDeletedMany;
 
   // ── $transaction array form typing (client-transaction-array-form,
   //    client-deferred-queries spec: "Existing Promise-typed call sites keep
