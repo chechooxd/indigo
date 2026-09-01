@@ -152,9 +152,21 @@ try {
       env: { ...process.env, INDIGODB_STUDIO_READONLY: "yes" },
       encoding: "utf-8",
     });
+    const stderr = result.stderr ?? "";
     strictEqual(result.status, 1);
-    if (!/INDIGODB_STUDIO_READONLY/.test(result.stderr ?? "")) {
-      throw new Error(`expected stderr to mention INDIGODB_STUDIO_READONLY, got: ${result.stderr}`);
+    if (!/INDIGODB_STUDIO_READONLY/.test(stderr)) {
+      throw new Error(`expected stderr to mention INDIGODB_STUDIO_READONLY, got: ${stderr}`);
+    }
+    // The exit code alone proves nothing here: Node also exits 1 on an
+    // UNCAUGHT throw, and its stack trace would contain the variable name
+    // too. This check exists to prove the resolver call sits INSIDE
+    // `index.ts`'s try/catch, so the two must be told apart — otherwise
+    // moving the call back outside would leave this test green.
+    if (!stderr.includes("\u274c")) {
+      throw new Error(`expected the handled-error prefix, got: ${stderr}`);
+    }
+    if (/\n\s+at .*:\d+:\d+/.test(stderr)) {
+      throw new Error(`expected no stack trace (an uncaught throw, not a clean exit), got: ${stderr}`);
     }
   });
 } finally {
