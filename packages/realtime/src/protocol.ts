@@ -9,6 +9,16 @@
  * names — the engine translates before fan-out, so swapping the v1
  * LISTEN/NOTIFY source for logical replication (WAL) in v2 changes nothing
  * on the wire.
+ *
+ * `realtime-column-projection` (design decision 8, "consumers stay dumb"):
+ * for a table with `@@realtime(columns: [...])`, `new`/`old` here are
+ * ALREADY narrowed to the allowlist by the source (`WalSource`/
+ * `PgNotifySource`) before an event ever reaches this type — the one
+ * write-time enforcement point. `RealtimeEngine.dispatch()`,
+ * `handleLogRequest`, and `RealtimeModelDelegate` (the generated client)
+ * MUST NOT re-filter, re-derive, or widen `new`/`old`; they forward these
+ * fields verbatim. `pk` is never narrowed by projection, regardless of
+ * `columns` (it is built independently of `new`/`old`).
  */
 
 export type RealtimeOp = "INSERT" | "UPDATE" | "DELETE";

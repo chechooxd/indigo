@@ -17,6 +17,7 @@
 import pg from "pg";
 import type { ResolvedSchema } from "@indigodb/core";
 import type { RealtimeEvent, RealtimeOp, RealtimeSource } from "./protocol.js";
+import { project, projectionSet } from "./projection.js";
 
 const CHANNEL = "indigo_events";
 
@@ -25,6 +26,13 @@ interface TableNames {
   model: string;
   /** Physical column name → field name. */
   columns: Map<string, string>;
+  /**
+   * `@@realtime(columns: [...])` allowlist (`realtime-column-projection`,
+   * design decision 7 — `PgNotifySource` narrows too, since it is exported
+   * and pluggable via `RealtimeEngineOptions.source`). `null` = bare
+   * `@@realtime`, no narrowing.
+   */
+  projection: Set<string> | null;
 }
 
 export class PgNotifySource implements RealtimeSource {
@@ -42,7 +50,7 @@ export class PgNotifySource implements RealtimeSource {
       if (!table.realtime) continue;
       const columns = new Map<string, string>();
       for (const col of table.columns) columns.set(col.dbName, col.name);
-      this.tables.set(table.dbName, { model: table.name, columns });
+      this.tables.set(table.dbName, { model: table.name, columns, projection: projectionSet(table) });
     }
   }
 
@@ -138,8 +146,12 @@ export class PgNotifySource implements RealtimeSource {
       txid: raw.txid,
     };
     if (raw.partial) event.partial = true;
-    if (raw.new) event.new = renameKeys(raw.new, names.columns);
-    if (raw.old) event.old = renameKeys(raw.old, names.columns);
+    // Same shared `project()` helper as `WalSource` (design decision 7):
+    // narrow the RAW, physical-column-keyed payload before `renameKeys`, so
+    // this exported/pluggable source enforces the same allowlist rather
+    // than making the guarantee conditional on which source is configured.
+    if (raw.new) event.new = renameKeys(project(raw.new, names.projection), names.columns);
+    if (raw.old) event.old = renameKeys(project(raw.old, names.projection), names.columns);
     return event;
   }
 }

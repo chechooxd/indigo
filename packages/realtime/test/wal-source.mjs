@@ -13,11 +13,13 @@
  * exactly `start`/`stop`/`models`, matching `PgNotifySource`.
  */
 import { deepStrictEqual, strictEqual, throws, ok } from "node:assert";
-import { WalSource, resolveSlotName } from "../dist/index.js";
+import { WalSource, PgNotifySource, resolveSlotName, project, projectionSet } from "../dist/index.js";
 import { testSchema } from "./fixtures-schema.mjs";
 
 let passed = 0;
+let ran = 0;
 async function check(name, fn) {
+  ran++;
   try {
     await fn();
     passed++;
@@ -645,6 +647,321 @@ await check("threat: a row value crafted as a SQL injection payload round-trips 
   strictEqual(newRow.title, payload, "the payload must reach the writer intact, only as a bound (JSON-encoded) parameter");
 });
 
+// ── C1 — projection helper: three-state null vs empty Set (RCP-7, task 2.1) ──
+await check("project(): null allow returns the row unchanged; empty Set returns {} — never conflated", () => {
+  const row = { id: 1, status: "ok", passwordHash: "secret" };
+  deepStrictEqual(project(row, null), row, "null allow (bare @@realtime) must pass the row through untouched");
+  deepStrictEqual(project(row, new Set()), {}, "an empty Set must project to {}, not fall back to the full row");
+});
+
+await check("project(): non-empty Set narrows to exactly the allowed keys, preserving null values (RWS-7)", () => {
+  const row = { id: 1, status: null, passwordHash: "secret" };
+  deepStrictEqual(project(row, new Set(["id", "status"])), { id: 1, status: null });
+});
+
+await check("projectionSet(): absent realtimeColumns -> null; present (incl. empty) -> a Set", () => {
+  strictEqual(projectionSet({ realtimeColumns: undefined }), null);
+  deepStrictEqual(projectionSet({ realtimeColumns: ["id", "status"] }), new Set(["id", "status"]));
+  deepStrictEqual(projectionSet({ realtimeColumns: [] }), new Set());
+});
+
+// ── C2 — write-time enforcement in WalSource (Phase 3) ─────────────────────
+//
+// Hand-built `ResolvedSchema` fixtures carrying `realtimeColumns` directly
+// (same rationale as `schemaWithAllow` above: a compiled `.indigo` source
+// is not required to exercise `WalSource`'s handling of the resolved IR
+// field — PR 1 already proves the compiler produces it correctly).
+
+function schemaWithProjection({ realtimeColumns, allow, primaryKey = ["id"], extraColumns = [] } = {}) {
+  return {
+    tables: [
+      {
+        name: "Post",
+        dbName: "Post",
+        realtime: true,
+        realtimeColumns,
+        columns: [
+          { name: "id", dbName: "id" },
+          { name: "status", dbName: "status" },
+          { name: "passwordHash", dbName: "passwordHash" },
+          ...extraColumns,
+        ],
+        primaryKey,
+        allow,
+      },
+    ],
+  };
+}
+
+function newProjectedSource(schema) {
+  const source = new WalSource("postgres://unused/db", schema);
+  const events = [];
+  const writer = fakeWriter();
+  source["writer"] = writer;
+  source["service"] = { acknowledge: async () => true };
+  const onEvent = (e) => events.push(e);
+  const onError = (e) => {
+    throw e;
+  };
+  return { source, events, writer, onEvent, onError };
+}
+
+await check("RCP-2/RWS-1: a non-allowlisted column is absent from the INSERT params and the dispatched event", async () => {
+  const { source, events, writer, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: ["id", "status"] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, status: "ok", passwordHash: "s3cr3t" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(Object.keys(JSON.parse(params[5])).sort(), ["id", "status"]);
+  strictEqual(events.length, 1);
+  deepStrictEqual(Object.keys(events[0].new).sort(), ["id", "status"]);
+  ok(!("passwordHash" in events[0].new), "passwordHash must not reach the dispatched event");
+});
+
+await check("RCP-4: a field newly added to the model but absent from columns stays excluded, no code change needed", async () => {
+  const { source, events, writer, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: ["id", "status"] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, status: "ok", passwordHash: "leaked-if-forgotten" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  ok(!("passwordHash" in JSON.parse(params[5])), "the unlisted field must never appear in the logged new row");
+  ok(!("passwordHash" in events[0].new), "the unlisted field must never appear in the dispatched event");
+});
+
+await check("RCP-11/RWS-4: old is narrowed identically to new (same key set), for UPDATE and DELETE", async () => {
+  const { source, events, writer, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: ["id", "status"] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      {
+        tag: "update",
+        relation: rel,
+        old: { id: 1, status: "pending", passwordHash: "old-secret" },
+        new: { id: 1, status: "ok", passwordHash: "new-secret" },
+      },
+      { tag: "delete", relation: rel, old: { id: 2, status: "gone", passwordHash: "deleted-secret" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  // Both row changes commit in the same transaction, so `buildLogInsert`
+  // batches them into ONE multi-row INSERT (design decision 12) — 9 params
+  // per row, UPDATE at offset 0, DELETE at offset 9.
+  strictEqual(writer.calls.length, 1);
+  const { params } = writer.calls[0];
+  strictEqual(params.length, 18);
+  const [updateNew, updateOld] = [params[5], params[6]];
+  const [deleteNew, deleteOld] = [params[14], params[15]];
+  deepStrictEqual(Object.keys(JSON.parse(updateNew)).sort(), ["id", "status"]);
+  deepStrictEqual(Object.keys(JSON.parse(updateOld)).sort(), ["id", "status"]);
+  strictEqual(deleteNew, null, "DELETE has no new image");
+  deepStrictEqual(Object.keys(JSON.parse(deleteOld)).sort(), ["id", "status"]);
+  strictEqual(events.length, 2);
+  deepStrictEqual(Object.keys(events[0].old).sort(), Object.keys(events[0].new).sort());
+});
+
+await check("RCP-8: event.pk is complete even when the PK column is absent from columns", async () => {
+  const { source, events, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: ["status"] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 7, status: "ok", passwordHash: "s" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  deepStrictEqual(events[0].pk, { id: 7 }, "pk must still carry the full primary key");
+  ok(!("id" in events[0].new), "id must NOT be implicitly injected into new just because it's the pk");
+  deepStrictEqual(Object.keys(events[0].new), ["status"]);
+});
+
+await check("RCP-9: an explicitly listed PK field appears in new in addition to pk", async () => {
+  const { source, events, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: ["id", "status"] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 7, status: "ok", passwordHash: "s" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  deepStrictEqual(events[0].pk, { id: 7 });
+  deepStrictEqual(events[0].new, { id: 7, status: "ok" }, "id appears in new only because it was explicitly listed");
+});
+
+await check("RCP-7 mechanics: columns:[] stores '{}'::jsonb (not NULL) and dispatches new:{} with pk intact", async () => {
+  const { source, events, writer, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({ realtimeColumns: [] }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 3, status: "ok", passwordHash: "s" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  strictEqual(params[5], "{}", "an empty allowlist must store the JSON literal '{}', distinguishable from NULL");
+  strictEqual(events.length, 1);
+  deepStrictEqual(events[0].new, {}, "dispatched new must be an empty object, not absent");
+  deepStrictEqual(events[0].pk, { id: 3 }, "identity survives even with an empty column allowlist");
+});
+
+await check("RCP-12/RWS-3: buckets computed from the FULL raw row are unaffected by a projected-away @@allow field", async () => {
+  const { source, writer, onEvent, onError } = newProjectedSource(
+    schemaWithProjection({
+      realtimeColumns: ["id", "status"],
+      allow: [{ action: "read", left: field("ownerId"), right: claim }],
+      extraColumns: [{ name: "ownerId", dbName: "ownerId" }],
+    }),
+  );
+  const rel = relation("Post", ["id", "status", "passwordHash", "ownerId"]);
+  drive(
+    source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, status: "ok", passwordHash: "s", ownerId: "u1" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    onEvent,
+    onError,
+  );
+  await source["chain"];
+  const [{ params }] = writer.calls;
+  deepStrictEqual(params[params.length - 1], ["u1"], "buckets must reflect ownerId even though it's excluded from columns");
+  ok(!("ownerId" in JSON.parse(params[5])), "ownerId itself must not appear in the projected new payload");
+});
+
+await check("RWS-6: no emitted event carries partial:true across projected, empty-list, and bare cases", async () => {
+  for (const realtimeColumns of [["id", "status"], [], undefined]) {
+    const { source, events, onEvent, onError } = newProjectedSource(schemaWithProjection({ realtimeColumns }));
+    const rel = relation("Post", ["id", "status", "passwordHash"]);
+    drive(
+      source,
+      [
+        { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+        { tag: "insert", relation: rel, new: { id: 1, status: "ok", passwordHash: "s" } },
+        { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+      ],
+      onEvent,
+      onError,
+    );
+    await source["chain"];
+    strictEqual(events.length, 1);
+    strictEqual(events[0].partial, undefined, `partial must not be set for realtimeColumns=${JSON.stringify(realtimeColumns)}`);
+  }
+});
+
+await check("RSL-2: widening the allowlist on a rebuilt source does not recover the first commit's already-narrow history", async () => {
+  const narrow = newProjectedSource(schemaWithProjection({ realtimeColumns: ["id"] }));
+  const rel = relation("Post", ["id", "status", "passwordHash"]);
+  drive(
+    narrow.source,
+    [
+      { tag: "begin", commitLsn: "0/1", commitTime: 0n, xid: 1 },
+      { tag: "insert", relation: rel, new: { id: 1, status: "ok", passwordHash: "s" } },
+      { tag: "commit", flags: 0, commitLsn: "0/2", commitEndLsn: "0/3", commitTime: 0n },
+    ],
+    narrow.onEvent,
+    narrow.onError,
+  );
+  await narrow.source["chain"];
+  const [{ params: firstParams }] = narrow.writer.calls;
+  deepStrictEqual(Object.keys(JSON.parse(firstParams[5])), ["id"], "the first commit's stored row must stay narrow");
+
+  // Rebuild the source with a wider allowlist — the FIRST source/writer's
+  // captured params (asserted above) must not be mutated by this.
+  const wide = newProjectedSource(schemaWithProjection({ realtimeColumns: ["id", "status"] }));
+  drive(
+    wide.source,
+    [
+      { tag: "begin", commitLsn: "0/3", commitTime: 0n, xid: 2 },
+      { tag: "insert", relation: rel, new: { id: 2, status: "ok", passwordHash: "s" } },
+      { tag: "commit", flags: 0, commitLsn: "0/4", commitEndLsn: "0/5", commitTime: 0n },
+    ],
+    wide.onEvent,
+    wide.onError,
+  );
+  await wide.source["chain"];
+
+  deepStrictEqual(
+    Object.keys(JSON.parse(firstParams[5])),
+    ["id"],
+    "the first source's captured history must remain narrow after a wider source is built",
+  );
+});
+
+// ── C3 — PgNotifySource narrows too (design decision 7, DX-4) ──────────────
+await check("DX-4: PgNotifySource.translate narrows new/old identically for narrow, empty, and bare columns", () => {
+  for (const [realtimeColumns, expectedKeys] of [
+    [["id", "status"], ["id", "status"]],
+    [[], []],
+    [undefined, ["id", "status", "passwordHash"]],
+  ]) {
+    const source = new PgNotifySource(
+      "postgres://unused/db",
+      schemaWithProjection({ realtimeColumns }),
+    );
+    const payload = JSON.stringify({
+      table: "Post",
+      op: "INSERT",
+      pk: { id: 1 },
+      new: { id: 1, status: "ok", passwordHash: "s" },
+      ts: "2026-01-01T00:00:00.000Z",
+      txid: "1",
+    });
+    const event = source["translate"](payload);
+    ok(event, `expected an event for realtimeColumns=${JSON.stringify(realtimeColumns)}`);
+    deepStrictEqual(Object.keys(event.new).sort(), [...expectedKeys].sort());
+    deepStrictEqual(event.pk, { id: 1 }, "pk must never be narrowed");
+  }
+});
+
 // ── A4 — reconnect uses the same 1s→30s exponential backoff as PgNotifySource ──
 await check("backoff: schedules the first retry at 1s and doubles thereafter, capped at 30s", () => {
   const source = new WalSource("postgres://unused/db", testSchema());
@@ -700,4 +1017,7 @@ await check("resolveSlotName: rejects a 64-char name", () => {
 });
 
 console.log(`\n${passed} passed`);
+// RCP-13 reachability guard: fails loudly if a case above is skipped/omitted
+// instead of silently shrinking the run.
+strictEqual(ran, 40, "expected exactly 40 check() cases to run in wal-source.mjs");
 if (process.exitCode) process.exit(process.exitCode);

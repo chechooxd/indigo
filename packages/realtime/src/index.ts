@@ -25,3 +25,4 @@ export type {
 } from "./protocol.js";
 export { mintHandle, verifyHandle, DEFAULT_HANDLE_TTL_SECONDS } from "./handle.js";
 export type { HandlePayload } from "./handle.js";
+export { project, projectionSet } from "./projection.js";
