@@ -176,7 +176,11 @@ Generated client code MUST include one arg interface per new operation —
 `distinct` member on the existing `findMany` args interface. These interfaces
 MUST be additive: existing generated interfaces (`FindManyArgs`,
 `CreateInput`, `UpdateInput`, etc.) MUST remain unchanged in shape for
-callers not using the new options.
+callers not using the new options. `<Model>UpdateArgs`/`<Model>DeleteArgs`
+(single-row `update`/`delete`) additionally type their `where` member as
+`<Model>WhereUniqueInput` — the generated union of declared unique-group
+shapes, renamed from `<Model>UpsertWhereInput` and now shared across
+`upsert`, `update`, and `delete` — instead of the full `WhereInput<Row>`.
 
 #### Scenario: New arg interfaces are emitted per model
 
@@ -195,6 +199,14 @@ callers not using the new options.
 - WHEN the client is regenerated with this capability's generator changes
 - THEN the pre-existing call sites MUST continue to type-check with no
   changes required
+
+#### Scenario: UpdateArgs/DeleteArgs where is typed as the shared unique-selector type
+
+- GIVEN model `User` with a declared unique constraint on `email`
+- WHEN the client is generated
+- THEN `UserUpdateArgs["where"]` and `UserDeleteArgs["where"]` MUST both be
+  typed as `UserWhereUniqueInput`
+- AND MUST NOT be typed as the full `UserWhereInput`
 
 ### Requirement: `__meta` gains a numeric-scalar tag and unique-constraint groups
 

@@ -61,6 +61,13 @@ matches no row MUST throw a typed error — it MUST NOT silently no-op.
 - THEN a new author row MUST be created and linked
 - AND no error MUST be thrown solely because the lookup found nothing
 
+#### Scenario: Top-level update with relation-ops-only data and zero matching rows throws (behavior flip)
+
+- GIVEN model `Post` with no row matching `id: 999`
+- WHEN `db.post.update({ where: { id: 999 }, data: { author: { connect: { id: 1 } } } })` is called (no scalar fields in `data`)
+- THEN the call MUST throw `IndigoNotFoundError` with `code: "RECORD_NOT_FOUND"`
+- AND it MUST NOT resolve with `undefined` — this supersedes the previous behavior asserted by `nested-writes-update.mjs` case C1.4c, which is rewritten as part of this change to expect the throw instead of a silent `undefined` result
+
 ### Requirement: `disconnect` and `set` on to-many relations
 
 `data.<relation>` MUST accept `disconnect` (unlink specific rows) and `set`
