@@ -1094,6 +1094,22 @@ export class ModelDelegate<
         throw err;
       }
     };
+    // `disconnect`/`set` clear an FK via `target.update`, which now throws
+    // `IndigoNotFoundError` on a zero-row match (this PR's own guard). A
+    // disconnect matching nothing — including `set: []` on a relation with
+    // zero currently-linked rows, or `disconnect: true` on a to-one relation
+    // with nothing linked — is a legitimate no-op (client-nested-writes spec
+    // "set with an empty array disconnects everything"; there is nothing to
+    // unlink, not an error), unlike `connect`, whose `where` names a row the
+    // caller expects to exist. Swallows ONLY `IndigoNotFoundError`; any other
+    // failure still propagates.
+    const disconnectByUpdate = async (where: unknown): Promise<void> => {
+      try {
+        await target.update({ where: where as never, data: { [relMeta.to]: null } });
+      } catch (err) {
+        if (!(err instanceof IndigoNotFoundError)) throw err;
+      }
+    };
     const requireOptionalFk = (): void => {
       if (!relMeta.optionalFk) {
         throw new IndigoNestedWriteError(
@@ -1130,7 +1146,7 @@ export class ModelDelegate<
       if (disconnects.length > 0) {
         requireOptionalFk();
         for (const where of disconnects) {
-          await target.update({ where: where as never, data: { [relMeta.to]: null } });
+          await disconnectByUpdate(where);
         }
       }
 
@@ -1138,10 +1154,11 @@ export class ModelDelegate<
       // everything currently linked to `parentKey`, then re-connect each
       // provided `where`. `set: []` disconnects everything and connects
       // nothing (design.md's confirmed product decision — reuses the
-      // existing unbounded `update()`, not a scoped `updateMany`).
+      // existing unbounded `update()`, not a scoped `updateMany`). Zero
+      // currently-linked rows is the common idempotent case, not an error.
       if (op.set !== undefined) {
         requireOptionalFk();
-        await target.update({ where: { [relMeta.to]: parentKey } as never, data: { [relMeta.to]: null } });
+        await disconnectByUpdate({ [relMeta.to]: parentKey });
         for (const where of op.set as unknown[]) {
           if (!(await connectByUpdate(where))) {
             throw new IndigoNestedWriteError(
@@ -1176,7 +1193,7 @@ export class ModelDelegate<
     }
     if (op.disconnect === true || (Object.prototype.hasOwnProperty.call(op, "set") && op.set === null)) {
       requireOptionalFk();
-      await target.update({ where: { [relMeta.to]: parentKey } as never, data: { [relMeta.to]: null } });
+      await disconnectByUpdate({ [relMeta.to]: parentKey });
       return;
     }
     throw new IndigoNestedWriteError(

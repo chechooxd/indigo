@@ -68,3 +68,41 @@ realtime/Postgres suites.
 
 24/24 PR 1 tasks complete (Phases 1-4). Ready for `sdd-verify` on PR 1's scope, or a fresh
 `sdd-apply` batch for PR 2 (stacked on this branch per `stacked-to-main`).
+
+## Corrective batch — verify CRITICAL (disconnect/set regression)
+
+`sdd-verify` FAILed PR 1 with 1 CRITICAL, independently reproduced: `applyNonFkSideOp`'s
+disconnect/set handling called `target.update(...)` at three sites without the
+`IndigoNotFoundError` catch that `connectByUpdate` received in the first pass. A
+`disconnect`/`set` matching zero rows — including the common idempotent `set: []` on a
+relation with nothing linked — went from a silent no-op to an unhandled throw. That is the
+same failure class this PR exists to fix, reintroduced at sibling call sites.
+
+**Why the suite missed it.** `C1.3a` is titled "set with an empty array disconnects
+everything" and always seeds two pre-linked books before calling `set: []`, so the
+zero-currently-linked branch is never reached. The test that appeared to guard this path
+guarded the neighbouring one — the same shape as C1.4c before its rewrite.
+
+**Fix.** A `disconnectByUpdate` helper wrapping the FK-clearing `target.update`, swallowing
+**only** `IndigoNotFoundError` and rethrowing everything else, routed through all three sites.
+Chosen over making each site test a sentinel: a disconnect that matches nothing is a
+legitimate no-op (the base `client-nested-writes` spec's "set with an empty array disconnects
+everything" — there is nothing to unlink, not an error), whereas `connect` names a row the
+caller expects to exist and keeps its `false` sentinel.
+
+**New coverage**, each with an *empty* fixture rather than a seeded one:
+- `C1.1c` — `set: []` with zero currently-linked books.
+- `C1.1d` — `disconnect` naming a book id that does not exist at all.
+- `C1.2d` — `disconnect: true` on an optional to-one non-fkSide relation with nothing linked.
+  Required a new `Profile` model: `Author.books` is `list: true` and `Book.author`/`.publisher`
+  are `fkSide: true` (folded into the parent's own scalars, never calling `target.update`), so
+  no existing fixture reached the single-value branch at all.
+
+**Sweep for other consumers of the old lie.** Every `.update(`/`.delete(`/`rawUpdate(` call
+site in `packages/client/src`: `delegate.ts:1090` (connect, wrapped), `:1108` (disconnect,
+wrapped), `:1334` and `:1404` (the public path, where throwing is the intended new behavior),
+and `client.ts:243` (`Map.delete`, unrelated). No unguarded internal consumer remains.
+
+**Mutation proof.** Made `disconnectByUpdate` rethrow unconditionally and rebuilt: C1.1c,
+C1.1d and C1.2d all failed, with `IndigoNotFoundError` on `Book`, `Book` and `Profile`
+respectively. Restored byte-identically (`cmp` clean), rebuilt, reconfirmed green.

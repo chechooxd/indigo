@@ -60,6 +60,23 @@ Chain strategy: stacked-to-main
 - [x] 4.3 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root; confirm green.
 - [x] 4.4 Commit PR 1 as a standalone, independently revertable range.
 
+### Phase 4C: Corrective batch — verify CRITICAL (disconnect/set regression)
+
+Added after `sdd-verify` FAILed PR 1 with 1 CRITICAL. The empty-`SET`/not-found guard made
+`rawUpdate` throw, and `applyNonFkSideOp`'s disconnect/set handling consumed the old silent
+`undefined` as a sentinel at three sites the first apply pass missed — turning a legitimate
+idempotent no-op into a hard throw. Same failure class this PR exists to fix, reintroduced.
+
+- [x] 4C.1 Add `disconnectByUpdate` helper wrapping `target.update(... = null)`; swallow **only** `IndigoNotFoundError`, rethrow everything else.
+- [x] 4C.2 Route all three sites through it: the per-item `disconnect` loop, the `set` clear, and the to-one `disconnect: true` / `set: null` branch.
+- [x] 4C.3 RED: `C1.1c` — `set: []` on an author with ZERO currently-linked books is a no-op. Fixture seeds an **empty** relation; C1.3a's seeded fixture is exactly what hid this.
+- [x] 4C.4 RED: `C1.1d` — `disconnect` naming a book id that does not exist at all is a no-op.
+- [x] 4C.5 RED: `C1.2d` — `disconnect: true` on an optional to-one non-fkSide relation with nothing linked is a no-op. Needed a new `Profile` model: `Author.books` is `list: true` and `Book.author`/`.publisher` are `fkSide: true`, so no existing fixture reaches the single-value branch.
+- [x] 4C.6 GREEN: all three pass; `pnpm --filter @indigodb/client test` exit 0.
+- [x] 4C.7 Sweep every internal consumer of an `update`/`delete` result in `packages/client/src`. Result: only two `await target.update(...)` sites remain (`delegate.ts:1090` connect, `:1108` disconnect), both wrapped. `:1334` and `:1404` are the public path where throwing is correct; `client.ts:243` is `Map.delete`, unrelated. No unguarded internal consumer left.
+- [x] 4C.8 Mutation proof: made `disconnectByUpdate` rethrow unconditionally, rebuilt — C1.1c, C1.1d and C1.2d all FAILed with `IndigoNotFoundError` on `Book`/`Book`/`Profile` respectively. Restored byte-identically (`cmp` clean), rebuilt, reconfirmed green.
+- [x] 4C.9 Re-run the root gate `pnpm clean && pnpm build --force && pnpm lint && pnpm test`.
+
 ## PR 2 — Unique selector (stacks on PR 1)
 
 ### Phase 5: Rename inventory (mechanical, no behavior change)
