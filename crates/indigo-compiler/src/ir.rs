@@ -196,11 +196,19 @@ pub struct ResolvedTable {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub group: Option<String>,
     /// Resolved `@@allow` rules, one entry per canonical action after alias
-    /// expansion. Declared LAST and always omitted (not `null`) when the
-    /// model has no `@@allow`, so every pre-existing fixture snapshot stays
-    /// byte-identical (design.md's IR field-order rule).
+    /// expansion. Omitted (not `null`) when the model has no `@@allow`, so
+    /// every pre-existing fixture snapshot stays byte-identical (design.md's
+    /// IR field-order rule).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub allow: Option<Vec<AllowRule>>,
+    /// Resolved `@@realtime(columns:…)` allowlist, physical `dbName`s in
+    /// declaration order. Declared LAST (after `allow`) and always omitted
+    /// (not `null`) when `@@realtime` carries no `columns` argument — never
+    /// `Some(vec![])` unless the schema explicitly wrote `columns: []`
+    /// (`realtime-column-projection` design decision 2/5b: present-and-empty
+    /// is the identity-only signal, distinct from "no allowlist at all").
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub realtime_columns: Option<Vec<String>>,
 }
 
 /// A single enum member, name plus its physical (`@map`) label.
@@ -298,6 +306,13 @@ mod tests {
     }
 
     fn table(allow: Option<Vec<AllowRule>>) -> ResolvedTable {
+        table_with_realtime_columns(allow, None)
+    }
+
+    fn table_with_realtime_columns(
+        allow: Option<Vec<AllowRule>>,
+        realtime_columns: Option<Vec<String>>,
+    ) -> ResolvedTable {
         ResolvedTable {
             name: "Post".into(),
             db_name: "Post".into(),
@@ -311,6 +326,7 @@ mod tests {
             color: None,
             group: Some("Content".into()),
             allow,
+            realtime_columns,
         }
     }
 
@@ -327,12 +343,43 @@ mod tests {
             left: AllowOperand::Claim { name: "userId".into() },
             right: AllowOperand::Field { name: "ownerId".into() },
         };
+        // `realtime_columns` is the new LAST field (declared after `allow`),
+        // so with it absent, `allow` must still be the last KEY present.
         let json = serde_json::to_string(&table(Some(vec![rule]))).unwrap();
         assert!(json.contains(r#""group":"Content""#));
-        // `allow` must be the LAST key present, declared after `group`.
         assert!(json.ends_with(
             r#""allow":[{"action":"read","left":{"kind":"claim","name":"userId"},"right":{"kind":"field","name":"ownerId"}}]}"#
         ));
+    }
+
+    #[test]
+    fn realtime_columns_is_omitted_not_null_when_absent() {
+        let json = serde_json::to_string(&table_with_realtime_columns(None, None)).unwrap();
+        assert!(!json.contains("realtimeColumns"));
+    }
+
+    #[test]
+    fn realtime_columns_serializes_last_after_allow_when_present() {
+        let rule = AllowRule {
+            action: AllowAction::Read,
+            left: AllowOperand::Claim { name: "userId".into() },
+            right: AllowOperand::Field { name: "ownerId".into() },
+        };
+        let json = serde_json::to_string(&table_with_realtime_columns(
+            Some(vec![rule]),
+            Some(vec!["id".into(), "email".into()]),
+        ))
+        .unwrap();
+        assert!(json.contains(r#""allow":"#));
+        // `realtimeColumns` must be the LAST key present, declared after `allow`.
+        assert!(json.ends_with(r#""realtimeColumns":["id","email"]}"#));
+    }
+
+    #[test]
+    fn realtime_columns_serializes_as_present_and_empty_when_empty() {
+        // RCP-7: `columns: []` must serialize as `[]`, never be omitted.
+        let json = serde_json::to_string(&table_with_realtime_columns(None, Some(vec![]))).unwrap();
+        assert!(json.contains(r#""realtimeColumns":[]"#));
     }
 
     #[test]
