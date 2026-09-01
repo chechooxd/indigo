@@ -1,0 +1,287 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "BareRealtime",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": []
+          }
+        ]
+      },
+      {
+        "name": "ProjectedUser",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "email_address"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "passwordHash",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": [
+              {
+                "name": "columns",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "IdentityOnly",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "status",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": [
+              {
+                "name": "columns",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "BareRealtime",
+        "dbName": "BareRealtime",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true
+      },
+      {
+        "name": "ProjectedUser",
+        "dbName": "ProjectedUser",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email_address",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "passwordHash",
+            "dbName": "passwordHash",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true,
+        "realtimeColumns": [
+          "id",
+          "email_address"
+        ]
+      },
+      {
+        "name": "IdentityOnly",
+        "dbName": "IdentityOnly",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "status",
+            "dbName": "status",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true,
+        "realtimeColumns": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

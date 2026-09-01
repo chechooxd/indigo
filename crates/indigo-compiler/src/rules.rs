@@ -56,7 +56,7 @@ pub enum AttributeTarget {
 /// `Relation` need bespoke checks that `validate.rs` implements directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgShape {
-    /// No arguments (`@id`, `@unique`, `@@realtime`).
+    /// No arguments (`@id`, `@unique`).
     None,
     /// Exactly one positional string (`@map("x")`, `@note("x")`).
     OneString,
@@ -77,6 +77,15 @@ pub enum ArgShape {
     /// the deep checks (action vocabulary, claim vocabulary, path shape);
     /// this shape only gates arity + the coarse argument kind.
     Allow,
+    /// `@@realtime` / `@@realtime(columns: [a, b])`: zero positional
+    /// arguments, plus an optional named `columns` argument whose value is a
+    /// reference array (`realtime-column-projection` design decision #1).
+    /// A *named-only* optional argument is the only shape where adding an
+    /// argument cannot alter the bare zero-arg form — a misspelled key
+    /// (`cols:`) is a hard error rather than a silent no-op. `validate.rs`
+    /// owns the deep checks (field existence, scalar-ness, duplicates);
+    /// this shape only gates arity + the coarse argument kind.
+    Realtime,
 }
 
 /// `(target, attribute name, shape)` — every attribute recognized anywhere
@@ -88,7 +97,7 @@ pub const ATTRIBUTE_RULES: &[(AttributeTarget, &str, ArgShape)] = &[
     (AttributeTarget::Field, "note", ArgShape::OneString),
     (AttributeTarget::Field, "default", ArgShape::Default),
     (AttributeTarget::Field, "relation", ArgShape::Relation),
-    (AttributeTarget::Model, "realtime", ArgShape::None),
+    (AttributeTarget::Model, "realtime", ArgShape::Realtime),
     (AttributeTarget::Model, "map", ArgShape::OneString),
     (AttributeTarget::Model, "note", ArgShape::OneString),
     (AttributeTarget::Model, "index", ArgShape::Index),
@@ -128,6 +137,12 @@ pub const RELATION_ARG_KEYS: [&str; 4] = ["fields", "references", "onDelete", "o
 
 /// `@@index`/`@@unique` named-argument keys (design decision #1/#3).
 pub const INDEX_ARG_KEYS: [&str; 2] = ["name", "type"];
+
+/// `@@realtime` named-argument keys (`realtime-column-projection` design
+/// decision #1). `columns` is exclusive to `@@realtime`: it is absent from
+/// `INDEX_ARG_KEYS`/`RELATION_ARG_KEYS`, so `@@index([a], columns: [b])`
+/// already errors via the existing closed-key machinery.
+pub const REALTIME_ARG_KEYS: [&str; 1] = ["columns"];
 
 /// Closed set of Postgres index access methods accepted by `type:`
 /// (proposal open assumption #1 — no `brin`/`spgist` yet).

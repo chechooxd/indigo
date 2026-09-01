@@ -375,6 +375,20 @@ fn resolve_allow_rules(model: &Model, field_to_db: &HashMap<String, String>) -> 
     if rules_out.is_empty() { None } else { Some(rules_out) }
 }
 
+/// Resolves `@@realtime(columns: [...])` into physical `dbName`s, in
+/// declaration order (`realtime-column-projection` design decision 2/3).
+/// `None` when `@@realtime` carries no `columns` argument at all — bare
+/// `@@realtime` must stay byte-identical to today (RCP-1). `Some(vec![])`
+/// is a distinct, valid state (RCP-7: `columns: []` is present-and-empty,
+/// never omitted) — the empty-list path here needs no special case, since a
+/// present-but-empty AST array resolves to an empty `Vec` naturally.
+fn resolve_realtime_columns(model: &Model, field_to_db: &HashMap<String, String>) -> Option<Vec<String>> {
+    let attr = get_attr(&model.attributes, "realtime")?;
+    let value = named_arg(Some(attr), "columns")?;
+    let names = as_reference_list(Some(value));
+    Some(names.iter().map(|name| field_to_db.get(name).cloned().unwrap_or_else(|| name.clone())).collect())
+}
+
 pub fn resolve(schema: &Schema) -> ResolvedSchema {
     let enum_names: std::collections::HashSet<&str> =
         schema.enums.iter().map(|e| e.name.as_str()).collect();
@@ -437,6 +451,7 @@ pub fn resolve(schema: &Schema) -> ResolvedSchema {
             color: group.and_then(|(_, c)| c.map(str::to_string)),
             group: group.map(|(name, _)| name.to_string()),
             allow: resolve_allow_rules(model, field_to_db),
+            realtime_columns: resolve_realtime_columns(model, field_to_db),
         });
     }
 
@@ -870,5 +885,76 @@ Table User {
         );
         let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
         assert!(table.allow.is_none());
+    }
+
+    // ─── @@realtime(columns:…) (realtime-column-projection PR 1) ────────────
+
+    #[test]
+    fn realtime_columns_resolve_to_physical_names_in_declaration_order() {
+        // RCP-2/RCP-4: `columns: [id, email]` resolves to physical dbNames,
+        // in declaration order, excluding any unlisted field.
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id
+  email String
+  passwordHash String
+  @@realtime(columns: [id, email])
+}
+"#,
+        );
+        let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
+        assert_eq!(table.realtime_columns.as_deref(), Some(&["id".to_string(), "email".to_string()][..]));
+    }
+
+    #[test]
+    fn realtime_columns_use_mapped_physical_names() {
+        // DX-2: a `@map`ped listed field yields its physical name, not the
+        // schema-level field name.
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id
+  email String @map("email_address")
+  @@realtime(columns: [id, email])
+}
+"#,
+        );
+        let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
+        assert_eq!(
+            table.realtime_columns.as_deref(),
+            Some(&["id".to_string(), "email_address".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn bare_realtime_has_no_column_allowlist() {
+        // RCP-1: bare @@realtime must not populate realtime_columns at all.
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id
+  @@realtime
+}
+"#,
+        );
+        let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
+        assert!(table.realtime_columns.is_none());
+    }
+
+    #[test]
+    fn empty_realtime_columns_list_resolves_to_present_and_empty() {
+        // RCP-7: `columns: []` must resolve to `Some(vec![])`, never `None`
+        // — present-and-empty is the identity-only signal.
+        let resolved = resolve_source(
+            r#"
+Table User {
+  id String @id
+  @@realtime(columns: [])
+}
+"#,
+        );
+        let table = resolved.tables.iter().find(|t| t.name == "User").expect("table exists");
+        assert_eq!(table.realtime_columns, Some(vec![]));
     }
 }

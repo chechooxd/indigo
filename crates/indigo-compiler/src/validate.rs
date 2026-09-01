@@ -304,6 +304,7 @@ fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_
             match rules::attribute_rule(AttributeTarget::Model, &attr.name) {
                 None => push_unknown(errors, AttributeTarget::Model, &attr.name, &location, Some(model.name.clone()), None),
                 Some(ArgShape::Allow) => validate_allow(errors, model, attr),
+                Some(ArgShape::Realtime) => validate_realtime_columns(errors, model, attr),
                 Some(shape) => check_shape(errors, shape, &attr.name, attr, &location, Some(model.name.clone()), None),
             }
         }
@@ -611,6 +612,66 @@ fn validate_relation_args(
                 message: format!("Invalid {key} value \"{raw}\". Allowed: {allowed}."),
                 model: Some(model.name.clone()),
                 field: Some(field.name.clone()),
+            });
+        }
+    }
+}
+
+// ─── `@@realtime(columns:…)` (realtime-column-projection PR 1) ──────────────
+//
+// `rules.rs`'s `ArgShape::Realtime` only gates the coarse arg count (via the
+// generic dispatch in `validate_attributes`, mirroring how `Allow` bypasses
+// `check_shape`); this function owns the deep diagnostics: unknown/
+// non-scalar field references, duplicate entries, and the closed
+// `columns:`-only named-key vocabulary. `columns: []` is deliberately valid
+// (design decision 5b) — no empty-list diagnostic exists anywhere below.
+
+/// Validates one `@@realtime` attribute's optional `columns:` argument.
+/// Bare `@@realtime` (no arguments at all) produces no diagnostic here.
+fn validate_realtime_columns(errors: &mut Vec<ValidationError>, model: &Model, attr: &Attribute) {
+    let model_name = model.name.clone();
+
+    // Any positional argument, or any named argument other than `columns`,
+    // is rejected — `columns` is the only argument `@@realtime` accepts.
+    for arg in &attr.args {
+        if arg.name != "columns" {
+            errors.push(ValidationError {
+                message: format!(
+                    "Attribute \"@@realtime\" on model \"{model_name}\" accepts only a \"columns:\" argument."
+                ),
+                model: Some(model_name.clone()),
+                field: None,
+            });
+        }
+    }
+
+    let Some(value) = named_arg(Some(attr), "columns") else { return };
+    let names = as_reference_list(Some(value));
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    for name in &names {
+        if !seen.insert(name.as_str()) {
+            errors.push(ValidationError {
+                message: format!(
+                    "Duplicate column \"{name}\" in @@realtime(columns) on model \"{model_name}\"."
+                ),
+                model: Some(model_name.clone()),
+                field: None,
+            });
+            continue;
+        }
+        let is_scalar_field = model
+            .fields
+            .iter()
+            .find(|f| &f.name == name)
+            .is_some_and(|f| is_scalar(&f.field_type.name) && !f.field_type.list);
+        if !is_scalar_field {
+            errors.push(ValidationError {
+                message: format!(
+                    "@@realtime(columns) references unknown or non-scalar field \"{name}\" on model \"{model_name}\"."
+                ),
+                model: Some(model_name.clone()),
+                field: None,
             });
         }
     }
@@ -1648,6 +1709,149 @@ Table Post {
 "#,
         );
         assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    // ─── @@realtime(columns:…) (realtime-column-projection PR 1) ────────────
+
+    #[test]
+    fn realtime_columns_unknown_field_is_rejected() {
+        // RCP-5 — a listed column referencing no field on the model.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  email String
+  @@realtime(columns: [id, secret])
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message
+                == "@@realtime(columns) references unknown or non-scalar field \"secret\" on model \"User\"."),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn realtime_columns_relation_field_is_rejected() {
+        // RCP-5 / DX-1 — a relation (non-scalar) field listed in `columns`
+        // shares the same diagnostic class as an unknown field.
+        let errors = validate_source(
+            r#"
+Table Author {
+  id String @id
+}
+
+Table Post {
+  id String @id
+  author Author @relation(fields: [authorId], references: [id])
+  authorId String
+  @@realtime(columns: [id, author])
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message
+                == "@@realtime(columns) references unknown or non-scalar field \"author\" on model \"Post\"."),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn realtime_columns_duplicate_entry_is_rejected() {
+        // RCP-6.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  email String
+  @@realtime(columns: [email, id, email])
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message == "Duplicate column \"email\" in @@realtime(columns) on model \"User\"."),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn realtime_unknown_named_key_is_rejected() {
+        // DX-3-adjacent — an unknown named key on @@realtime.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  @@realtime(cols: [id])
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message == "Attribute \"@@realtime\" on model \"User\" accepts only a \"columns:\" argument."),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn realtime_positional_argument_is_rejected() {
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  @@realtime([id])
+}
+"#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message == "Attribute \"@@realtime\" on model \"User\" accepts only a \"columns:\" argument."),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn realtime_bare_attribute_is_still_accepted() {
+        // RCP-1 — bare @@realtime, no columns argument, must stay valid.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  email String
+  @@realtime
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn realtime_empty_columns_list_is_accepted() {
+        // decision 5b — an empty allowlist is valid, not an error.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  email String
+  @@realtime(columns: [])
+}
+"#,
+        );
+        assert!(errors.is_empty(), "unexpected diagnostics: {errors:?}");
+    }
+
+    #[test]
+    fn realtime_columns_on_index_is_rejected_as_unknown_argument() {
+        // RCP-3 — `columns` is exclusive to @@realtime; @@index already
+        // rejects it via the existing closed-key machinery.
+        let errors = validate_source(
+            r#"
+Table User {
+  id String @id
+  a  String
+  @@index([a], columns: [a])
+}
+"#,
+        );
+        assert!(errors.iter().any(|e| e.message.contains("columns")), "{errors:?}");
     }
 
     #[test]

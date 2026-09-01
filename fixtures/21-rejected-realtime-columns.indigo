@@ -1,0 +1,33 @@
+// `@@realtime(columns: [...])` rejected forms (realtime-column-projection,
+// PR 1). One instance per diagnostic class from design.md's Diagnostics
+// table. Not under `fixtures/errors/`, since every diagnostic here comes
+// from validation, not a parse failure — same convention as
+// 19-rejected-allow.indigo.
+
+// Unknown / non-scalar field reference.
+Table UnknownColumn {
+  id    String @id
+  email String
+  @@realtime(columns: [id, ghostField])
+}
+
+// Duplicate entry.
+Table DuplicateColumn {
+  id    String @id
+  email String
+  @@realtime(columns: [id, email, id])
+}
+
+// Unknown named key on `@@realtime`.
+Table UnknownRealtimeArg {
+  id String @id
+  @@realtime(cols: [id])
+}
+
+// `columns` on a non-`@@realtime` attribute — rejected as an unknown
+// argument by the existing closed-key machinery (RCP-3).
+Table ColumnsOnIndex {
+  id String @id
+  a  String
+  @@index([a], columns: [a])
+}

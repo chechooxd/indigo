@@ -1,0 +1,381 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "UnknownColumn",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": [
+              {
+                "name": "columns",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "ghostField"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "DuplicateColumn",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": [
+              {
+                "name": "columns",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    },
+                    {
+                      "kind": "reference",
+                      "value": "id"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnknownRealtimeArg",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          }
+        ],
+        "attributes": [
+          {
+            "name": "realtime",
+            "args": [
+              {
+                "name": "cols",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "id"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ColumnsOnIndex",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "a",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "columns",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "a"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "UnknownColumn",
+        "dbName": "UnknownColumn",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true,
+        "realtimeColumns": [
+          "id",
+          "ghostField"
+        ]
+      },
+      {
+        "name": "DuplicateColumn",
+        "dbName": "DuplicateColumn",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true,
+        "realtimeColumns": [
+          "id",
+          "email",
+          "id"
+        ]
+      },
+      {
+        "name": "UnknownRealtimeArg",
+        "dbName": "UnknownRealtimeArg",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": [],
+        "realtime": true
+      },
+      {
+        "name": "ColumnsOnIndex",
+        "dbName": "ColumnsOnIndex",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "a",
+            "dbName": "a",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "a"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "@@realtime(columns) references unknown or non-scalar field \"ghostField\" on model \"UnknownColumn\".",
+      "model": "UnknownColumn"
+    },
+    {
+      "message": "Duplicate column \"id\" in @@realtime(columns) on model \"DuplicateColumn\".",
+      "model": "DuplicateColumn"
+    },
+    {
+      "message": "Attribute \"@@realtime\" on model \"UnknownRealtimeArg\" accepts only a \"columns:\" argument.",
+      "model": "UnknownRealtimeArg"
+    },
+    {
+      "message": "Unknown @@index argument \"columns\" on model \"ColumnsOnIndex\". Known arguments: name, type.",
+      "model": "ColumnsOnIndex"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+// `@@realtime(columns: [...])` accepted forms (realtime-column-projection,
+// PR 1). Every model here parses AND validates cleanly, and `resolve.rs`
+// populates `ResolvedTable.realtimeColumns` with physical dbNames.
+
+// Bare `@@realtime`, no `columns` argument — must resolve with NO
+// `realtimeColumns` key at all (RCP-1: byte-identical to before this
+// capability existed).
+Table BareRealtime {
+  id    String @id
+  email String
+  @@realtime
+}
+
+// A `columns` allowlist naming a `@map`ped field (DX-2: the physical dbName
+// is resolved, not the schema-level field name) and a field intentionally
+// excluded from the allowlist (RCP-4: a newly added/unlisted field stays
+// excluded with no code change required).
+Table ProjectedUser {
+  id           String @id
+  email        String @map("email_address")
+  passwordHash String
+  @@realtime(columns: [id, email])
+}
+
+// An empty `columns` list — valid, not an error (decision 5b). Resolves to
+// an allowlist containing zero fields: identity-only notifications.
+Table IdentityOnly {
+  id     String @id
+  status String
+  @@realtime(columns: [])
+}

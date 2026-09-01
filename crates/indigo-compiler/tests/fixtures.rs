@@ -789,6 +789,86 @@ fn fixture_19_rejected_allow_reports_every_diagnostic_class() {
     }
 }
 
+// ─── `@@realtime(columns:…)` (realtime-column-projection PR 1): dedicated fixtures ───
+
+#[test]
+fn fixture_20_realtime_columns_has_zero_validation_errors() {
+    let source = fs::read_to_string(fixtures_dir().join("20-realtime-columns.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    assert!(errors.is_empty(), "expected zero validation errors, got: {errors:?}");
+}
+
+#[test]
+fn fixture_20_ir_resolves_realtime_columns() {
+    let source = fs::read_to_string(fixtures_dir().join("20-realtime-columns.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let resolved = resolve::resolve(&schema);
+    let table = |name: &str| resolved.tables.iter().find(|t| t.name == name).unwrap();
+
+    // RCP-1: bare `@@realtime` carries no `realtimeColumns` allowlist at all.
+    let bare = table("BareRealtime");
+    assert_eq!(bare.realtime, Some(true));
+    assert!(bare.realtime_columns.is_none());
+
+    // RCP-2/RCP-4/DX-2: listed columns resolve to physical dbNames, in
+    // declaration order; `email`'s `@map` is honored; `passwordHash` (not
+    // listed) is excluded.
+    let projected = table("ProjectedUser");
+    assert_eq!(
+        projected.realtime_columns.as_deref(),
+        Some(&["id".to_string(), "email_address".to_string()][..])
+    );
+
+    // RCP-7: `columns: []` resolves to `Some(vec![])`, never `None`.
+    let identity_only = table("IdentityOnly");
+    assert_eq!(identity_only.realtime_columns, Some(vec![]));
+}
+
+#[test]
+fn fixture_21_rejected_realtime_columns_reports_every_diagnostic_class() {
+    let source = fs::read_to_string(fixtures_dir().join("21-rejected-realtime-columns.indigo")).unwrap();
+    let schema = parse_source(&source).unwrap();
+    let errors = validate::validate(&schema);
+    let has = |model: &str, needle: &str| errors.iter().any(|e| e.model.as_deref() == Some(model) && e.message.contains(needle));
+
+    assert!(has("UnknownColumn", "unknown or non-scalar field \"ghostField\""), "{errors:?}");
+    assert!(has("DuplicateColumn", "Duplicate column \"id\""), "{errors:?}");
+    assert!(has("UnknownRealtimeArg", "accepts only a \"columns:\" argument"), "{errors:?}");
+    assert!(has("ColumnsOnIndex", "columns"), "{errors:?}");
+}
+
+#[test]
+fn corpus_fixtures_01_through_19_are_unaffected_by_realtime_columns() {
+    // Regression: RCP-1 — adding `@@realtime(columns:…)`'s grammar/
+    // validation must not change diagnostic behavior for any pre-existing
+    // fixture (design's "01-19 must show no diff" via the golden snapshots;
+    // this crate-level test only guards against a new panic/regression).
+    let dir = fixtures_dir();
+    for n in 1..=19u8 {
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension().is_some_and(|x| x == "indigo")
+                    && e.file_name().to_string_lossy().starts_with(&format!("{n:02}-"))
+            })
+            .collect();
+        for entry in entries {
+            let source = fs::read_to_string(entry.path()).unwrap();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            match parse_source(&source) {
+                Ok(schema) => {
+                    let _ = validate::validate(&schema);
+                }
+                Err(errors) => {
+                    assert!(!errors.is_empty(), "{name}: unexpected empty error list");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn corpus_fixtures_01_through_17_are_unaffected_by_allow() {
     // Regression: adding `@@allow`'s grammar/validation must not change the
