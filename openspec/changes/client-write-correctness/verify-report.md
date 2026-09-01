@@ -190,3 +190,144 @@ silently breaking a previously-working, spec-implied no-op (independently reprod
 it). Everything else — all 8 owned spec scenarios, the mandatory OPS-1 chain-membership re-derivation,
 all three not-found sites, NW-4/C1.4c's no-partial-write assertion, the negative-test mutation proof,
 and the root `pnpm clean && pnpm build --force && pnpm lint && pnpm test` gate — passed clean.
+
+---
+
+## Re-verification (scoped) — commit `ec0bc99`
+
+**Scope**: this pass verifies ONLY the CRITICAL raised above and the corrective commit
+`ec0bc99` ("fix(client): keep disconnect and set a no-op when nothing is linked") on
+`fix/client-write-correctness-1-runtime`. The original 24/24 tasks, 8/8 owned scenarios,
+three not-found sites, C1.4c, OPS-1, no-AI-attribution, and PR 2 untouched status are NOT
+redone here — see the sections above.
+
+```yaml
+schema: gentle-ai.verify-result/v1
+commit_reviewed: ec0bc993d6a631051628e0c3b238f0c257c6d38b
+delegate_ts_sha256: sha256:acd5ff5bf281f93b046870ac9f52878bebcf3915a6fa4bdede04953c58a85684
+verdict: pass
+critical_findings: 0
+warning_findings: 0
+suggestion_findings: 0
+test_command: node packages/client/test/nested-writes-update.mjs
+test_exit_code: 0
+mutation_command: sd on disconnectByUpdate catch, rebuild, rerun; git checkout restore
+mutation_result: exactly C1.1c, C1.1d, C1.2d failed; all 12 others stayed green
+root_gate_command: pnpm clean && pnpm build --force && pnpm lint && pnpm test
+root_gate_exit_code: 0
+```
+
+### 1. Original CRITICAL reproduction — RESOLVED
+
+Re-ran (independently authored, not the apply agent's script) the exact repro that
+originally found the CRITICAL: an `Author` with **zero** currently-linked `Book` rows,
+calling `Author.update({ where: { id: author.id }, data: { books: { set: [] } } })`
+against the built `packages/client/dist` from `ec0bc99`.
+
+```
+PASS: no throw, resolved with { id: 1, name: 'Ada' }
+```
+
+On the pre-fix branch this threw `IndigoNotFoundError RECORD_NOT_FOUND`. Confirmed resolved.
+
+### 2. Catch narrowness — INDEPENDENTLY PROVEN, not just read
+
+Read `disconnectByUpdate` (delegate.ts:1106-1112): `catch (err) { if (!(err instanceof
+IndigoNotFoundError)) throw err; }` — narrow by inspection. Then proved it behaviorally: built a
+standalone repro with a wrapped executor that throws a custom, non-`IndigoNotFoundError` `Error`
+(`CustomBoom`) specifically on `UPDATE "Book"` SQL, then called `Author.update({ ..., data: {
+books: { set: [] } } })` on an author with one pre-linked book (forcing the code down
+`disconnectByUpdate`).
+
+```
+PASS: non-IndigoNotFoundError propagated as expected: CustomBoom simulated DB failure on Book update
+```
+
+Confirms the catch swallows only `IndigoNotFoundError`; any other failure still propagates
+unmasked — the exact property this change exists to preserve.
+
+### 3. Sweep — INDEPENDENTLY RE-DERIVED, agrees with the commit's claim
+
+Ran `rg -n '\.update\(|\.delete\(|rawUpdate\(' packages/client/src/*.ts` myself (not trusting
+the commit message's enumeration). Result, matched exactly against the five sites claimed:
+
+- `delegate.ts:1090` — `target.update(...)` inside `connectByUpdate` — wrapped (pre-existing,
+  from the first CRITICAL's fix), catches `IndigoNotFoundError` → `false` sentinel.
+- `delegate.ts:1108` — `target.update(...)` inside `disconnectByUpdate` — wrapped, this commit.
+- `delegate.ts:1334` and `:1404` — `rawUpdate(...)` calls from the public `updateImpl` path —
+  intentionally throwing (`RECORD_NOT_FOUND` is the documented, spec-required public behavior;
+  not a sentinel-consumption site).
+- `client.ts:243` — `this.handleInflight.delete(table)` — `Map.delete`, unrelated to model
+  writes.
+- (also independently found, both pre-existing and clearly irrelevant: `realtime.ts:210/213` —
+  `Set`/`Map.delete` on in-memory listener bookkeeping, nothing to do with DB writes.)
+
+No unguarded internal consumer of a model `update`/`delete`/`rawUpdate` result remains. Agrees
+with the commit's claim.
+
+### 4. New tests reach the claimed branches — CONFIRMED by reading `applyNonFkSideOp`
+
+Read the full `applyNonFkSideOp` body (delegate.ts:1077-1200) and the dispatcher that routes
+into it (`updateImpl`'s Phase 3, non-`fkSide` relations only). Confirmed:
+- `C1.1c`/`C1.1d` (`Author.books`, `list: true`, `fkSide: false`) reach the to-many array branch
+  (`disconnects`/`op.set` loop, lines 1145-1170) via `disconnectByUpdate`.
+- `C1.2d` (new `Profile` model, `list: false`, `fkSide: false`, `optionalFk: true`) reaches the
+  to-one branch at line 1194 (`op.disconnect === true`) — genuinely a different branch from the
+  to-many one, confirmed by reading the conditional structure, not inferred from the test's name.
+  `Profile` is correctly registered in `buildDelegates` (`registry.Profile = new
+  ModelDelegate(profileMeta, ...)`), so the fixture is real, not a dead declaration.
+
+This is exactly the branch-vs-name mismatch class the original CRITICAL against C1.4c was about
+— here the name and the branch agree.
+
+### 5. Mutation proof — INDEPENDENTLY RE-RUN
+
+Edited `disconnectByUpdate`'s catch to unconditionally rethrow (`sd 'if (!(err instanceof
+IndigoNotFoundError)) throw err;' 'throw err;'`), rebuilt `@indigodb/client`, ran
+`nested-writes-update.mjs` directly:
+
+```
+FAIL C1.1c: set: [] on an author with ZERO currently-linked books is a no-op, does not throw
+FAIL C1.1d: disconnect naming a book id that does not exist at all is a no-op, does not throw
+FAIL C1.2d: disconnect on an OPTIONAL to-one non-fkSide relation (Author.profile) ... is a no-op
+@indigodb/client nested-writes-update: 3 failure(s)
+```
+
+All 12 other checks in the same file (`C1.1a/b`, `C1.2a/b/c`, `C1.3a/b`, `C1.4a/b/c`, and the two
+end-of-file checks) stayed green — the mutation is scoped exactly to the three claimed tests, no
+more, no less. Restored via `git checkout -- packages/client/src/delegate.ts`; `git diff --stat`
+on that file was empty (byte-identical). Rebuilt, reran: all 15 checks green again.
+
+### 6. Commit hygiene — CONFIRMED
+
+`git log -1 --format='%B' ec0bc99` contains no `Co-Authored-By`, no `claude`/`anthropic`/
+`generated with` string (checked via `rg -i`, zero matches). Subject line
+`fix(client): keep disconnect and set a no-op when nothing is linked` is conventional-commits
+shaped (`fix(scope): summary`).
+
+### 7. Root gate — RE-RUN, exit 0
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test`, run in background, polled to
+completion (~2 minutes on top of a warm Turbo cache for unrelated packages; `@indigodb/client`
+itself rebuilt from scratch under `--force`). Output: build 10/10, lint 10/10, test 19/19 +
+`cli` suite 18/18 successful, workspace pack-contents guard all green, zero `FAIL` lines across
+3747 lines of combined output. Exit 0.
+
+### Re-verify Issues Found
+
+**CRITICAL**: None. The original CRITICAL is resolved and independently re-derived as resolved,
+not merely re-read.
+
+**WARNING**: None new.
+
+**SUGGESTION**: None new (the one pre-existing SUGGESTION about `write-preconditions.mjs`'s
+`process.exit` timing is unchanged and out of scope for this corrective batch).
+
+### Re-verify Verdict
+**PASS** — the CRITICAL from the original pass is genuinely fixed: independently reproduced as
+resolved, the catch is narrow (proven with a real non-`IndigoNotFoundError` propagation test, not
+just read), the sweep agrees with the commit's own enumeration, the three new tests reach the
+branches their names claim, the mutation proof reproduces cleanly with an exact byte-identical
+restore, the commit is clean conventional-commits with no AI attribution, and the root gate
+(`pnpm clean && pnpm build --force && pnpm lint && pnpm test`) exits 0. No new issues introduced.
+Ready for archive pending PR 2 (Phases 5-9), which remains genuinely unstarted.
