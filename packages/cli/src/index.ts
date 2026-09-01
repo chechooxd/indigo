@@ -305,7 +305,9 @@ program
   .option(
     "--read-only",
     "Refuse every write to the Studio API (INSERT/UPDATE/DELETE), regardless of session auth. " +
-      "Defaults to INDIGODB_STUDIO_READONLY (exact match \"1\" or \"true\").",
+      "Defaults to INDIGODB_STUDIO_READONLY (exact match \"1\", \"0\", \"true\", or \"false\"; " +
+      "any other value is rejected and the process exits 1 before binding). This flag only " +
+      "ever adds read-only mode — it never suppresses a malformed env value.",
   )
   .option(
     "--query-timeout <ms>",
@@ -356,12 +358,14 @@ program
       // at module load, before `loadEnv()` runs, so a `.env` value never
       // reaches it — acceptable for a bind address that fails loudly, but not
       // for a guardrail that would otherwise fail open and silently.
-      // `resolveStudioReadOnly` (packages/cli/src/util.ts) is extracted so
-      // this exact resolution — `--read-only` OR exact-match
-      // `INDIGODB_STUDIO_READONLY` — is unit testable independent of
-      // commander's parsed options.
-      const readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
-
+      //
+      // `resolveStudioReadOnly` (packages/cli/src/util.ts) now THROWS on a
+      // malformed `INDIGODB_STUDIO_READONLY` (never `process.exit`), so it
+      // is resolved inside the same try/catch as the guardrail resolvers
+      // below rather than before it — a typo in the env var must exit 1
+      // before binding, exactly like a malformed query-timeout/row-cap
+      // value, instead of crashing uncaught or silently resolving to `false`.
+      //
       // `resolveQueryTimeoutMs`/`resolveQueryRowCap` THROW (never
       // `process.exit`) on a present-but-malformed value — caught here so
       // the process exits 1 before binding, per the spec's "startup
@@ -370,11 +374,13 @@ program
       // as the guardrail resolvers above — resolved here, after `loadEnv()`,
       // never as a commander option default (design.md: the `--read-only`
       // pattern, not `--host`'s module-load default).
+      let readOnly: boolean;
       let queryTimeoutMs: number;
       let queryRowCap: number;
       let environment: string | undefined;
       let auditLog: boolean;
       try {
+        readOnly = resolveStudioReadOnly(options.readOnly, process.env.INDIGODB_STUDIO_READONLY);
         queryTimeoutMs = resolveQueryTimeoutMs(options.queryTimeout, process.env.INDIGODB_STUDIO_QUERY_TIMEOUT_MS);
         queryRowCap = resolveQueryRowCap(options.queryRowCap, process.env.INDIGODB_STUDIO_QUERY_ROW_CAP);
         environment = resolveStudioEnvironment(options.env, process.env.INDIGODB_ENV);

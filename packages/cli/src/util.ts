@@ -208,27 +208,36 @@ export function assertRealtimeSecretPresent(
 const STUDIO_LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
- * Exact-match parser for `INDIGODB_STUDIO_READONLY`: only the literal
- * strings `"1"` and `"true"` enable read-only mode — no trimming, no case
- * folding, no other truthy coercion (`"TRUE"`, `"yes"`, `"1.0"` etc. are
- * all rejected). Extracted from `packages/cli/src/index.ts`'s `studio`
- * action so it — and the flag/env resolution it feeds — is directly unit
- * testable rather than only reachable through commander's parsed options.
- */
-export function isReadOnlyEnv(v?: string): boolean {
-  return v === "1" || v === "true";
-}
-
-/**
- * `indigodb studio`'s read-only resolution: the `--read-only` flag OR an
- * exact-match `INDIGODB_STUDIO_READONLY` enables read-only mode. Mirrors
- * exactly what the `studio` command's action runs after `loadEnv()`
- * (design.md "`--read-only` resolved after `loadEnv()`" decision) — kept as
- * a small pure function purely so it can be unit tested without spawning
- * the built CLI.
+ * `indigodb studio`'s read-only resolution: the `--read-only` flag OR
+ * `INDIGODB_STUDIO_READONLY` enables read-only mode. The env branch mirrors
+ * `resolveStudioAuditLog`'s accepted-set shape — exact match `"1"`/`"true"`
+ * enables, exact match `"0"`/`"false"` disables, and any other value
+ * THROWS (never `process.exit`), naming the variable and the four accepted
+ * values. `--read-only` is enable-only (no `--no-read-only`), so it
+ * expresses no intent to override the env var: the env branch is resolved
+ * into a local FIRST, and the flag is OR'd in afterward — a malformed env
+ * value is rejected even when `--read-only` is also passed, rather than
+ * being silently suppressed by it (design.md "a malformed env var fails
+ * even when `--read-only` was passed" decision — deliberately unlike
+ * `resolveStudioAuditLog`, whose flag IS authoritative in both directions).
+ * Pure and throws so `index.ts`'s `studio` action — the only caller that
+ * needs to exit the process — can catch, print, and exit 1 itself before
+ * anything binds.
  */
 export function resolveStudioReadOnly(optionReadOnly: boolean | undefined, envValue: string | undefined): boolean {
-  return optionReadOnly === true || isReadOnlyEnv(envValue);
+  let envReadOnly = false;
+  if (envValue !== undefined) {
+    if (envValue === "1" || envValue === "true") {
+      envReadOnly = true;
+    } else if (envValue === "0" || envValue === "false") {
+      envReadOnly = false;
+    } else {
+      throw new Error(
+        `INDIGODB_STUDIO_READONLY must be "1", "0", "true", or "false", got: ${JSON.stringify(envValue)}`,
+      );
+    }
+  }
+  return optionReadOnly === true || envReadOnly;
 }
 
 /**
