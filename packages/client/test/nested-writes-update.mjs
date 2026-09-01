@@ -18,7 +18,7 @@
  */
 
 import { IndigoClientBase } from "../dist/client.js";
-import { ModelDelegate, IndigoNestedWriteError } from "../dist/delegate.js";
+import { ModelDelegate, IndigoNestedWriteError, IndigoNotFoundError } from "../dist/delegate.js";
 import { withDatabase, createPgliteExecutor, createPgliteDb } from "./pglite-harness.mjs";
 
 let failures = 0;
@@ -303,7 +303,16 @@ await check("C1.4b: `where` matching more than one row + relation ops throws AMB
   });
 });
 
-await check("C1.4c: `where` matching zero rows with relation ops is a no-op (no AMBIGUOUS_UPDATE_TARGET)", async () => {
+// C1.4c previously asserted the resolved value was strictly equal to
+// `undefined` on a zero-row match with relation-ops-only `data` — ratifying
+// the pre-existing defect where a zero-row write silently resolved with a
+// value typed as the row but actually absent at runtime. This
+// is a deliberate behavior flip (client-write-preconditions spec WP-6,
+// client-nested-writes spec NW-4, design.md Data Flow): the call now throws
+// `IndigoNotFoundError` code `RECORD_NOT_FOUND` instead. The no-partial-write
+// assertion (`after[0].authorId === null`) is KEPT so that guarantee is
+// still proven at its new location, not dropped.
+await check("C1.4c: `where` matching zero rows with relation ops throws RECORD_NOT_FOUND (no partial write)", async () => {
   await withDatabase(async (db) => {
     const exec = createPgliteExecutor(db);
     await seed(db);
@@ -311,8 +320,15 @@ await check("C1.4c: `where` matching zero rows with relation ops is a no-op (no 
     const publisher = await Publisher.create({ data: { name: "Pub" } });
     const book = await Book.create({ data: { title: "B1", publisherId: publisher.id } });
 
-    const result = await Author.update({ where: { id: 999 }, data: { books: { connect: [{ id: book.id }] } } });
-    assert(result === undefined, "expected no row to be returned");
+    let threw = false;
+    try {
+      await Author.update({ where: { id: 999 }, data: { books: { connect: [{ id: book.id }] } } });
+    } catch (err) {
+      threw = true;
+      assert(err instanceof IndigoNotFoundError, "expected an IndigoNotFoundError");
+      assert(err.code === "RECORD_NOT_FOUND", `expected code RECORD_NOT_FOUND, got ${err.code}`);
+    }
+    assert(threw, "expected update() to reject");
     const after = await Book.findMany({ where: { id: book.id } });
     assert(after[0].authorId === null, "expected NO connect to have happened for a nonexistent parent");
   });

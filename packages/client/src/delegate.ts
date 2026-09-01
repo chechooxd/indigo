@@ -150,7 +150,8 @@ export type ArgumentErrorCode =
   | "NON_NUMERIC_AGGREGATE"
   | "UNKNOWN_AGGREGATE_FIELD"
   | "EMPTY_AGGREGATE"
-  | "NO_MATCHING_UNIQUE_CONSTRAINT";
+  | "NO_MATCHING_UNIQUE_CONSTRAINT"
+  | "EMPTY_UPDATE_DATA";
 
 /** Thrown for a caller-supplied argument shape that is rejected before any
  * SQL is issued, for rejections that are not a `where`-clause defect (see
@@ -190,6 +191,25 @@ export class IndigoNestedWriteError extends IndigoRelationError {
     super(message);
     this.name = "IndigoNestedWriteError";
     this.code = code;
+  }
+}
+
+/**
+ * Thrown when `update`/`delete` matches zero rows (client-write-preconditions
+ * spec, design.md Decision D1). Declared here — not in `errors.ts` — because
+ * `IndigoDatabaseError`/`withDatabaseErrors` are spec-scoped to wrapping pg
+ * SQLSTATE failures and forbid wrapping non-pg errors; a zero-row write never
+ * reaches the driver as a failure. Thrown at all three write sites: the
+ * direct scalar `rawUpdate` path, `deleteImpl`, and `updateImpl`'s
+ * relation-ops-only branch. */
+export class IndigoNotFoundError extends Error {
+  readonly code = "RECORD_NOT_FOUND";
+  constructor(
+    readonly model: string,
+    readonly operation: "update" | "delete",
+  ) {
+    super(`IndigoDB: \`${operation}\` on "${model}" matched zero rows.`);
+    this.name = "IndigoNotFoundError";
   }
 }
 
@@ -1061,9 +1081,18 @@ export class ModelDelegate<
     op: Record<string, unknown>,
     parentKey: unknown,
   ): Promise<void> {
+    // `target.update`'s direct scalar path now throws `IndigoNotFoundError`
+    // on a zero-row match instead of resolving `undefined` (design.md
+    // Decision D2) — caught here and folded back into this planner's own
+    // `false` sentinel so `CONNECT_NOT_FOUND`'s semantics are unchanged.
     const connectByUpdate = async (where: unknown): Promise<boolean> => {
-      const updated = await target.update({ where: where as never, data: { [relMeta.to]: parentKey } });
-      return updated !== undefined;
+      try {
+        await target.update({ where: where as never, data: { [relMeta.to]: parentKey } });
+        return true;
+      } catch (err) {
+        if (err instanceof IndigoNotFoundError) return false;
+        throw err;
+      }
     };
     const requireOptionalFk = (): void => {
       if (!relMeta.optionalFk) {
@@ -1229,6 +1258,17 @@ export class ModelDelegate<
   private async rawUpdate(where: Where | undefined, data: Record<string, unknown>): Promise<Row> {
     const params = new Params();
     const fields = Object.keys(data).filter((f) => data[f] !== undefined);
+    // Guarded here — not in `updateImpl` — because the planner (phase 2) and
+    // `applyNonFkSideOp` both re-enter this method; guarding the single
+    // SQL-emitting site closes every caller at once (design.md Decision D2).
+    // An empty `SET` would be malformed SQL (`UPDATE "t" SET  WHERE …`).
+    if (fields.length === 0) {
+      throw new IndigoArgumentError(
+        "EMPTY_UPDATE_DATA",
+        `IndigoDB: \`update\` on "${this.meta.name}" received \`data\` with zero defined scalar ` +
+          `assignments — nothing to update.`,
+      );
+    }
     const assignments = fields
       .map((f) => `${quote(this.col(f))} = ${params.add(data[f])}`)
       .join(", ");
@@ -1236,7 +1276,11 @@ export class ModelDelegate<
     sql += this.buildWhere(where, params);
     sql += ` RETURNING ${this.selectList()}`;
     const rows = await this.exec(sql, params.values);
-    return rows[0] as Row;
+    const row = rows[0] as Row | undefined;
+    if (!row) {
+      throw new IndigoNotFoundError(this.meta.name, "update");
+    }
+    return row;
   }
 
   /**
@@ -1327,15 +1371,20 @@ export class ModelDelegate<
       // scalar FK write) skips the UPDATE entirely — an empty `SET` would be
       // malformed SQL, and the already-fetched `matches[0]` IS the parent row
       // (design.md Data Flow: "reads the target via findMany instead of
-      // emitting an empty SET").
-      const updatedRow: Record<string, unknown> | undefined =
-        Object.keys(finalScalars).length === 0
-          ? (matches[0] as Record<string, unknown> | undefined)
-          : ((await self.rawUpdate(args.where, finalScalars)) as unknown as Record<string, unknown> | undefined);
-      if (!updatedRow) {
-        // No row matched `where` (e.g. concurrently deleted) — nothing to
-        // attach non-fkSide ops to.
-        return updatedRow as unknown as Row;
+      // emitting an empty SET"). Zero matching rows (`matches[0]` absent)
+      // throws `IndigoNotFoundError` (client-write-preconditions spec,
+      // client-nested-writes spec — supersedes the previous silent
+      // `undefined` resolution); `rawUpdate`'s own guard covers the
+      // non-empty-`finalScalars` branch.
+      let updatedRow: Record<string, unknown>;
+      if (Object.keys(finalScalars).length === 0) {
+        const match = matches[0] as Record<string, unknown> | undefined;
+        if (!match) {
+          throw new IndigoNotFoundError(this.meta.name, "update");
+        }
+        updatedRow = match;
+      } else {
+        updatedRow = (await self.rawUpdate(args.where, finalScalars)) as unknown as Record<string, unknown>;
       }
 
       // Phase 3: non-fkSide ops run AFTER the parent update — they need the
@@ -1363,7 +1412,11 @@ export class ModelDelegate<
     sql += this.buildWhere(args.where, params);
     sql += ` RETURNING ${this.selectList()}`;
     const rows = await this.exec(sql, params.values);
-    return rows[0] as Row;
+    const row = rows[0] as Row | undefined;
+    if (!row) {
+      throw new IndigoNotFoundError(this.meta.name, "delete");
+    }
+    return row;
   }
 
   count(args: CountArgs<Row, Where> = {}): IndigoPromise<number> {
