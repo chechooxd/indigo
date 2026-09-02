@@ -544,7 +544,7 @@ green (baseline confirmed before touching `useERDParser.ts`, `DslEditorToolbar.t
   suite), `workspace pack-contents guard: all green`, `check-realtime-projection-db-gate: PASSED`,
   no `FAIL`/`✗`/`error:` lines anywhere in the log (the one substring match on "fails" is a
   pre-existing test name describing rollback-on-failure behavior)
-- `node packages/cli/test/studio-schema-source.mjs` (Phase 1a, 6 cases) — still green, unmodified
+- `node packages/cli/test/studio-schema-source.mjs` (Phase 1a, 5 cases) — still green, unmodified
 - `node packages/cli/test/studio-schema-write.mjs` (Phase 1b, 19 cases) — still green, unmodified
 
 ### Deviations from Design
