@@ -68,10 +68,16 @@ function fakeSource() {
 function fakeSubscriber(urlPath = "/", { writableLength = 0, refuse = false, hwm = 65536 } = {}) {
   const written = [];
   let ended = false;
+  // Node fires the request's 'close' event once the response is ended. The engine
+  // registers a 'close' listener that deletes the same `sub` that `evict()` just
+  // deleted, so the real teardown sequence re-enters removal. A no-op `on()` makes
+  // that path unreachable from tests, which is exactly how an idempotence guard
+  // rots unnoticed (RSB-12).
+  let closeListener = null;
   const req = {
     url: urlPath,
-    on() {
-      // 'close' listener registration — no-op, this suite never tears down mid-test.
+    on(eventName, listener) {
+      if (eventName === "close") closeListener = listener;
     },
   };
   const res = {
@@ -91,6 +97,8 @@ function fakeSubscriber(urlPath = "/", { writableLength = 0, refuse = false, hwm
     end(chunk) {
       if (chunk !== undefined) written.push(chunk);
       ended = true;
+      // Mirror Node: ending the response fires the request's 'close' event.
+      if (closeListener) closeListener();
     },
   };
   return {
@@ -608,11 +616,42 @@ await check(
   },
 );
 
+await check(
+  "RSB-12: evict() is idempotent — a second call reports no second eviction",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const errors = [];
+    engine["onError"] = (err) => errors.push(err);
+    const { req, res, isEnded } = fakeSubscriber("/", { writableLength: 0, hwm: 1000 });
+    engine.handleRequest(req, res);
+    const sub = [...engine["subscribers"]][0];
+    res.writableLength = 5000; // over the 1000 cap
+    await engine.start();
+    emit({ table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" });
+
+    ok(isEnded(), "the over-cap subscriber must be evicted and its stream ended");
+    strictEqual(engine["subscribers"].size, 0, "the evicted subscriber must be removed");
+    strictEqual(errors.length, 1, "the first eviction reports exactly once");
+
+    // Call evict() directly a second time for the SAME, already-removed `sub`.
+    // `if (!this.subscribers.delete(sub)) return;` is what absorbs this. Without
+    // that early return, the body runs again: a second `event: overflow` write, a
+    // second `res.end()`, and a second onError — a duplicate outage report for one
+    // subscriber. Reached deliberately rather than through the teardown sequence,
+    // because `handleRequest`'s close listener deletes `sub` directly and never
+    // re-enters evict(): the guard is defensive, so only a direct call proves it.
+    engine["evict"](sub, 5000);
+    strictEqual(errors.length, 1, "a second evict() for the same subscriber must not report again");
+    strictEqual(engine["subscribers"].size, 0, "a second evict() must not disturb the registry");
+    await engine.stop();
+  },
+);
+
 // realtime-sse-backpressure reachability guard: fails loudly if a case
-// above is skipped/omitted. Counted from an actual run (17 total
+// above is skipped/omitted. Counted from an actual run (18 total
 // `check()` calls in this file), not carried forward from provisional
 // design-phase arithmetic.
-strictEqual(ran, 17, "expected exactly 17 check() cases in dispatch.mjs");
+strictEqual(ran, 18, "expected exactly 18 check() cases in dispatch.mjs");
 
 console.log(`\n${passed} check(s) passed.`);
 if (process.exitCode) {
