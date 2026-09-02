@@ -50,11 +50,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Studio Badge + Test Wiring (PR 3)
 
-- [ ] 3.1 RED then GREEN: `useLiveTable.test.ts` (new/modify, vitest) — real `SseTransport` over stubbed `fetch` returning 503, abort transport after first `onError` to avoid backoff loop; record every `setStatus` value, assert no transient `'live'` (SLV-1).
-- [ ] 3.2 RED then GREEN: same file — with `status === 'error'`, `fetchTableRows` still resolves and `updateTableRecords` still lands rows (SLV-2).
-- [ ] 3.3 GREEN: `wal-source.mjs:702` — replace bare `console.log` with `strictEqual(passed, <exact N>, ...)`; do the same in `source-contract.mjs` (RWS-10a).
-- [ ] 3.4 GREEN: add `rg` guard asserting neither new/edited readiness file references `INDIGODB_TEST_DATABASE_URL` (RWS-10b).
-- [ ] 3.5 Chain `source-contract.mjs` into `packages/realtime/package.json`'s `test` script; chain `studio-realtime-degraded.mjs` + `realtime-fail-fast.mjs` into `packages/cli/package.json`'s `test` script.
-- [ ] 3.6 Run the default-checkout leg once with `INDIGODB_TEST_DATABASE_URL` explicitly unset (RWS-10c).
-- [ ] 3.7 Discovery: run `INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test`; confirm `log.mjs`/`resume.mjs`/`parity.mjs` no longer block at `await source.start(...)` (RWS-11) — file any other failure as a follow-up, do not mark green by omission.
-- [ ] 3.8 Full verification: `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root.
+- [x] 3.1 RED then GREEN: `useLiveTable.test.ts` (new/modify, vitest) — real `SseTransport` over stubbed `fetch` returning 503, abort transport after first `onError` to avoid backoff loop; record every `setStatus` value, assert no transient `'live'` (SLV-1).
+- [x] 3.2 RED then GREEN: same file — with `status === 'error'`, `fetchTableRows` still resolves and `updateTableRecords` still lands rows (SLV-2).
+- [x] 3.3 GREEN: `wal-source.mjs:702` — replace bare `console.log` with `strictEqual(passed, <exact N>, ...)`; do the same in `source-contract.mjs` (RWS-10a).
+- [x] 3.4 GREEN: add `rg` guard asserting neither new/edited readiness file references `INDIGODB_TEST_DATABASE_URL` (RWS-10b).
+- [x] 3.5 Chain `source-contract.mjs` into `packages/realtime/package.json`'s `test` script; chain `studio-realtime-degraded.mjs` + `realtime-fail-fast.mjs` into `packages/cli/package.json`'s `test` script.
+- [x] 3.6 Run the default-checkout leg once with `INDIGODB_TEST_DATABASE_URL` explicitly unset (RWS-10c).
+- [x] 3.7 Discovery: run `INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test`; confirm `log.mjs`/`resume.mjs`/`parity.mjs` no longer block at `await source.start(...)` (RWS-11) — file any other failure as a follow-up, do not mark green by omission.
+- [x] 3.8 Full verification: `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root.

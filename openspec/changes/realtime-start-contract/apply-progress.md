@@ -219,3 +219,100 @@ auto-discovering runner, so a file absent from the chain never runs.
 
 `pnpm clean && pnpm build --force && pnpm lint && pnpm test` — all exit 0.
 `INDIGODB_TEST_DATABASE_URL` was not set; the DB-gated discovery leg is PR 3.
+
+## PR 3 — Studio badge + test wiring + discovery leg (Phase 3)
+
+**Mode**: Strict TDD. Branch `fix/realtime-start-contract-3-badge` off `main` (`e22d7fd`). Not
+merged/pushed. 8/8 tasks complete.
+
+### TDD Cycle Evidence
+
+| Task | RED | GREEN | REFACTOR |
+|---|---|---|---|
+| 3.1 SLV-1 | New tests run once against unmodified `useLiveTable.ts` first PASSED (production already correct from PR 2's 503 gating) — legitimacy proven instead by mutation: removed `setStatus('error')` from `onError`, reran → SLV-1 and the pre-existing `onError` test both FAILED (`expected 'connecting'/'live' to be 'error'`) | Byte-identical revert (`git diff --stat` empty) restored 15/15 green | None needed |
+| 3.2 SLV-2 | Same mutation (onError no-op) also broke SLV-2 (`expected 'live' to be 'error'`), proving it isn't vacuous | Reverted alongside 3.1's mutation, 15/15 green | None needed |
+| 3.3 strictEqual tail guards | N/A — already delivered in PR 1 (`wal-source.mjs` `strictEqual(passed,38,...)`, `source-contract.mjs` `strictEqual(passed,4,...)`) | Verified present, ran green | — |
+| 3.4 RWS-10b guard | Wrote `readiness-no-db-env-guard.mjs`, ran clean (2/2 pass) against unmodified files first | Deliberately appended a probe `INDIGODB_TEST_DATABASE_URL` reference to `wal-source.mjs`, reran → guard FAILED (exit 1, `1 !== 2`) proving it bites; reverted byte-identically (`git diff --stat` empty), reran → 2/2 green | None needed |
+
+### SLV-1 test design (per the prompt's five failure modes)
+
+- Drives a REAL `SseTransport` (no injected `deps.transport`) over `vi.stubGlobal('fetch', ...)`
+  returning `{ ok: false, status: 503, body: null }` — the actual chain executes:
+  `fetch` → `!res.ok` → `throw` → `run()`'s catch → `onError` → `setStatus('error')`.
+- Records EVERY status via a wrapping `useTracked()` hook that pushes `r.status` on every render,
+  not just the final read; asserts `statusHistory` never contains `'live'`.
+- Never advances the fake timers active for this describe block, so the transport's 1s backoff
+  sleep (`await sleep(retryMs)`) simply never fires; `unmount()` is still called explicitly after
+  the assertion (aborts the transport) rather than relying on that as an accident.
+
+### Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `apps/studio/src/features/studio/browser/__tests__/useLiveTable.test.tsx` | Modified | Added SLV-1 (real `SseTransport` + stubbed `fetch` 503 → `error`, never transient `live`) and SLV-2 (`fetchTableRows`/`updateTableRecords` still land rows with `status==='error'`) in a new `describe` block; +78/-0 |
+| `packages/realtime/test/readiness-no-db-env-guard.mjs` | Created | RWS-10b — asserts `wal-source.mjs`/`source-contract.mjs` never reference `INDIGODB_TEST_DATABASE_URL`; ~50 lines |
+| `packages/realtime/package.json` | Modified | Chained `source-contract.mjs` and `readiness-no-db-env-guard.mjs` into `test` (both were previously only run manually) |
+| `packages/cli/package.json` | Not modified | `studio-realtime-degraded.mjs`/`realtime-fail-fast.mjs` were already chained ahead of schedule in PR 2 |
+| `openspec/changes/realtime-start-contract/tasks.md` | Modified | Phase 3 checkboxes marked `[x]` |
+
+### Discovery leg (RWS-11) — narrow claim, honestly reported
+
+Container: `docker run -d --name indigo-wal-test -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=indigo_test
+-p 55432:5432 postgres:17 -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=8`.
+Waited on `psql -d indigo_test -c 'select 1'` (not `pg_isready`, which returns true before the
+database exists) — ready after 1s. Each suite run individually, exit code captured **directly to a
+file, never through a pipe**:
+
+| Suite | Exit | Got past `await source.start(...)`? | Completed? | Result |
+|---|---|---|---|---|
+| `log.mjs` | 0 | Yes | Yes | 4/4 checks pass |
+| `parity.mjs` | 0 | Yes | Yes | 2/2 checks pass — includes the RSC-3 resolve-timing assertion (`walSource.start()` at line 129, `notifySource.start()` at 117), both settle before any event arrives, exactly the historically-hanging call site |
+| `resume.mjs` | 124 (timeout) | Yes | **Ambiguous — see below** | 3/3 checks *printed* pass, then the process never exits |
+
+**`resume.mjs` finding (follow-up, not this change's promise)**: all three checks run to completion
+and print `3 passed`, proving `start()` itself no longer blocks — the narrow RWS-11 claim holds.
+But the Node process then hangs past that point until the 90s `timeout` kills it (exit 124). Root
+cause not this change's scope: `resume.mjs` has no `process.exit(0)` on its success path (only on
+`INDIGODB_TEST_DATABASE_URL`-unset skip and on `process.exitCode` failure, both at the bottom of
+the file) — some handle (likely a replication slot connection or reconnect timer left open by the
+suite itself, not by `WalSource.start()`) keeps the event loop alive. **Filed as a follow-up, not
+fixed here** — RWS-11's claim is specifically "no longer blocks at `start()`", which is true for all
+three suites; a post-completion process-exit hang is a distinct defect in the test file's own
+cleanup, discovered by running these suites to completion for the first time in this repo's history.
+
+Container removed after the run (`docker rm -f indigo-wal-test`).
+
+### Root gate (default checkout, `INDIGODB_TEST_DATABASE_URL` unset)
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root — `clean:0 build:0
+lint:0 test:0`, all four commands exit 0, run independently of and after the discovery leg (fresh
+shell, var never set). `apps/studio` vitest: 20/20 test files, 125/125 tests, including the new
+15-test `useLiveTable.test.tsx` (13 pre-existing + SLV-1 + SLV-2). Workspace pack-contents guard
+green for all 10 packages.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `pnpm --filter @indigodb/studio exec vitest run src/features/studio/browser/__tests__/useLiveTable.test.tsx` — 15/15 pass; `pnpm --filter @indigodb/realtime test` — all suites pass/SKIP as expected, `source-contract.mjs` (4/4) and `readiness-no-db-env-guard.mjs` (2/2) now run inside the chain |
+| Runtime harness command/scenario and exact result | `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from repo root, `INDIGODB_TEST_DATABASE_URL` unset — exit 0 for all four commands; separately, the DB-gated discovery leg (see above) — narrow claim confirmed, one unrelated follow-up filed |
+| Rollback boundary | Revert `apps/studio/src/features/studio/browser/__tests__/useLiveTable.test.tsx`, `packages/realtime/package.json`, and delete `packages/realtime/test/readiness-no-db-env-guard.mjs` — badge behavior in production code (`useLiveTable.ts`) is untouched by this PR, only test/wiring files changed |
+
+### Deviations from Design
+
+None in production code — SLV-1/SLV-2 verify behavior already delivered by PR 2's 503 gating; no
+`useLiveTable.ts` or `SseTransport` change was needed. RWS-10b implemented as a `readFileSync`
+string-search guard rather than shelling out to `rg`, same substitution already made for RSC-11b in
+PR 1 (documented there) — avoids a test-time dependency on an external binary; equally
+RED-sensitive (proven by the deliberate-trip-and-revert above).
+
+### Issues Found
+
+- **`resume.mjs` leaks a handle after its checks complete**, keeping the process alive past a
+  successful run (see Discovery leg above). Filed as a follow-up; explicitly out of this change's
+  scope (RWS-11 promises only "no longer blocks at `start()`").
+
+### Status
+
+8/8 Phase 3 (PR 3) tasks complete. **28/28 tasks across all three phases complete.** Ready for
+`sdd-verify`.
