@@ -24,7 +24,15 @@ describe('DslEditorToolbar', () => {
       configurable: true,
     });
 
-    render(<DslEditorToolbar dslCode="model Foo {}" />);
+    render(
+      <DslEditorToolbar
+        dslCode="model Foo {}"
+        dirty={false}
+        schemaWritable={true}
+        saving={false}
+        onSave={() => {}}
+      />,
+    );
 
     const historyButton = screen.getByTitle("Revision history isn't available yet.");
     expect(historyButton).toBeDisabled();
@@ -46,7 +54,15 @@ describe('DslEditorToolbar', () => {
     });
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
 
-    render(<DslEditorToolbar dslCode="model Foo {}" />);
+    render(
+      <DslEditorToolbar
+        dslCode="model Foo {}"
+        dirty={false}
+        schemaWritable={true}
+        saving={false}
+        onSave={() => {}}
+      />,
+    );
 
     const copyButton = screen.getByRole('button', { name: /copy/i });
 
@@ -67,5 +83,84 @@ describe('DslEditorToolbar', () => {
     expect(screen.queryByText(/copied/i)).not.toBeInTheDocument();
 
     alertSpy.mockRestore();
+  });
+
+  describe('Save button', () => {
+    it('SD-4: renders disabled with a stated reason when schemaWritable is false', () => {
+      render(
+        <DslEditorToolbar
+          dslCode="model Foo {}"
+          dirty={true}
+          schemaWritable={false}
+          saving={false}
+          onSave={() => {}}
+        />,
+      );
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      expect(saveButton).toBeDisabled();
+      expect(saveButton.title).toMatch(/unavailable|not writable|no schema file/i);
+    });
+
+    it('stays disabled when writable but not dirty (nothing to save)', () => {
+      render(
+        <DslEditorToolbar
+          dslCode="model Foo {}"
+          dirty={false}
+          schemaWritable={true}
+          saving={false}
+          onSave={() => {}}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+    });
+
+    it('is enabled once writable and dirty', () => {
+      render(
+        <DslEditorToolbar
+          dslCode="model Foo {}"
+          dirty={true}
+          schemaWritable={true}
+          saving={false}
+          onSave={() => {}}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: /save/i })).toBeEnabled();
+    });
+
+    it('calls onSave when clicked while enabled', () => {
+      const onSave = vi.fn();
+      render(
+        <DslEditorToolbar
+          dslCode="model Foo {}"
+          dirty={true}
+          schemaWritable={true}
+          saving={false}
+          onSave={onSave}
+        />,
+      );
+
+      act(() => {
+        screen.getByRole('button', { name: /save/i }).click();
+      });
+
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables the button and reflects the saving state while a save is in flight', () => {
+      render(
+        <DslEditorToolbar
+          dslCode="model Foo {}"
+          dirty={true}
+          schemaWritable={true}
+          saving={true}
+          onSave={() => {}}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
+    });
   });
 });

@@ -379,10 +379,31 @@ export function resolveStudioAuditLog(option: boolean | undefined, env: string |
   return true;
 }
 
-/** Op/outcome/reason closed sets for `StudioAuditEntry` — see below. */
-export type AuditOp = "insert" | "update" | "delete";
+/**
+ * Op/outcome/reason closed sets for `StudioAuditEntry` — see below.
+ *
+ * `"schema-write"` (added for `PUT /api/schema/source`, PR #1b) is the one
+ * `AuditOp` value never paired with a `table` — see `StudioAuditEntry.table`
+ * below and `buildSchemaAuditEntry` in `studio-server.ts`, which is a
+ * SEPARATE builder from `buildAuditEntry` for exactly that reason: making
+ * `table` optional on the shared row-write builder would let a row write
+ * silently forget its table and still typecheck.
+ */
+export type AuditOp = "insert" | "update" | "delete" | "schema-write";
 export type AuditOutcome = "ok" | "denied" | "error";
-export type AuditReason = "read-only" | "invalid-request" | "not-found" | "db-error";
+/**
+ * `"stale"`, `"redaction-conflict"`, `"schema-invalid"`, and `"io-error"` are
+ * schema-write-only reasons, added for PR #1b's `PUT /api/schema/source`.
+ */
+export type AuditReason =
+  | "read-only"
+  | "invalid-request"
+  | "not-found"
+  | "db-error"
+  | "stale"
+  | "redaction-conflict"
+  | "schema-invalid"
+  | "io-error";
 
 /**
  * `indigodb studio`'s audit log entry — one stdout JSON line per attempted
@@ -404,7 +425,14 @@ export interface StudioAuditEntry {
   ts: string;
   kind: "studio.audit.write";
   op: AuditOp;
-  table: string;
+  /**
+   * Optional (PR #1b): a schema-write entry (`op:"schema-write"`) never
+   * carries a `table` — there is no table involved, and the schema file
+   * PATH is deliberately never logged either (see `bytes` below). Every
+   * row-write entry (`insert`/`update`/`delete`) still always supplies one;
+   * only `buildSchemaAuditEntry`'s call sites omit it.
+   */
+  table?: string;
   /** Primary-key value(s), stringified column-by-column. Never other columns. */
   pk?: Record<string, string>;
   /** Column NAMES only, from `ResolvedColumn.name`. Never a value. */
@@ -416,6 +444,12 @@ export interface StudioAuditEntry {
   code?: string;
   /** 12 hex chars from `deriveSessionCorrelator`. Absent when auth is off. */
   session?: string;
+  /**
+   * Written byte length on a successful schema write (`op:"schema-write"`,
+   * `outcome:"ok"`). Never the file path or content — see design.md's "audit
+   * content" decision.
+   */
+  bytes?: number;
 }
 
 /**

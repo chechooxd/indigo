@@ -28,6 +28,14 @@ interface AuthState {
    * auth/read-only/guardrail decision.
    */
   environment: string | null;
+  /**
+   * Whether the server has a real `schemaPath` and can accept
+   * `PUT /api/schema/source`. Defaults to `false` (Save renders
+   * disabled-with-a-reason) until `checkStatus()` confirms otherwise —
+   * matching this app's fail-soft posture in standalone dev, where there is
+   * no backend and the write route could not work regardless.
+   */
+  schemaWritable: boolean;
   loginError: string | null;
   /**
    * `true` while the initial `GET /api/auth/status` probe is in flight.
@@ -74,6 +82,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   queryTimeoutMs: DEFAULT_QUERY_TIMEOUT_MS,
   queryRowCap: DEFAULT_QUERY_ROW_CAP,
   environment: null,
+  schemaWritable: false,
   loginError: null,
   statusChecking: true,
 
@@ -87,6 +96,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         queryTimeoutMs: status.queryTimeoutMs,
         queryRowCap: status.queryRowCap,
         environment: status.environment,
+        schemaWritable: status.schemaWritable,
       });
     }
     set({ statusChecking: false });

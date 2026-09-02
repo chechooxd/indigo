@@ -12,6 +12,9 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startStudio, readOnlyPreamble } from "../dist/studio-server.js";
 
 /**
@@ -110,5 +113,26 @@ export async function withStudio(db, { resolved, source }, fn, options = {}) {
     });
   } finally {
     await server.close();
+  }
+}
+
+/**
+ * Creates an isolated temp directory holding one `schema.indigo` file with
+ * `contents`, runs `fn({ dir, schemaPath, read })`, and always removes the
+ * directory afterwards — even on failure. `read()` re-reads the file fresh
+ * off disk each call, for assertions after an external mutation.
+ *
+ * Additive only: does not touch `withStudio`'s existing signature or call
+ * sites. Tests pass `{ schemaPath }` straight through `withStudio`'s own
+ * `...options` spread (see above).
+ */
+export async function withSchemaFile(contents, fn) {
+  const dir = await mkdtemp(join(tmpdir(), "indigo-studio-"));
+  const schemaPath = join(dir, "schema.indigo");
+  await writeFile(schemaPath, contents, "utf-8");
+  try {
+    return await fn({ dir, schemaPath, read: () => readFile(schemaPath, "utf-8") });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 }

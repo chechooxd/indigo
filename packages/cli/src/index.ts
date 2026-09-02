@@ -401,6 +401,7 @@ program
       await startStudio({
         resolved,
         source: readFileSync(schemaPath, "utf-8"),
+        schemaPath,
         connectionString,
         port: Number(options.port),
         host: options.host,
