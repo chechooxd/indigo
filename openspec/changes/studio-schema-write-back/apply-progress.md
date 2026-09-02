@@ -465,3 +465,129 @@ Error: expected buffer-relative line 3, got 6
 
 Three lines off — a marker pointing at innocent code, with no way for the user to tell it is
 lying. Reverted; suite green at 19/19.
+
+---
+
+## Phase 3 (PR #2) + Phase 4 — Studio Save UI, cross-package verification
+
+Branch `feat/studio-schema-write-back-2`, stacked on `feat/studio-schema-write-back-1b`@`71014f0`.
+Mode: Strict TDD.
+
+### Safety net
+
+Ran `pnpm --filter @indigodb/studio test` before any edit: 23 test files, all pre-existing suites
+green (baseline confirmed before touching `useERDParser.ts`, `DslEditorToolbar.tsx`,
+`ERDDesignerPage.tsx`, `api.ts`, `useAuthStore.ts`).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1–3.2 | `useERDParser.test.tsx` | Unit (renderHook) | ✅ N/A (new assertions on existing hook) | ✅ Written, confirmed failing before `useERDParser.ts` was touched (hook had no `diagnostics` field) | ✅ Passed | ➖ single scenario (SD-1) | ➖ None needed |
+| 3.3–3.4 | `useERDParser.test.tsx` | Unit | ✅ | ✅ Written | ✅ Passed | ➖ single scenario | ➖ None needed |
+| 3.5–3.6 | `useERDParser.test.tsx` | Unit | ✅ | ✅ Written | ✅ Passed | ➖ single scenario (SD-2) | ➖ None needed |
+| 3.7–3.8 | `useERDParser.test.tsx` | Unit | ✅ | ✅ Written | ✅ Passed | ✅ distinct assertion proving no name-search/line-1 fallback | ➖ None needed |
+| 3.9–3.10 | `markers.test.ts` | Unit / typecheck guard | N/A (new file) | ➖ Documented — SD-3 is explicitly not RED against the untouched tree (file does not compile until `toMarkers`/`PositionalDiagnostic` exist); confirmed via `pnpm --filter @indigodb/studio lint` after 3.10 landed | ✅ `@ts-expect-error` guard compiles and lints clean; runtime case passes | ➖ N/A | ➖ None needed |
+| 3.11–3.12 | `DslEditorToolbar.test.tsx` | Unit (RTL) | ✅ 2/2 pre-existing cases (History/Copy) run first, confirmed still green after adding Save button props | ✅ Written, confirmed failing (5/5 new cases red — component took no `dirty`/`schemaWritable`/`saving`/`onSave` props) | ✅ Passed (7/7) | ✅ 4 cases (not-writable, writable-not-dirty, writable-and-dirty, saving state) | ➖ None needed |
+| 3.13–3.14 | `lib/__tests__/api.test.ts` | Unit | N/A (new file) | ✅ Written, confirmed failing (`fetchSchemaSource`/`saveSchemaSource` did not exist in the new shape) | ✅ Passed (7/7) | ✅ 3 cases per function (header present, header absent, non-2xx/wrong-content-type; 200, 409, 422, network failure) | ➖ None needed |
+| 3.15–3.16 | `ERDDesignerPage.test.tsx` | Integration (RTL, mocked API + mocked `@monaco-editor/react`/`@indigodb/core`/`ERDCanvas`/`ERDSidebar`) | N/A (new file) | ✅ Written, confirmed failing (no save path existed) | ✅ Passed | ➖ single scenario (SD-5) | ✅ Extracted a shared `editBuffer`/`renderReady` test helper after the first pass duplicated the same fireEvent block 3×; found and fixed a real bug in the process — the Undo-reload button was nested inside the `saveBanner &&` block, so clearing the banner on Reload also hid Undo |
+| 3.17–3.18 | `ERDDesignerPage.test.tsx` | Integration | ✅ | ✅ Written, confirmed failing | ✅ Passed | ➖ single scenario (SD-6) | ➖ None needed |
+| 3.19–3.20 | `ERDDesignerPage.test.tsx` | Integration | ✅ | ✅ Written, confirmed failing | ✅ Passed | ➖ single scenario (SD-7) | ➖ None needed |
+| 3.21–3.22 | `ERDDesignerPage.test.tsx` | Integration | ✅ | ✅ Written, confirmed failing | ✅ Passed | ➖ single scenario | ➖ None needed |
+| 3.23 | `DiagnosticsPanel.tsx` | Component (exercised via 3.6/3.20/3.24's panel-entry assertions) | N/A (new file) | ➖ N/A — structural creation task, exercised by other RED tests above | ✅ Passed via consuming tests | ➖ N/A | ➖ None needed |
+| 3.24 | `ERDDesignerPage.test.tsx` | Integration | ✅ | ✅ Written, confirmed failing | ✅ Passed | ➖ single scenario | ➖ None needed |
+| 3.25–3.27 | — | Structural | ➖ N/A | ➖ N/A | ✅ `pnpm --filter @indigodb/studio test` 24/24 files, 153/153 tests; `lint` (`tsc -b --noEmit`) exit 0; `build` (`tsc -b && vite build`) succeeds | ➖ N/A | ➖ None needed |
+
+### Test Summary
+- **Total tests written**: 27 new/extended cases across 6 files (`useERDParser.test.tsx` 4,
+  `markers.test.ts` 4, `DslEditorToolbar.test.tsx` +5 new (7 total), `api.test.ts` 7,
+  `ERDDesignerPage.test.tsx` 5, plus `useAuthStore.test.ts`/`App.test.tsx` regression updates for
+  the new required `schemaWritable` field)
+- **Total tests passing**: `pnpm --filter @indigodb/studio test` — 24/24 test files, 153/153 tests,
+  plus `node test/pack-contents.mjs` (`pack-contents: OK`)
+- **Layers used**: Unit (hook/pure-function — `useERDParser`, `diagnostics.ts`), Component/Integration
+  (RTL — `DslEditorToolbar`, `ERDDesignerPage`, mocking `@monaco-editor/react` with a controlled
+  `<textarea>`, `@indigodb/core` with a real-`instanceof`-compatible `IndigoParseError` stub, and
+  `ERDCanvas`/`ERDSidebar` as trivial stand-ins since they pull in `@xyflow/react`'s full rendering
+  stack, irrelevant to save/diagnostics wiring)
+- **Approval tests** (refactoring): N/A — no refactoring tasks in this phase
+- **Pure functions created**: 2 (`isPositional`, `toMarkers` in `lib/diagnostics.ts`)
+
+### Files Changed
+
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `apps/studio/src/features/erd/lib/diagnostics.ts` | Created | `Diagnostic`/`PositionalDiagnostic` types, `isPositional` type guard, `toMarkers` (Monaco-marker-shaped, monaco-dependency-free) |
+| `apps/studio/src/features/erd/hooks/useERDParser.ts` | Modified | Replaced `console.warn` with `diagnostics` state; calls `validate()` before `resolve()` to get structured `ValidationError[]` (position-less); classifies `IndigoParseError` as positional `source:'parse'` diagnostics; rebuilds diagnostics from scratch each parse |
+| `apps/studio/src/features/erd/components/DiagnosticsPanel.tsx` | Created | Labelled panel entries; explicit "No source location available" for non-positional diagnostics |
+| `apps/studio/src/features/erd/components/DslEditorToolbar.tsx` | Modified | Added Save button: `dirty`/`schemaWritable`/`saving`/`onSave` props, disabled-with-reason `title` text |
+| `apps/studio/src/lib/api.ts` | Modified | `fetchSchemaSource` returns `{source, version}` (breaking; single call site updated in `ERDDesignerPage.tsx`); new `saveSchemaSource` (never throws, discriminated result); `AuthStatus.schemaWritable`; local `SchemaParseErrorDetail`/`SchemaSource`/`SaveSchemaResult` types (mirrors `@indigodb/parser`'s `ParseErrorDetail` without adding a new package dependency, since `@indigodb/core` does not re-export it) |
+| `apps/studio/src/store/useAuthStore.ts` | Modified | `schemaWritable: boolean` state, defaults `false`, adopted from `checkStatus()` |
+| `apps/studio/src/features/erd/ERDDesignerPage.tsx` | Modified | `savedSource`/`version`/`dirty` (comparison, not a flag), save handler (200/409/422/other), 409 conflict banner with Reload, separate Undo-reload affordance (persists independent of the banner), success toast (auto-clears after 3s), `saveDiagnostics` merged with live parse diagnostics, `DiagnosticsPanel` wired below the editor |
+| `apps/studio/src/features/erd/__tests__/useERDParser.test.tsx` | Created | 4 cases: SD-1, "fixing clears the marker", SD-2, strengthened SD-2 |
+| `apps/studio/src/features/erd/__tests__/markers.test.ts` | Created | 4 cases: `toMarkers` mapping, SD-3 `@ts-expect-error` guard, `isPositional` narrowing (2 cases) |
+| `apps/studio/src/features/erd/__tests__/DslEditorToolbar.test.tsx` | Modified | Extended existing 2 cases with new required props; added 5 Save-button cases (SD-4 + enabled/disabled/saving states) |
+| `apps/studio/src/lib/__tests__/api.test.ts` | Created | 7 cases: `fetchSchemaSource` (header present/absent/fail-soft), `saveSchemaSource` (200/409/422/network failure) |
+| `apps/studio/src/features/erd/__tests__/ERDDesignerPage.test.tsx` | Created | 5 integration cases: SD-5 (409 + buffer preserved), SD-6 (Reload + Undo), SD-7 (422 no toast, panel entry, dirty stays true), 200 (toast + dirty clears), parse failure visible via panel |
+| `apps/studio/src/store/__tests__/useAuthStore.test.ts` | Modified (regression) | Added `schemaWritable` to every existing `AuthStatus`-shaped mock literal (new required field); added 3 dedicated `schemaWritable` cases |
+| `apps/studio/src/app/__tests__/App.test.tsx` | Modified (regression) | Added `schemaWritable` to every existing `AuthStatus`-shaped mock literal for the same reason |
+| `openspec/changes/studio-schema-write-back/proposal.md` | Modified | Checked all 6 Success Criteria boxes with evidence references (task 4.3) |
+| `openspec/changes/studio-schema-write-back/tasks.md` | Modified | Marked 3.1–3.27 and 4.1–4.4 `[x]` |
+
+### Root Gate (full repo)
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test` — all green:
+- `pnpm clean`: 10/10 tasks successful
+- `pnpm build --force`: 10/10 tasks successful (cache bypassed)
+- `pnpm lint`: 19/19 tasks successful, includes Studio's `tsc -b --noEmit` (load-bearing `-b`)
+- `pnpm test`: 18/18 Turbo tasks successful (6m34s, dominated by the Postgres-backed CLI migrate
+  suite), `workspace pack-contents guard: all green`, `check-realtime-projection-db-gate: PASSED`,
+  no `FAIL`/`✗`/`error:` lines anywhere in the log (the one substring match on "fails" is a
+  pre-existing test name describing rollback-on-failure behavior)
+- `node packages/cli/test/studio-schema-source.mjs` (Phase 1a, 6 cases) — still green, unmodified
+- `node packages/cli/test/studio-schema-write.mjs` (Phase 1b, 19 cases) — still green, unmodified
+
+### Deviations from Design
+
+None in the server/type contracts — `SchemaSource`, `SaveSchemaResult`, `AuthStatus.schemaWritable`
+match design's Interfaces section exactly. One naming deviation: design's Interfaces section names
+the parse-error field type `ParseErrorDetail` directly; since `apps/studio` depends only on
+`@indigodb/core` (which does not re-export that type from `@indigodb/parser`), a structurally
+identical local type `SchemaParseErrorDetail` is used instead of adding a new package dependency
+for this slice. The shape is byte-identical (`{message, line?, column?, endLine?, endColumn?}`).
+
+One layout deviation from a literal reading of decision 14: the design describes Undo-reload as
+living inside the 409 banner ("stashing the pre-reload buffer... behind an Undo reload action").
+During implementation this was found to break as written — clicking Reload clears the banner
+(`saveBanner: null`), which would also hide the Undo control it was nested inside, right when it
+becomes needed. Undo-reload was moved to render independently, keyed off `preReloadBuffer !== null`
+rather than the banner's presence. The end-to-end behavior decision 14 specifies (buffer never
+discarded, Undo available immediately after Reload, no save-anyway control anywhere) is unchanged
+and is what `ERDDesignerPage.test.tsx`'s SD-6 case verifies.
+
+### Issues Found
+
+One test-shape ripple, not a design deviation: `AuthStatus.schemaWritable` becoming a required field
+meant every pre-existing `AuthStatus`-shaped literal in `useAuthStore.test.ts` and `App.test.tsx`
+needed the new field added to keep compiling — done as a mechanical regression update, not a
+`fetchSchemaSource` call-site change (task 4.2 asks only about `fetchSchemaSource` consumers,
+which is why this is called out separately here).
+
+### Workload / PR Boundary
+
+- Mode: stacked PR slice (`stacked-to-main`, `auto-chain`)
+- Current work unit: Unit 3 / PR #2 — Studio Save UI (final slice)
+- Boundary: starts from `feat/studio-schema-write-back-1b`@`71014f0` on branch
+  `feat/studio-schema-write-back-2`; ends at Phase 4 task 4.4 (root gate green, proposal Success
+  Criteria checked, out-of-scope items recorded in `tasks.md`'s own 4.4 entry).
+- Estimated review budget impact: forecast ~350 authored lines; actual diff is 16 files,
+  +1151/−66 (includes ~600 lines of new test files, which this repo's forecast methodology counts
+  as authored). Over the raw 350-line forecast but under the 800-line session budget and this is
+  the final stacked slice — no further PR depends on it.
+- Rollback boundary confirmed: reverting this commit restores today's read-only editor with zero
+  server-side change, per tasks.md's stated boundary for Unit 3.
+
+### Status
+
+80/80 tasks complete across all 3 PRs (Phase 1: 12/12, Phase 2: 37/37, Phase 3: 27/27) plus
+Phase 4: 4/4. Full root gate green. Ready for `sdd-verify`.
