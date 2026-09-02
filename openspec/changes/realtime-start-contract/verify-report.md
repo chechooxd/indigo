@@ -289,3 +289,204 @@ PR 3 (Studio badge, `source-contract.mjs`/`studio-realtime-degraded.mjs`/`realti
 chaining already done here ahead of schedule for the latter two per task 2.x — `source-contract.mjs`
 chaining remains PR 3's task 3.5 — plus the DB-gated discovery leg) is deliberately absent and not
 counted as a gap. `apps/studio` confirmed untouched by this PR.
+
+---
+
+## PR 3 (Phase 3) Verification — Studio Badge + Test Wiring
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:6cb56ef4855c0cb438344b11997974f35c7500fe43071f794f61d237bc9f886a
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 2/2
+scenarios: 4/4
+test_command: pnpm lint && pnpm test
+test_exit_code: 0
+test_output_hash: sha256:d09cfdd70ec397c8a8da340b7c1df47895cac164e4afa9abfdac6c850a651852
+build_command: pnpm clean && pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:9e1192374f82c0e65d984e684ab145ac4f49b4ea1a6c35aaeeb6368de0c59d3d
+```
+
+**Change**: realtime-start-contract (PR 3 of 3, final slice)
+**Commit**: `7dbd680` — `test(realtime): wire readiness suites and prove the Studio badge never lies`
+**Branch**: `fix/realtime-start-contract-3-badge` off `main`@`e22d7fd` (PRs 1/2 merged, out of scope here)
+**Mode**: Strict TDD
+
+### Commit-Hygiene Check (the defect class that failed PR 2's first pass)
+
+Re-run in full for PR 3, per instruction. `git show 7dbd680 --stat` confirms all four
+claimed-changed files are genuinely in the commit:
+
+| File | Action | In commit? |
+|---|---|---|
+| `apps/studio/src/features/studio/browser/__tests__/useLiveTable.test.tsx` | +78/-0 (SLV-1/SLV-2) | ✅ Yes |
+| `packages/realtime/test/readiness-no-db-env-guard.mjs` | new, 54 lines | ✅ Yes |
+| `packages/realtime/package.json` | +1/-1 (chains both readiness suites) | ✅ Yes |
+| `openspec/changes/realtime-start-contract/tasks.md` | Phase 3 checkboxes → `[x]` | ✅ Yes |
+| `openspec/changes/realtime-start-contract/apply-progress.md` | +97 | ✅ Yes |
+
+Working tree confirmed clean of any Phase 3 substance (`git status --short` shows only the
+pre-existing, known-noise `.atl/.skill-registry.cache.json` / `.atl/skill-registry.md` — generated
+files that are never committed per project convention). No PR-2-style gap found.
+
+### Completeness
+
+| Metric | Value |
+|---|---|
+| Tasks total (Phase 3) | 8 |
+| Tasks marked `[x]` | 8 |
+| Tasks whose code is genuinely in the reviewed commit | 8/8 |
+| Tasks total (all 3 phases) | 26 (10 + 8 + 8) |
+| Tasks marked `[x]` (all 3 phases) | 26/26 |
+
+### Build & Tests Execution (re-run independently, `INDIGODB_TEST_DATABASE_URL` unset)
+
+**Build**: ✅ Passed — `pnpm clean && pnpm build --force`, exit 0, all 10 Turbo tasks successful.
+
+**Lint**: ✅ Passed — `pnpm lint`, exit 0, includes `apps/studio`'s `tsc -b --noEmit`.
+
+**Tests**: ✅ Passed — `pnpm test`, exit 0, workspace pack-contents guard green for all 10 packages.
+`apps/studio` vitest: `useLiveTable.test.tsx` 15/15 (13 pre-existing + SLV-1 + SLV-2).
+
+`packages/realtime` package-scoped run confirms the chain is real, not just present on disk:
+```
+> node test/wal-source.mjs && node test/source-contract.mjs && node test/readiness-no-db-env-guard.mjs && node test/pg-harness.mjs && ...
+ok - RWS-10b: wal-source.mjs does not reference INDIGODB_TEST_DATABASE_URL
+ok - RWS-10b: source-contract.mjs does not reference INDIGODB_TEST_DATABASE_URL
+2 passed
+```
+Both `source-contract.mjs` and `readiness-no-db-env-guard.mjs` appear by name in the command echo
+and their check output appears in console — a file on disk that isn't in the chain never runs, and
+this one demonstrably did.
+
+### Independent Re-verification of the Five Scrutiny Points
+
+1. **SLV-1 drives a real `SseTransport` over a stubbed `fetch` returning 503.** Confirmed by
+   reading the committed diff: no `deps.transport` is injected; `vi.stubGlobal('fetch', ...)`
+   returns `{ok:false, status:503, body:null}`; the chain `fetch → !res.ok → throw → onError →
+   setStatus` genuinely executes (confirmed by the mutation proof below).
+2. **SLV-1 records every `setStatus` value.** Confirmed — a `useTracked()` wrapper pushes
+   `r.status` on every render into `statusHistory`, and the assertion is
+   `expect(statusHistory).not.toContain('live')`, not a final-value check.
+3. **The stubbed fetch does not enter `SseTransport`'s backoff loop.** Confirmed — fake timers
+   are active for the block and never advanced; `unmount()` is called explicitly at the end of the
+   test to abort the transport rather than relying on the timers staying frozen as an accident.
+   Reran the file standalone: 15/15 pass, no hang, no leaked-handle warning.
+4. **RWS-10b guard actually trips.** Re-ran independently on a *third*, previously-unused target —
+   appended a probe `INDIGODB_TEST_DATABASE_URL` reference to `source-contract.mjs` (neither the
+   apply agent's nor the orchestrator's prior run used this file): guard FAILED, `1 !== 2`, with
+   the exact expected assertion message naming `source-contract.mjs`. Restored via
+   `git checkout --`, confirmed `git diff --stat` empty, reran → 2/2 green.
+5. **The chaining is real.** Confirmed both files appear in `packages/realtime/package.json`'s
+   `test` script (`node test/source-contract.mjs && node test/readiness-no-db-env-guard.mjs`)
+   *and* in the console output of an actual `pnpm --filter @indigodb/realtime test` run executed
+   in this verification pass.
+
+### No Production Change Confirmed
+
+`git show 7dbd680 --stat` and `git diff main..7dbd680 --stat` both show zero touched files under
+`apps/studio/src` production code — only the test file. This matches the claim that PR 2's 503
+gating already satisfied the badge contract and PR 3 only adds coverage proving it.
+
+### RED Proof Re-run (mutation on `useLiveTable.ts`'s `onError`)
+
+Mutated `onError`'s `setStatus('error');` to a no-op comment. Reran
+`vitest run useLiveTable.test.tsx`:
+
+```
+FAIL SLV-1: expected 'connecting' to be 'error'
+FAIL SLV-2: expected 'live' to be 'error'
+FAIL (pre-existing onError test): expected 'connecting' to be 'error'
+Test Files  1 failed | Tests  3 failed | 12 passed (15)
+```
+
+Restored via `git checkout --`; `git diff --stat` confirmed empty; reran → 15/15 green. Matches
+the apply report's claim exactly (3 tests broken by the mutation, including one pre-existing test).
+
+### Spec Compliance Matrix (PR 3-owned rows only)
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| `studio-live-view`: badge reads `error`, never `live` | Badge reads `error`, not `live`, on 503 (SLV-1) | `useLiveTable.test.tsx > SLV-1` | ✅ COMPLIANT |
+| `studio-live-view`: badge reads `error`, never `live` | Rest of Studio remains usable while badge reports error (SLV-2) | `useLiveTable.test.tsx > SLV-2` | ✅ COMPLIANT |
+| `realtime-wal-source`: readiness-timing coverage runs without a database | Readiness tests pass without `INDIGODB_TEST_DATABASE_URL` (RWS-10) | `wal-source.mjs` (38/38, unset var) + `source-contract.mjs` (4/4) + `readiness-no-db-env-guard.mjs` (2/2, guard) | ✅ COMPLIANT |
+| `realtime-wal-source`: readiness-timing coverage runs without a database | DB-gated suites no longer hang at `start()` (RWS-11) | `log.mjs`/`parity.mjs`/`resume.mjs` against a real Postgres container | ⚠️ **DISCOVERY, not a full pass** — see note below |
+
+**Compliance summary**: 4/4 scenarios have a covering, currently-passing test for the narrow claim
+each row makes. RWS-11 is explicitly marked as discovery rather than "pass": the spec's own
+normative text (`realtime-wal-source/spec.md:152-155`) frames this scenario as asserting only that
+`start()`'s blocking behavior is removed, "not that these suites' assertions pass, since none of
+the three has previously run to completion." That framing is honored: `log.mjs` (4/4) and
+`parity.mjs` (2/2) run to completion and pass; `resume.mjs`'s 3 assertions print pass but the
+process hangs afterward (exit 124) on a leaked handle **after** its assertions finish. This was
+independently corroborated by the orchestrator's own separate run (identical result), and the
+apply/tasks artifacts record it honestly as a follow-up, not folded into a false "3/3 suites pass."
+
+### Assertion Quality Audit (Strict TDD)
+
+Scanned `useLiveTable.test.tsx`'s new block and `readiness-no-db-env-guard.mjs`:
+- SLV-1/SLV-2: no tautologies, no orphan-empty-without-companion issues, no ghost loops. Both
+  assert real values (`'error'`, row contents) driven through real production code paths
+  (`SseTransport`, `fetchRows`, `useDataStore`).
+- `readiness-no-db-env-guard.mjs`: not a smoke test — asserts absence of a literal string via
+  `ok(!source.includes(...))`, backed by the `strictEqual(passed, N, ...)` tail guard so a silently
+  skipped case fails loudly. RED-sensitivity independently re-proven above (point 4).
+
+**Assertion quality**: ✅ All assertions verify real behavior — 0 CRITICAL, 0 WARNING.
+
+### TDD Compliance
+
+| Check | Result | Details |
+|---|---|---|
+| TDD Evidence reported | ✅ | Full TDD Cycle Evidence table present in apply-progress for all 4 task rows |
+| All tasks have tests | ✅ | 8/8 Phase 3 tasks map to test files or guard scripts |
+| RED confirmed | ✅ | Re-run independently: RWS-10b guard trip (point 4) + `onError` mutation (RED proof section) |
+| GREEN confirmed | ✅ | 8/8 relevant suites pass on execution in this verification pass |
+| Triangulation adequate | ✅ | SLV-1/SLV-2 cover both spec scenarios distinctly; RWS-10 covered by 3 independent suites |
+| Safety net for modified files | ✅ | `useLiveTable.test.tsx` pre-existing 13 tests stayed green throughout |
+
+**TDD Compliance**: 6/6 checks passed
+
+### Task Count Discrepancy (WARNING)
+
+The tasks artifact and PR 3's own commit message both state "28/28 tasks across all three phases
+complete." A direct count of `- [x]` lines in the committed `tasks.md` (Phase 1: 10, Phase 2: 8,
+Phase 3: 8) totals **26**, not 28. This is a documentation/arithmetic slip in the summary line, not
+a missing or unverified task — every one of the 26 actual task lines is checked, and this
+verification pass confirmed each Phase 3 line has genuinely-delivered, committed code. Non-blocking,
+but the "28" figure should not be repeated in the archive summary.
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|---|---|---|
+| No production change needed for SLV-1/SLV-2 (PR 2's 503 gating already sufficient) | ✅ Yes | Confirmed — zero `apps/studio/src` diff in commit 7dbd680 |
+| RWS-10b via `readFileSync` string search instead of shelling out to `rg` | ✅ Yes, documented deviation | Same substitution pattern as RSC-11b in PR 1; equally RED-sensitive, re-proven independently |
+| RWS-11 is a discovery row, not a pass promise | ✅ Yes | Spec text itself frames it this way; apply/tasks artifacts honor that framing exactly |
+| `resume.mjs` post-completion hang filed as follow-up, not fixed | ✅ Yes, correctly scoped out | Root cause (leaked handle in the suite's own cleanup, not `WalSource.start()`) documented; matches RWS-11's narrow claim |
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. Task-count arithmetic in the commit message and apply-progress summary line ("28/28") does not
+   match the actual 26 checked task lines in `tasks.md`. Correct the figure before archive to avoid
+   propagating a wrong total into the change's closing record.
+
+**SUGGESTION**:
+1. `resume.mjs`'s post-completion process hang (exit 124 after all 3 assertions pass) is correctly
+   filed as a follow-up here; consider opening a tracked issue for it so it doesn't get lost between
+   changes, since it currently exists only as prose inside this change's apply-progress.
+
+### Verdict
+
+**PASS WITH WARNINGS** — All 26 real Phase 3 tasks (and all 26 across the full change) are
+genuinely complete and committed. Zero CRITICAL findings. One non-blocking WARNING (a cosmetic task
+total miscount, "28" vs actual 26) should be corrected before archive but does not gate it. The five
+scrutiny points, the "no production change" claim, and the RED-proof mutation were all independently
+re-verified in this pass and matched the apply report exactly. RWS-11 is honestly scoped as
+discovery, not folded into a false pass. Ready for `sdd-archive` once the task-count text is fixed.
