@@ -428,3 +428,40 @@ deviation, not left silent).
 
 37/37 Phase 2 tasks complete. Ready for review/PR of this Phase 1b slice, or for `sdd-apply` to
 continue with Phase 3 (Studio UI) on its own stacked branch.
+
+---
+
+## Orchestrator independent verification of PR #1b
+
+Three claims were re-checked directly rather than taken from the apply report.
+
+**1. The round-trip preserves the credential on disk.** Built an end-to-end probe against the
+built tree: a schema whose `datasource` block holds `postgres://admin:SUPERSECRET@db.internal:5432/prod`,
+served over `GET`, edited in the redacted form the browser actually receives, `PUT` back.
+
+```
+buffer served to the client leaks credential?  false
+--- ON DISK, after the PUT ---
+credential survived:       true
+exact original block survived: true
+new model landed:          true
+sentinel NOT written:      true
+still compiles:            true
+```
+
+**2. The audit line carries no file path.** Observed verbatim:
+`{"ts":…,"kind":"studio.audit.write","op":"schema-write","count":1,"outcome":"ok","bytes":243}` —
+`op`, `count`, `outcome`, `bytes`, and nothing that identifies the file.
+
+**3. Decision 7's line translation is load-bearing, not accidentally correct.** A translation can
+look right by luck when the block is one line and the shift is zero, so it was proved by mutation.
+Reducing `translateLine` to `return line;`:
+
+```
+FAIL PUT: a parse error after the reattached block is translated back to buffer-relative
+     coordinates (SW-10, decision 7)
+Error: expected buffer-relative line 3, got 6
+```
+
+Three lines off — a marker pointing at innocent code, with no way for the user to tell it is
+lying. Reverted; suite green at 19/19.
