@@ -153,3 +153,38 @@ None. All Phase 1 non-negotiables from the launch brief were verified directly r
 ## Status
 
 12/12 Phase 1 tasks complete. Ready for `sdd-apply` to continue with Phase 2 (PR #1b) on a fresh batch, or for review/PR of this Phase 1 slice.
+
+---
+
+## Orchestrator addition to PR #1a: the verb guard is now pinned
+
+While reviewing the slice, the orchestrator probed every HTTP verb against
+`/api/schema/source` on the built tree. Result before the guard the apply phase added
+(recorded here because the change was made as forward-looking cleanup and shipped untested):
+
+```
+GET     -> 200   redacted source
+PUT     -> 200   redacted source     <-- any verb served the file
+POST    -> 200   redacted source
+DELETE  -> 200   redacted source
+```
+
+`req.method === "GET"` closed that. After it, only GET succeeds and every other verb 404s with
+no schema text in the body.
+
+That improvement had **no test**, and PR #1b adds a `PUT` handler on this exact path — so the
+regression it must not reintroduce is precisely a verb falling through into the GET body. A fifth
+case was added to `studio-schema-source.mjs` pinning it, and the reachability guard moves 4 → 5
+with its message aligned.
+
+The case asserts on the **body**, not only the status: a status-only assertion would still pass if
+a future handler answered `202` with the schema attached.
+
+**Mutation-proved** (dropping `&& req.method === "GET"`):
+
+```
+FAIL GET-only: every other verb on /api/schema/source is refused and serves no source at all
+Error: PUT on the schema source route must not succeed, got 200
+```
+
+Reverted; suite green at 5/5.

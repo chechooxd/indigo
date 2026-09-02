@@ -215,7 +215,45 @@ await check(
   },
 );
 
-strictEqual(ran, 4, "expected exactly 4 check() cases in studio-schema-source.mjs");
+await check(
+  "GET-only: every other verb on /api/schema/source is refused and serves no source at all",
+  async () => {
+    // Before PR #1a the route matched on `path` alone, so ANY verb — PUT,
+    // POST, DELETE — returned 200 with the redacted schema body. Adding
+    // `req.method === "GET"` closed that. This case pins the improvement:
+    // PR #1b adds a PUT handler on this exact path, and the failure mode it
+    // must not reintroduce is a verb falling through to the GET body.
+    await withDatabase(async (db) => {
+      await withSchemaFile(SCHEMA_SOURCE, async ({ schemaPath }) => {
+        const fixture = loadFixture(SCHEMA_SOURCE);
+        await withStudio(db, fixture, async ({ baseUrl }) => {
+          const get = await fetch(`${baseUrl}/api/schema/source`);
+          assert(get.status === 200, `GET should still serve the source, got ${get.status}`);
+          const served = await get.text();
+          assert(served.includes("// datasource redacted"), "GET must serve the redacted source");
+
+          for (const method of ["PUT", "POST", "DELETE", "HEAD"]) {
+            const res = await fetch(`${baseUrl}/api/schema/source`, { method });
+            assert(
+              res.status !== 200,
+              `${method} on the schema source route must not succeed, got ${res.status}`,
+            );
+            const body = method === "HEAD" ? "" : await res.text();
+            // The absolute assertion that matters: no verb hands back schema
+            // text. Asserting only on the status would still pass if a future
+            // handler answered 202 with the body attached.
+            assert(
+              !body.includes("// datasource redacted") && !body.includes("Table "),
+              `${method} must not return schema source, got body: ${body}`,
+            );
+          }
+        }, { schemaPath });
+      });
+    });
+  },
+);
+
+strictEqual(ran, 5, "expected exactly 5 check() cases in studio-schema-source.mjs");
 
 if (failures > 0) {
   console.error(`\n@indigodb/cli studio-schema-source: ${failures} failing`);
