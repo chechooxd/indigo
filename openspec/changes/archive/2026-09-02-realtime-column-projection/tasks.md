@@ -91,7 +91,9 @@ Chain strategy: stacked-to-main
 
 - [x] 5.1 In every new/extended suite (`wal-source.mjs`, `dispatch.mjs`, `realtime-projection.mjs`), end with `strictEqual(ran, <exact count>)` so an omitted or skipped case fails loudly (RCP-13).
 - [x] 5.2 Add an `rg` guard (script or CI step) asserting the new/modified realtime test files contain **no** `INDIGODB_TEST_DATABASE_URL` reference (RCP-13).
-- [ ] 5.3 Required manual merge gate (not automated, not counted as coverage): run `INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test` against a real Postgres to exercise RLE-2 (replay page narrowness) before merging PR 2.
+- [x] 5.3 Required manual merge gate (not automated, not counted as coverage): run `INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test` against a real Postgres to exercise RLE-2 (replay page narrowness) before merging PR 2.
+  - Run 2026-09-02 against `postgres:17 -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=8` on port 55432, on the merge candidate: `log.mjs` exit 0 (4/4), `endpoint.mjs` exit 0 (3/3), `buckets.mjs` exit 0 (5/5). RLE-2 exercised by `log.mjs`.
+  - This gate was unrunnable until `realtime-start-contract` fixed `WalSource.start()` (it awaited `subscribe()`, which resolves only at stream end). That is why PR 2 was held rather than merged on the automated suites alone; it merged as `bf9c6c9` after this run.
 
 ## Phase 6: Cross-package verification
 
