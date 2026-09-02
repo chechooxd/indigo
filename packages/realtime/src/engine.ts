@@ -153,7 +153,26 @@ export class RealtimeEngine {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    await this.source.start((event) => this.dispatch(event), this.onError);
+    try {
+      await this.source.start((event) => this.dispatch(event), this.onError);
+    } catch (err) {
+      // A rejected first attempt must not leave the engine permanently
+      // "started" — reset before rethrowing so a caller that catches this
+      // and later retries (e.g. after an operator fixes the underlying
+      // cause) genuinely reaches `source.start()` again (RSC-14).
+      //
+      // The source must be stopped HERE, not left to the caller. A rejected
+      // attempt has already armed `scheduleReconnect()`'s backoff timer, and
+      // `stop()` below does all of its work inside `if (this.started)` —
+      // which the line above has just made false. So a caller doing the
+      // obvious thing (`catch { await engine.stop() }`) would get a silent
+      // no-op while the timer retried forever, keeping the process alive.
+      // Observed directly: the degraded-Studio suite printed "all green" and
+      // then never exited.
+      this.started = false;
+      await this.source.stop().catch(() => {});
+      throw err;
+    }
     this.heartbeat = setInterval(() => {
       for (const sub of this.subscribers) sub.res.write(":ping\n\n");
     }, this.heartbeatMs);

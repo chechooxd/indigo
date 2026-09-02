@@ -213,6 +213,62 @@ await check("B1.2: composite-PK model's wake frame omits pk entirely, no partial
   ok(!("pk" in payload), "wake frame must not carry pk at all, composite or otherwise");
 });
 
+// ── RSC-14 — a rejected engine.start() resets the engine's started state,
+//    and a SECOND start() genuinely reaches source.start() again ─────────
+
+await check(
+  "RSC-14: a rejected engine.start() leaves the engine restartable — a second start() reaches source.start() again",
+  async () => {
+    let startCalls = 0;
+    const source = {
+      async start() {
+        startCalls++;
+        if (startCalls === 1) {
+          throw new Error("boom: first attempt fails");
+        }
+        // Second call succeeds — engine.start() must resolve.
+      },
+      async stop() {},
+    };
+    const engine = new RealtimeEngine({
+      connectionString: "postgres://unused/unused",
+      schema: { tables: [{ name: "Post", realtime: true }] },
+      source,
+    });
+
+    await engine.start().then(
+      () => {
+        throw new Error("expected engine.start() to reject on the first attempt");
+      },
+      (err) => {
+        ok(err instanceof Error, "rejection must carry an Error");
+      },
+    );
+    deepStrictEqual(startCalls, 1, "source.start() must have been called exactly once so far");
+
+    // The critical assertion: a SECOND engine.start() must not be
+    // short-circuited by leftover "started" state — it must genuinely reach
+    // source.start() again, not merely report engine["started"] === false.
+    await engine.start();
+    deepStrictEqual(startCalls, 2, "a second engine.start() must reach source.start() again after a rejection");
+  },
+);
+
+// ── DESIGN-ONLY-1 — engine.start() resolves on a live source and arms the
+//    heartbeat (no spec scenario covers this; labelled explicitly) ────────
+
+await check(
+  "DESIGN-ONLY-1: engine.start() resolves on a live source and arms the heartbeat",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+    void emit;
+    ok(engine["heartbeat"] === null, "heartbeat must be unarmed before start()");
+    await engine.start();
+    ok(engine["heartbeat"] !== null, "heartbeat must be armed once start() resolves on a live source");
+    await engine.stop();
+  },
+);
+
 console.log(`\n${passed} check(s) passed.`);
 if (process.exitCode) {
   console.error("\nFAILED");

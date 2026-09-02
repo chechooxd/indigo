@@ -159,3 +159,63 @@ forecast and pre-accepted `auto-chain`/`stacked-to-main` decision; not re-litiga
 ## Status
 
 10/10 Phase 1 (PR 1) tasks complete. Phases 2–3 (PR 2/PR 3) untouched. Ready for `sdd-verify`.
+
+## PR 2 — engine, CLI and Studio wiring (Phase 2)
+
+The apply agent died to a provider rate limit partway through, having landed `engine.ts`'s
+`started` reset, the `realtime` daemon's fail-fast catch, and `realtime-fail-fast.mjs`. The
+orchestrator finished the Studio half, fixed two defects found doing so, ran the gate and
+committed.
+
+**Delivered.** `RealtimeEngine.start()` resets `started` and stops the source before rethrowing.
+`cli/index.ts` catches, prints `❌ Realtime failed to start: <error>` and exits 1 before `listen`.
+`studio-server.ts` catches, prints `⚠ Realtime unavailable: … — Studio continues without live
+updates`, latches `realtimeAvailable = false`, binds anyway, and answers **503** on
+`REALTIME_PATH`/`REALTIME_LOG_PATH` with no SSE frame in the body.
+
+### Two defects found while finishing, neither in the original task list
+
+**1. `engine.stop()` was a silent no-op exactly when it was needed.** `RealtimeEngine.stop()`
+does all of its work inside `if (this.started)`, and PR 1's RSC-14 fix clears `started` when
+`start()` rejects. So the obvious caller shape — `catch { await engine.stop() }`, which is what
+the Studio path first used — cleaned up nothing, while `scheduleReconnect()`'s backoff timer
+retried forever and kept the process alive. Observed directly: the degraded-Studio suite printed
+`all green` and then never exited, spraying `ECONNREFUSED` retries.
+
+Fixed in `engine.ts` rather than in the caller: a rejected attempt now stops its own source before
+rethrowing, so no caller has to remember. `studio-server.ts` documents why it deliberately does
+*not* call `engine.stop()` — calling it would read like cleanup while doing nothing.
+
+This is an interaction defect: PR 1's fix is correct, `stop()`'s guard is correct, and together
+they produced a hang. It surfaced only by running the real suite to completion.
+
+**2. `realtime-fail-fast.mjs`'s second case could never fail.** The agent passed an `async` function
+to the file's **synchronous** `check()`, so the returned promise was never awaited and the port
+assertion ran orphaned — the case reported `ok` unconditionally. A `checkAsync` helper was defined
+in the same file and never used. Switched to `await checkAsync(...)`, with an inline note.
+
+### Mutation proof
+
+| Mutation | Result |
+|---|---|
+| Bypass the `realtimeAvailable` latch so the realtime routes answer 200 again | EPT-1 and EPT-2 FAIL; EPT-3 stays green (it exercises ordinary routes, correctly unaffected) |
+| Drop `started = false` from `start()`'s catch | RSC-14 FAILs: *"a second start() reaches source.start() again"* |
+
+Both restored byte-identically (`cmp` clean), rebuilt, reconfirmed green.
+
+### Coverage notes
+
+`studio-realtime-degraded.mjs` ends with a `ran !== 3` guard so an omitted or skipped case fails
+loudly instead of shrinking the run. EPT-3 is **differential**: it captures the degraded Studio's
+status and body shape for `/api/schema`, `/api/tables/:name` and `/api/query`, then compares them
+against a second Studio built from a **non-`@@realtime`** schema, and asserts the control actually
+served 200 — a bare "expect 200" would pass vacuously in exactly the world where a blunt
+implementation degraded the ordinary routes too.
+
+Both new CLI suites are wired into `packages/cli/package.json`'s `test` chain; the repo has no
+auto-discovering runner, so a file absent from the chain never runs.
+
+### Gate
+
+`pnpm clean && pnpm build --force && pnpm lint && pnpm test` — all exit 0.
+`INDIGODB_TEST_DATABASE_URL` was not set; the DB-gated discovery leg is PR 3.

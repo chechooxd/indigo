@@ -39,14 +39,14 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Engine/CLI/Studio Wiring (PR 2)
 
-- [ ] 2.1 GREEN: `engine.ts` — reset `this.started = false` in a catch before rethrowing when `source.start()` rejects.
-- [ ] 2.2 RED then GREEN: `dispatch.mjs` — RSC-14 asserts a **second** `engine.start()` genuinely reaches `source.start()` again (not just `started === false`); DESIGN-ONLY-1 asserts resolve arms the heartbeat.
-- [ ] 2.3 GREEN: `cli/index.ts` — wrap `engine.start()` in try/catch, `console.error("❌ Realtime failed to start: " + err.message)`, `process.exit(1)` before `server.listen`.
-- [ ] 2.4 RED then GREEN: `realtime-fail-fast.mjs` (new) — `spawnSync` built CLI against `postgres://127.0.0.1:1/db`; non-zero exit, stderr has driver error, port not listening (RSC-12).
-- [ ] 2.5 GREEN: `studio-server.ts` — non-fatal `try/catch` around `engine.start()` at `:823` (warn, `realtimeAvailable = false`, `engine.stop().catch(()=>{})`, then `listen` as usual).
-- [ ] 2.6 GREEN: `studio-server.ts` — gate `REALTIME_PATH` (`:928`) and `REALTIME_LOG_PATH` (`:934`) on `realtimeAvailable`, returning `503 {"error":"Realtime unavailable"}` otherwise.
-- [ ] 2.7 RED then GREEN: `studio-realtime-degraded.mjs` (new) — override `withStudio`'s `connectionString` to `postgres://127.0.0.1:1/db`; RSC-13 (schema route 200), EPT-1 (503 + raw body has no `event: ready` frame), EPT-2 (503, no `events`/`offset`/`hasMore` keys).
-- [ ] 2.8 RED then GREEN: same file — EPT-3 differential block: identical status/body shape across `/api/schema`, `/api/tables/:name`, `/api/query` on a healthy (non-`@@realtime`) fixture vs the degraded one.
+- [x] 2.1 GREEN: `engine.ts` — reset `this.started = false` in a catch before rethrowing when `source.start()` rejects.
+- [x] 2.2 RED then GREEN: `dispatch.mjs` — RSC-14 asserts a **second** `engine.start()` genuinely reaches `source.start()` again (not just `started === false`); DESIGN-ONLY-1 asserts resolve arms the heartbeat.
+- [x] 2.3 GREEN: `cli/index.ts` — wrap `engine.start()` in try/catch, `console.error("❌ Realtime failed to start: " + err.message)`, `process.exit(1)` before `server.listen`.
+- [x] 2.4 RED then GREEN: `realtime-fail-fast.mjs` (new) — `spawnSync` built CLI against `postgres://127.0.0.1:1/db`; non-zero exit, stderr has driver error, port not listening (RSC-12).
+- [x] 2.5 GREEN: `studio-server.ts` — non-fatal `try/catch` around `engine.start()` at `:823` (warn, `realtimeAvailable = false`, `engine.stop().catch(()=>{})`, then `listen` as usual).
+- [x] 2.6 GREEN: `studio-server.ts` — gate `REALTIME_PATH` (`:928`) and `REALTIME_LOG_PATH` (`:934`) on `realtimeAvailable`, returning `503 {"error":"Realtime unavailable"}` otherwise.
+- [x] 2.7 RED then GREEN: `studio-realtime-degraded.mjs` (new) — override `withStudio`'s `connectionString` to `postgres://127.0.0.1:1/db`; RSC-13 (schema route 200), EPT-1 (503 + raw body has no `event: ready` frame), EPT-2 (503, no `events`/`offset`/`hasMore` keys).
+- [x] 2.8 RED then GREEN: same file — EPT-3 differential block: identical status/body shape across `/api/schema`, `/api/tables/:name`, `/api/query` on a healthy (non-`@@realtime`) fixture vs the degraded one.
 
 ## Phase 3: Studio Badge + Test Wiring (PR 3)
 

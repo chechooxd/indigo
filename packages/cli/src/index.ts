@@ -266,7 +266,13 @@ program
       res.end(JSON.stringify({ error: "Not found" }));
     });
 
-    await engine.start();
+    try {
+      await engine.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`❌ Realtime failed to start: ${message}`);
+      process.exit(1);
+    }
     await new Promise<void>((resolve) => server.listen(port, resolve));
 
     console.log();

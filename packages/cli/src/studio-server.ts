@@ -820,7 +820,27 @@ export async function startStudio(
   const engine = resolved.tables.some((t) => t.realtime)
     ? new RealtimeEngine({ connectionString, schema: resolved })
     : null;
-  if (engine) await engine.start();
+  // A rejected start is NOT fatal here, unlike `indigodb realtime`: the
+  // schema, table and query routes need no replication stream, so refusing
+  // to boot would trade a defect for a regression. But the failure must be
+  // visible rather than silent — `realtimeAvailable` latches false and the
+  // realtime routes answer 503, because `engine.handleRequest` would
+  // otherwise write 200 plus a `ready` frame without consulting the source,
+  // and the Studio's live badge reads `live` from that response alone.
+  let realtimeAvailable = engine !== null;
+  if (engine) {
+    try {
+      await engine.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`⚠ Realtime unavailable: ${message} — Studio continues without live updates`);
+      realtimeAvailable = false;
+      // No `engine.stop()` here on purpose: `start()` already stopped the
+      // source on its way out, and `stop()` is guarded on a `started` flag
+      // that a rejected start has cleared — calling it would read like
+      // cleanup while doing nothing.
+    }
+  }
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${boundPort}`);
@@ -922,6 +942,15 @@ export async function startStudio(
       if (path === "/api/schema/source") {
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
         res.end(publicSource);
+        return;
+      }
+
+      if ((path === REALTIME_PATH || path === REALTIME_LOG_PATH) && engine && !realtimeAvailable) {
+        // 503 with no `event: ready` frame: the SSE client treats any 200 as
+        // an open stream, so answering 200 here would make the Studio's live
+        // badge report `live` over a stream that can never deliver an event.
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Realtime unavailable" }));
         return;
       }
 
