@@ -116,6 +116,20 @@ it MUST still be removed and terminated.
 - THEN the subscriber is still removed from the registry and `res.end()` is still
   called, regardless of whether the `event: overflow` frame was flushed
 
+Eviction MUST additionally be idempotent: evicting a subscriber that has already been
+evicted MUST NOT terminate the stream a second time and MUST NOT report a second
+eviction. This is a defensive guarantee, not a response to a live re-entrant path —
+`handleRequest`'s `close` listener removes the subscriber directly and never re-enters
+eviction — so it MUST be stated normatively, because nothing in the ordinary flow would
+reveal its absence.
+
+#### Scenario: A second eviction of the same subscriber reports nothing further
+
+- GIVEN a subscriber already evicted for exceeding `maxBufferedBytes`, whose eviction
+  reported exactly once
+- WHEN eviction is invoked again for that same subscriber
+- THEN no second eviction is reported and the subscriber registry is unchanged
+
 ### Requirement: Eviction is reported through the existing error hook
 
 Each eviction MUST report through `RealtimeEngineOptions.onError`, so an operator can
