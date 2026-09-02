@@ -9,7 +9,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useLiveTable } from '../hooks/useLiveTable';
 import { useDataStore } from '../../../../store/useDataStore';
 import { INITIAL_TABLES } from '../../../../data/mockData';
-import type { RealtimeTransport, TransportHandlers } from '@indigodb/client/realtime';
+import type { RealtimeTransport, TransportHandlers, LiveStatus } from '@indigodb/client/realtime';
 
 /** Captures the handlers a `connect()` call was given, and exposes a fake
  * `unsubscribe`/`connect` call count so tests can assert subscription
@@ -260,5 +260,81 @@ describe('useLiveTable', () => {
 
     expect(fetchRows).toHaveBeenCalledWith('users');
     expect(result.current.status).toBe('live');
+  });
+
+  describe('SLV-1/SLV-2 — realtime unavailable (503)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('SLV-1: badge reads error, never a transient live, when the realtime route responds 503 — real SseTransport over a stubbed fetch', async () => {
+      // No `deps.transport` here on purpose: the hook must build its own
+      // real `SseTransport`, and the ONLY thing under test is whether that
+      // real transport correctly turns a 503 into onError. An injected
+      // FakeTransport that calls onError directly would assume the very
+      // behaviour SLV-1 exists to verify.
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        body: null,
+      } as Response);
+      vi.stubGlobal('fetch', fetchMock);
+
+      // Every status the hook ever reports, in order — not just the final
+      // read. A badge that flashes 'live' before settling on 'error' has
+      // still told the operator something false, and only recording the
+      // last value would hide that.
+      const statusHistory: (LiveStatus | null)[] = [];
+      function useTracked() {
+        const r = useLiveTable('users', true, {});
+        statusHistory.push(r.status);
+        return r;
+      }
+
+      const { result, unmount } = renderHook(() => useTracked());
+
+      // Flush the microtask chain the real transport runs through:
+      // fetch() -> !res.ok -> throw -> catch -> onError -> setStatus.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(result.current.status).toBe('error');
+      expect(statusHistory).not.toContain('live');
+
+      // Tear the subscription down now, before any backoff-driven retry —
+      // fake timers are active for this suite and are never advanced here,
+      // so nothing would fire regardless, but unmounting explicitly aborts
+      // the real transport rather than relying on that as an accident.
+      unmount();
+    });
+
+    it('SLV-2: with status === error, fetchTableRows still resolves and updateTableRecords still lands rows', async () => {
+      const transport = new FakeTransport();
+      const fetchRows = vi.fn().mockResolvedValue({ columns: [], rows: [{ id: 1 }] });
+
+      const { result } = renderHook(() =>
+        useLiveTable('users', true, { transport, fetchRows, debounceMs: 50 }),
+      );
+      act(() => transport.lastHandlers.onOpen(false));
+      act(() => transport.lastHandlers.onError(new Error('boom')));
+      expect(result.current.status).toBe('error');
+
+      act(() => transport.lastHandlers.onEvent({} as never));
+      await act(async () => {
+        vi.advanceTimersByTime(50);
+        await Promise.resolve();
+      });
+
+      expect(fetchRows).toHaveBeenCalledWith('users');
+      const stored = useDataStore.getState().tables.find((t) => t.name.toLowerCase() === 'users');
+      expect(stored?.records).toEqual([{ id: 1 }]);
+      // The error status is scoped to the badge — it never gates data fetching.
+      expect(result.current.status).toBe('error');
+    });
   });
 });

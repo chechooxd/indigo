@@ -63,6 +63,16 @@ export interface RealtimeEvent<Row = Record<string, unknown>> {
  * consumers either way.
  */
 export interface RealtimeSource {
+  /**
+   * Resolves ONCE THE STREAM IS CONFIRMED LIVE — the server has accepted
+   * the subscription (`PgNotifySource`: `LISTEN` returned; `WalSource`: the
+   * server acked `START_REPLICATION`). It MUST NOT wait for the stream to
+   * end. It rejects if the FIRST connection attempt fails, carrying the
+   * underlying error; later losses are retried with backoff and never
+   * re-settle it. `stop()` called while this first attempt is still
+   * pending always settles it as a rejection — never leaves it pending.
+   * `realtime-source-contract` is the normative spec for this behavior.
+   */
   start(
     onEvent: (event: RealtimeEvent) => void,
     onError: (error: Error) => void,

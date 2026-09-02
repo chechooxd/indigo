@@ -155,6 +155,45 @@ export class WalSource implements RealtimeSource {
    */
   private chain: Promise<void> = Promise.resolve();
 
+  /**
+   * One-shot "ready" deferred (`realtime-start-contract`): created fresh in
+   * `start()`, resolved from `service.on("start")` once the stream is
+   * confirmed live, rejected from `connect()`'s catch on a first-attempt
+   * failure or from `start()`'s own backstop. `settleReady()` settles it
+   * then **nulls this field** — that null is the entire first-attempt
+   * scoping mechanism: once null, a later reconnect attempt's own settle
+   * calls become no-ops, so `start()`'s promise can only ever be settled by
+   * the attempt it was created for.
+   */
+  private ready: { resolve: () => void; reject: (err: Error) => void } | null = null;
+
+  /**
+   * Settles the current `ready` deferred (if any) and nulls the field
+   * immediately, before invoking the captured `resolve`/`reject` — so a
+   * later reconnect's own call, even one already in flight, observes a null
+   * `ready` and no-ops instead of re-settling an already-settled promise.
+   */
+  private settleReady(outcome: "resolve" | "reject", err?: Error): void {
+    const ready = this.ready;
+    if (!ready) return;
+    this.ready = null;
+    if (outcome === "resolve") ready.resolve();
+    else ready.reject(err as Error);
+  }
+
+  /** Test seam (private, no interface change): overridden in unit tests. */
+  private createService(): LogicalReplicationService {
+    return new LogicalReplicationService(
+      { connectionString: this.connectionString } as pg.ClientConfig,
+      { acknowledge: { auto: false, timeoutSeconds: 10 } },
+    );
+  }
+
+  /** Test seam (private, no interface change): overridden in unit tests. */
+  private createWriter(): pg.Client {
+    return new pg.Client({ connectionString: this.connectionString } as pg.ClientConfig);
+  }
+
   constructor(
     private readonly connectionString: string,
     schema: ResolvedSchema,
@@ -180,15 +219,51 @@ export class WalSource implements RealtimeSource {
     return [...this.tables.values()].map((t) => t.model);
   }
 
+  /**
+   * Resolves once the stream is confirmed live (Postgres has acked
+   * `START_REPLICATION`) — NOT when the replication stream ends. Rejects if
+   * the first connection attempt fails, carrying the underlying Postgres
+   * error. Settlement is scoped to that first attempt only: a later
+   * reconnect driven by `scheduleReconnect()` never re-settles this
+   * promise, whichever way it resolves — see `settleReady()`. `stop()`
+   * called while this first attempt is still pending always rejects this
+   * promise rather than leaving it pending; `connect()`'s own internals
+   * (supersession checks, the orphaned-socket guard, backoff scheduling)
+   * are unchanged by this contract.
+   */
   async start(
     onEvent: (event: RealtimeEvent) => void,
     onError: (error: Error) => void,
   ): Promise<void> {
+    // A stale pending deferred from an overlapping prior start() call (not
+    // expected in normal use, but must not leak) is rejected before a new
+    // one is created.
+    this.settleReady("reject", new Error("WalSource: superseded by a later start()"));
     this.stopped = false;
-    // Initial connect failures throw so a daemon fails fast with a clear
-    // error; once established, losses are retried with backoff instead —
-    // same contract as PgNotifySource.start().
-    await this.connect(onEvent, onError);
+    const ready = new Promise<void>((resolve, reject) => {
+      this.ready = { resolve, reject };
+    });
+    // Runs detached — connect()'s own reconnect loop keeps the stream alive
+    // across the rest of this source's lifetime; start() awaits only the
+    // ready deferred above, never this promise directly.
+    const attempt = this.connect(onEvent, onError);
+    // Backstop: whichever way the first connect() attempt itself settles —
+    // including exit paths (an early `stopped` return, either supersession
+    // return, normal completion) that don't call settleReady() themselves —
+    // this guarantees `ready` is settled too. A no-op once `connect()`'s own
+    // resolve/reject path in `service.on("start")` or the catch block has
+    // already settled it (this.ready is already null by then).
+    attempt.then(
+      () => this.settleReady("reject", new Error("WalSource: stream ended before it became live")),
+      (err) => this.settleReady("reject", err instanceof Error ? err : new Error(String(err))),
+    );
+    // Attached AFTER `.then()` above, on the same promise: `.then()`'s
+    // rejection handler runs first and forwards the real error into
+    // settleReady(); this `.catch()` only ever observes the
+    // already-consumed rejection of a separate derived promise, so nothing
+    // the deferred needs is swallowed, and no rejection is ever unobserved.
+    attempt.catch(() => {});
+    await ready;
   }
 
   async stop(): Promise<void> {
@@ -229,10 +304,7 @@ export class WalSource implements RealtimeSource {
     // construction — close it defensively before opening a fresh one.
     await this.closeWriter();
 
-    const service = new LogicalReplicationService(
-      { connectionString: this.connectionString } as pg.ClientConfig,
-      { acknowledge: { auto: false, timeoutSeconds: 10 } },
-    );
+    const service = this.createService();
     this.service = service;
     this.txid = undefined;
     this.pending = [];
@@ -247,6 +319,10 @@ export class WalSource implements RealtimeSource {
     // consecutive failures instead of being wiped every attempt.
     service.on("start", () => {
       this.retryMs = 1_000;
+      // Confirms the stream is live — the one `start()`-readiness signal
+      // this source has. A no-op on any reconnect after the first attempt
+      // already settled `start()`'s promise (`this.ready` is null by then).
+      this.settleReady("resolve");
     });
 
     const plugin = new PgoutputPlugin({
@@ -272,7 +348,7 @@ export class WalSource implements RealtimeSource {
       // commit can possibly arrive. Same connection string as the
       // replication stream; an ordinary connection can run DML where the
       // replication one cannot.
-      writer = new pg.Client({ connectionString: this.connectionString } as pg.ClientConfig);
+      writer = this.createWriter();
       // Attached before connect() so nothing can fire before it's listening.
       // pg.Client extends EventEmitter — an 'error' event with no listener
       // is fatal to the whole Node process (not just this connection), and
@@ -324,9 +400,13 @@ export class WalSource implements RealtimeSource {
         await writer?.end().catch(() => {});
         return;
       }
-      onError(err instanceof Error ? err : new Error(String(err)));
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      onError(wrapped);
+      // A no-op on any reconnect attempt after the first one already
+      // settled `start()`'s promise (`this.ready` is null by then) — this
+      // is the ONLY reject path for a first-attempt connect failure.
+      this.settleReady("reject", wrapped);
       if (!this.stopped) this.scheduleReconnect(onEvent, onError);
-      else throw err;
     }
   }
 

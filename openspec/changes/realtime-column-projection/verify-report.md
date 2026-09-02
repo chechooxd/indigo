@@ -244,3 +244,322 @@ satisfied.
 - `pnpm test`: exit 0
 - `regen-snapshots.mjs`: `git status --porcelain fixtures/snapshots` empty (zero diff)
 - `wasm-freshness.mjs`: exit 0
+
+---
+
+# Verify Report: realtime-column-projection — PR 2 (TypeScript enforcement half)
+
+**Scope**: Phases 2-6 (37 tasks; 35 `[x]`, 5.3 deliberately `[ ]`), branch
+`feat/realtime-column-projection-2-enforcement`, commit `1c03ae0`, off
+`main`@`907f3d2` (PR 1, merged, verified above — out of scope here). Diff vs
+`main`: 784 insertions / 51 deletions across 13 files.
+
+**Verdict: PASS WITH WARNINGS**
+**CRITICAL: 0 · WARNING: 1 · SUGGESTION: 2**
+
+---
+
+## Highest-value check — the empty-`Set` fail-open mutation (item 1)
+
+Applied the exact mutation apply-progress claimed was caught: `project()`
+line 53 changed from `if (allow === null) return row;` to
+`if (allow === null || !allow.size) return row;`, then `pnpm --filter
+@indigodb/realtime build && node packages/realtime/test/wal-source.mjs`.
+
+- Baseline (unmutated): **40/40 passed**.
+- Mutated: **37 passed**, 3 named failures — `FAIL - project(): null allow
+  returns the row unchanged; empty Set returns {} — never conflated`,
+  `FAIL - RCP-7 mechanics: columns:[] stores '{}'::jsonb (not NULL) and
+  dispatches new:{} with pk intact`, `FAIL - DX-4: PgNotifySource.translate
+  narrows new/old identically for narrow, empty, and bare columns`.
+- This is **exactly 3 of 40**, matching apply-progress's claim precisely
+  (name-for-name, count-for-count).
+- Restored `projection.ts` from a pre-mutation copy; `diff` against the
+  restored file showed **zero bytes of difference**. Rebuilt, confirmed
+  40/40 green again.
+
+**Verdict: claim confirmed, not merely trusted.** The narrow margin (3/40)
+is real — general narrowing coverage genuinely would not have caught this
+specific fail-open on its own; only the three dedicated tests do. If any of
+those three were ever deleted, this exact regression would silently pass.
+
+## Single projection call site (item 2)
+
+`rg -n "project\(" packages/realtime/src` → exactly two call *sites*
+(`wal-source.ts:530-531`, `source.ts:153-154`), both importing from the one
+`projection.ts` module — no third, independent narrowing implementation
+anywhere. Within each site, `new`/`old` are narrowed via the literal same
+`project()` function call, on adjacent lines:
+
+```
+wal-source.ts:530  if (fresh) row.new = renameKeys(project(fresh, names.projection), names.columns);
+wal-source.ts:531  if (old)   row.old = renameKeys(project(old, names.projection), names.columns);
+source.ts:153       if (raw.new) event.new = renameKeys(project(raw.new, names.projection), names.columns);
+source.ts:154       if (raw.old) event.old = renameKeys(project(raw.old, names.projection), names.columns);
+```
+
+A half-fix narrowing only `new` is structurally impossible without touching
+both adjacent lines. Confirmed.
+
+## `event.pk` never projected (item 3)
+
+Read `wal-source.ts:502-508`: `pk` is built from `pkSource` (`fresh ?? old`)
+and `names.primaryKey` *before* `computeBuckets`/`project()` run, and is
+never passed as an argument to `project()` anywhere in the file. RCP-8
+(`event.pk` complete when PK excluded from `columns`) and RCP-9 (PK listed
+→ appears in both `pk` and `new`/`old`) both pass in the baseline 40/40 run.
+Confirmed structurally and by test.
+
+## `project()` filters, does not compact (item 4)
+
+`projection.ts:49-59` — `for (const key of Object.keys(row)) if (allow.has(key)) out[key] = row[key];`.
+A listed key present with value `null` in `row` is copied through unchanged
+(`row[key]` is `null`, which is still assigned). RWS-7's dedicated test
+(`3.7`/`3.8`) passes in the baseline run. Confirmed.
+
+## Bucket ordering (item 5)
+
+`wal-source.ts:516-519`: `computeBuckets(names.table, primary, secondary)`
+runs on `primary`/`secondary` derived from the raw `fresh`/`old` objects,
+*before* the `project()` calls at lines 530-531. RCP-12/RWS-3's test
+(`buckets computed from the FULL raw row are unaffected by a projected-away
+@@allow field`) passes in the baseline run. Confirmed.
+
+## Executable test reachability — RCP-13 (item 6)
+
+- `strictEqual(ran, 40)` in `wal-source.mjs:1022`, `strictEqual(ran, 6)` in
+  `dispatch.mjs:283`, `strictEqual(ran, 4)` in
+  `realtime-projection.mjs:196` — all three confirmed present and matching
+  apply-progress's claimed exact counts.
+- `scripts/check-realtime-projection-db-gate.mjs` exists, asserts none of
+  the three guarded files reference `INDIGODB_TEST_DATABASE_URL`, and is
+  wired into root `package.json`'s `test` script
+  (`turbo test && node scripts/check-pack-contents.mjs && node
+  scripts/check-realtime-projection-db-gate.mjs`).
+- **Guard-trips test**: appended `// INDIGODB_TEST_DATABASE_URL` to
+  `wal-source.mjs`, ran the guard script directly → **FAILED** with the
+  expected message (`FAIL: packages/realtime/test/wal-source.mjs
+  references INDIGODB_TEST_DATABASE_URL...`, exit 1). Reverted; `diff`
+  against a pre-edit copy showed zero bytes of difference. Re-ran the
+  guard → **PASSED**, exit 0. The guard genuinely fires.
+
+## PgNotifySource narrows identically (`source.ts`)
+
+`source.ts:149-154`, same `project()`/`projectionSet` import, same call
+shape as `WalSource`, gated on `names.projection` built the same way in its
+own `TableNames` construction. DX-4's test (`wal-source.mjs:940-...`)
+exercises `PgNotifySource` directly across narrow/empty/bare `columns` —
+part of the 40/40 baseline pass. This closes the "guarantee conditional on
+which source is configured" risk the review criteria named — confirmed,
+not merely asserted in a doc comment.
+
+## `columns: []` mechanics
+
+- `flushCommit`: `if (row.new) event.new = row.new;` — `row.new` after
+  projection to an empty `Set` is `{}`, which is truthy in JS, so the guard
+  passes and `event.new = {}` is dispatched (not omitted).
+- `buildLogInsert`: `row.new ? JSON.stringify(row.new) : null` — same
+  truthiness; `JSON.stringify({})` = `"{}"`, stored as `'{}'::jsonb`, never
+  `NULL`. Both mechanics read directly from source, matching apply-progress's
+  claim exactly; RCP-7 mechanics test also confirmed via the mutation run.
+
+## RLE-2 — UNPROVEN (per orchestrator's established finding, not re-litigated)
+
+Real-Postgres exercise of the replay-page leg could not be completed in
+this session (pre-existing `log.mjs` hang under `wal_level=logical`,
+confirmed independent of PR 2 by reproducing on `main`). Per the
+established finding, this scenario is recorded as **UNPROVEN**, not
+covered and not waived.
+
+Assessed the structural argument that is offered in place of the DB-gated
+proof. Read `handleLogRequest` (`engine.ts:285-374`): the query selects
+`pk, "new", "old"` directly from `_indigo_realtime_log` with no filtering
+predicate on column content, and the mapping at `:349-358` is a straight
+field copy — `new: row.new ?? undefined, old: row.old ?? undefined` — no
+transformation, no re-widening, no code path that could reintroduce a
+projected-out column. Combined with the independently-confirmed facts that
+(a) `buildLogInsert` stores the already-`project()`-narrowed object (item
+"columns: []" above and RCP-2/RCP-11's passing tests), and (b) there is
+exactly one write site to `_indigo_realtime_log` (`flushCommit`, the only
+caller of `buildLogInsert` in the codebase), the structural chain holds:
+narrow row written → straight read → straight map → response. **The
+design's structural argument for RLE-2 is confirmed true by code
+inspection**, not merely asserted. This downgrades RLE-2 from
+"CRITICAL: untested with no fallback" to "UNPROVEN by direct test, but
+structurally guaranteed and independently confirmed" — still flagged
+below, not silently accepted as PASS.
+
+## design.md documentation off-by-one (per orchestrator's flagged item)
+
+`design.md:141` (RCP-2 row) cites `params[4]` for the INSERT `new` value.
+The actual `buildLogInsert` param layout, confirmed against the SQL:
+`[lsn, txid, table, op, pk, new, old, ts, buckets]` — 0-indexed JS array,
+so `new` is `params[5]`, `old` is `params[6]`, `pk` is `params[4]`. All of
+the actual test code (`wal-source.mjs:646,726,749,781,849,877`) uses
+`params[5]` for `new`, matching the real layout, and design's own RCP-11
+row (line 150) *correctly* says `params[5]`/`params[6]` — the RCP-2 row
+alone has the stale index. **Apply is correct; `design.md`'s RCP-2 row
+needs a one-character fix (`4` → `5`).** No test or production code is
+affected — this is a documentation-only defect.
+
+## No scope creep
+
+`git diff 907f3d2 HEAD --stat` (13 files, 784/-51) touches only:
+`packages/realtime/src/{projection,wal-source,source,protocol,index}.ts`,
+`packages/realtime/test/{wal-source,dispatch}.mjs`,
+`packages/client/test/realtime-projection.mjs`,
+`packages/client/package.json`, `scripts/check-realtime-projection-db-gate.mjs`,
+root `package.json`, `openspec/changes/.../{tasks,proposal}.md`. Nothing
+under `crates/`; no migrator/DDL file touched; no backpressure-related
+change; `packages/client/src/live.ts`, `realtime.ts`,
+`studio/browser/hooks/useLiveTable.ts` all untouched (confirmed via the
+same `--stat`, none listed). Confirmed clean.
+
+## Review workload guard — 784 lines vs the 400-line default budget
+
+Diff is 784 insertions/51 deletions — above the 400-line single-PR
+guideline, under the session's stated 800-line budget. `+322` of the
+delta is `packages/realtime/test/wal-source.mjs` (23 new cases); actual
+production code stayed small (`projection.ts` 59 lines new;
+`wal-source.ts`/`source.ts`/`protocol.ts` deltas 21/18/10 lines). Judgment:
+**the split (PR 1 compiler / PR 2 enforcement) was correct** — the two
+halves have genuinely independent rollback boundaries (Rust+WASM vs.
+TypeScript runtime) and PR 2's overage is concentrated in test volume
+proving a security-relevant guarantee (three-state fail-open, single
+call-site, PK independence, bucket ordering) rather than production
+surface area. A further split of PR 2 itself (e.g. `wal-source.ts` alone
+vs. `source.ts`+client tests) was considered against the task list's own
+Suggested Work Units table, which defines PR 2 as one atomic deliverable
+("Write-time projection enforced in `WalSource` + `PgNotifySource`,
+non-DB-gated coverage") — splitting further would have separated
+`PgNotifySource`'s narrowing from `WalSource`'s in a way that breaks the
+"guarantee not conditional on source" argument reviewers need to see
+together. Not a blocking finding; recorded as SUGGESTION only.
+
+## Commit hygiene
+
+`1c03ae0`, author `chechooxd <sergiogalaz60@gmail.com>`, conventional
+(`feat(realtime): enforce @@realtime(columns:) write-time column
+projection`). `git show -s --format='%B'` grepped for
+`co-authored|claude|anthropic|generated with|🤖` → clean.
+
+## Verification Gate
+
+| Command | Result |
+|---|---|
+| `pnpm clean` | exit 0 |
+| `pnpm build --force` | exit 0 — 10/10 tasks, force-executed |
+| `pnpm lint` | exit 0 — 19/19 tasks (cache hit, valid — no source changed since last build) |
+| `pnpm test` | exit 0 — all packages green, `check-realtime-projection-db-gate.mjs` passed, no `INDIGODB_TEST_DATABASE_URL` set |
+| `cd crates && cargo test --locked` | exit 0 — 45 unit + 1 parser_panic + doc-tests, unaffected (no `crates/` changes in PR 2) |
+
+`INDIGODB_TEST_DATABASE_URL` confirmed unset throughout — DB-gated suites
+skipped as intended, per this session's instruction not to set it.
+
+## Spec Compliance Matrix (28 spec scenarios across 4 domains + 5 design-added rows)
+
+### `realtime-column-projection` (13/13)
+
+| ID | Scenario | Status |
+|---|---|---|
+| RCP-1 | Bare `@@realtime` unaffected | PASS (PR 1) |
+| RCP-2 | Listed columns narrow the payload | PASS — `wal-source.mjs` `params[5]` assertion |
+| RCP-3 | `columns` on non-`@@realtime` rejected | PASS (PR 1) |
+| RCP-4 | Newly added field excluded until opted in | PASS — IR (PR 1) + runtime (`wal-source.mjs`) |
+| RCP-5 | Unknown column name rejected | PASS (PR 1) |
+| RCP-6 | Duplicate entry rejected | PASS (PR 1) |
+| RCP-7 | Empty list → identity-only, `{}` not `NULL`/omitted | PASS — mutation-tested |
+| RCP-8 | `event.pk` complete when PK absent from `columns` | PASS |
+| RCP-9 | Listed PK appears in `new`/`old` in addition to `pk` | PASS |
+| RCP-10 | Excluded column absent end-to-end | PASS except the replay leg — see RLE-2 |
+| RCP-11 | `old` projected identically to `new` | PASS |
+| RCP-12 | `@@allow` field excluded from `columns` still authorizes | PASS |
+| RCP-13 | Suite passes in a default checkout | PASS — reachability + guard-trip both confirmed |
+
+### `realtime-wal-source` (7/7)
+
+| ID | Scenario | Status |
+|---|---|---|
+| RWS-1 | Projected table narrows before log INSERT | PASS |
+| RWS-2 | Bare `@@realtime` table not narrowed | PASS — confirmed unmodified via diff (no removed `await check` lines near existing cases) |
+| RWS-3 | Bucket computation precedes projection | PASS |
+| RWS-4 | Log row and dispatched event share the narrowed payload | PASS |
+| RWS-5 | Insert parity | PASS — unmodified |
+| RWS-6 | No `partial: true` truncation | PASS |
+| RWS-7 | Projected `new` narrowed, field set unchanged (nulls preserved) | PASS |
+
+### `realtime-shape-log` (3/3)
+
+| ID | Scenario | Status |
+|---|---|---|
+| RSL-1 | Log row never carries projected-out column | PASS |
+| RSL-2 | Widening allowlist does not recover prior history | PASS |
+| RSL-3 | Non-projected table's log rows unchanged | PASS — unmodified |
+
+### `realtime-live-endpoint` (4/5 proven, 1 UNPROVEN)
+
+| ID | Scenario | Status |
+|---|---|---|
+| RLE-1 | Live SSE frame matches projected log row | PASS |
+| RLE-2 | Replay page as narrow as live frame | **UNPROVEN** — DB-gated test could not run (pre-existing environment hang, confirmed independent of PR 2); structural guarantee confirmed true by direct code inspection of `handleLogRequest` |
+| RLE-3 | Column projection composes with `@@allow` row scoping | PASS |
+| RLE-4 | Subscriber receives fewer keys after adopting `columns` | PASS |
+| RLE-5 | Non-projected model's subscriber unaffected | PASS |
+
+### Design-added rows (5/5)
+
+| ID | What | Status |
+|---|---|---|
+| DX-1 | Non-scalar/relation field → error | PASS (PR 1) |
+| DX-2 | `@map`ped listed field → physical name | PASS (PR 1) |
+| DX-3 | `@@realtime(columns:...)` without `@id` still errors | PASS (PR 1) |
+| DX-4 | `PgNotifySource.translate` narrows identically | PASS — confirmed, closes the "conditional on source" risk |
+| DX-5 | `partial` refetch re-widens on v1 source (documented, not closed) | PASS — pinned as accepted-risk executable assertion |
+
+## Task Completion
+
+35/37 Phase 2-6 tasks `[x]`, verified against actual code state per task.
+Task 5.3 (manual DB-gated merge gate) correctly remains `[ ]` — not
+automatable in this environment, honestly reported rather than silently
+skipped or falsely checked. This is the correct state, not a gap: the
+task's own text calls it a "required manual merge gate (not automated, not
+counted as coverage)".
+
+## Issues
+
+**WARNING** (1): `design.md:141` (RCP-2 row) cites `params[4]` for the
+`new` value in `buildLogInsert`'s param array; actual layout (confirmed
+against SQL and all test assertions) places `new` at `params[5]`. Design's
+own RCP-11 row already uses the correct index. One-line documentation fix,
+no code or test impact.
+
+**SUGGESTION** (2):
+1. The 784-line diff exceeds the 400-line single-PR guideline (under the
+   800-line session budget). Judged the PR 1/PR 2 split as correct given
+   independent rollback boundaries and test-dominated overage; recorded for
+   visibility, not blocking.
+2. `print.ts` still silently drops `realtimeColumns` (inherited from PR 1,
+   already flagged there as WARNING, not re-raised as a new PR 2 defect —
+   PR 2 does not touch `print.ts`).
+
+## RLE-2 — Explicit Merge Gate (carried forward, not closed by this verify)
+
+RLE-2 remains the one scenario without direct DB-gated proof in this
+environment. The structural guarantee is now independently confirmed true
+by source inspection (not just design's prose), which materially reduces
+risk, but does **not** substitute for running
+`INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test`
+against a real Postgres before merging PR 2, exactly as tasks.md 5.3 and
+proposal.md's "Outstanding before merge" note require. This verify does
+not waive that gate.
+
+## Test/Build Evidence
+
+- `pnpm clean && pnpm build --force`: exit 0
+- `pnpm lint`: exit 0
+- `pnpm test`: exit 0 (`INDIGODB_TEST_DATABASE_URL` unset)
+- `cd crates && cargo test --locked`: exit 0
+- Fail-open mutation: 40/40 → 37/40 (3 named failures, exact match to
+  apply-progress's claim) → restored byte-identical → 40/40
+- DB-gate guard trip: PASSED → FAILED (expected message) → reverted
+  byte-identical → PASSED
