@@ -197,3 +197,33 @@ None — 26/26 complete.
 ## Status
 
 26/26 tasks complete. Ready for verify.
+
+---
+
+## Orchestrator independent reproduction of the task 3.3 mutation proof
+
+The apply phase's mutation transcript was not taken on trust. Both mutations were re-run
+independently by the orchestrator on the committed tree (`7f9e0b7`), rebuilding
+`@indigodb/realtime` between each so the suite ran against the mutated `dist/`, then reverting.
+
+**Mutation A — probe comparison `>` → `>=`** (suite exit 1):
+
+```
+ok   - RSB-4:  buffered at cap - 1 is NOT evicted (negative control)
+FAIL - RSB-4b: buffered at EXACTLY cap is NOT evicted — the >/>= distinguishing case
+```
+
+This is the empirical confirmation of the apply phase's finding, and it is worth stating
+plainly: **RSB-4 alone does not detect this mutation.** At `cap - 1`, `>` and `>=` evaluate
+identically, so the originally specified fixture would have passed a mutated build and reported
+the negative control as proven. Only RSB-4b, sitting on the exact boundary, fails. The
+design's and tasks' `writableLength: 999` fixture was too weak, and the mutation pass is what
+exposed it — which is the entire reason the mutation task is mandatory rather than advisory.
+
+**Mutation B — probe source `res.writableLength` → `res.write()`'s boolean return** (suite exit 1):
+seven cases fail (RSB-1, RSB-3/5, RSB-7, RSB-10, RSB-11, RSB-2, RSB-4, RSB-4b). RSB-6 correctly
+still passes: its subscriber refuses every write, so `write()` returns `false` and eviction still
+occurs — the one case whose outcome is genuinely invariant under this mutation.
+
+**After revert**: `node packages/realtime/test/dispatch.mjs` → `17 check(s) passed. PASSED`,
+`git status packages/` clean.
