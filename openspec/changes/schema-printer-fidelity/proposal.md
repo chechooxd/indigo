@@ -232,18 +232,29 @@ None. No new packages. All IR fields consumed already exist and are populated by
 
 ## Success Criteria
 
-- [ ] `normalizeForRoundTrip` contains **exactly one** exclusion (index re-bucketing), or every
-      additional exclusion carries an inline reason and is named in the verify report.
-- [ ] Deleting `foreignKeys: []`/`relations: []`, `tableGroups: []`, `allow`, `realtimeColumns`,
+- [x] `normalizeForRoundTrip` contains **exactly one** exclusion (index re-bucketing), or every
+      additional exclusion carries an inline reason and is named in the verify report. Confirmed:
+      `packages/core/test/print.mjs`'s `normalizeForRoundTrip` (PR 2, task 2.22/2.24) holds only the
+      `indexes` re-bucketing line, with its inline comment naming the field and reason. No other
+      exclusion remains.
+- [x] Deleting `foreignKeys: []`/`relations: []`, `tableGroups: []`, `allow`, `realtimeColumns`,
       `color`, and `group` from the normalizer leaves the round-trip suite green across the corpus.
-- [ ] A `@@realtime(columns: [])` schema round-trips to `realtimeColumns: []`, never `undefined`.
-- [ ] An ambiguous FK cross-reference throws `IndigoPrintError`; no test passes with a
-      "first match wins" implementation.
-- [ ] Introspected-shape IR (`relations: []` with `foreignKeys`) still prints `// @fk(…)`, and
-      `pull-roundtrip.mjs` passes unmodified.
-- [ ] The module docstring's failure promise is true as written, and the residual `db pull` gap is
-      stated in the docstring with its follow-up change named.
-- [ ] The archive report states that this change does **not** fix `db pull`'s FK loss.
+      Confirmed: PR 1 (task 1.17) deleted `tableGroups`/`color`/`group`/`allow`/`realtimeColumns`;
+      PR 2 (task 2.22) deleted `foreignKeys`/`relations`. 18/21 fixtures round-trip in scope (3
+      permanently excluded, each with a pinned throw — task 2.28), all green.
+- [x] A `@@realtime(columns: [])` schema round-trips to `realtimeColumns: []`, never `undefined`.
+      Confirmed: PR 1 tasks 1.2-1.4, test "`@@realtime(columns: []) prints the empty list...`".
+- [x] An ambiguous FK cross-reference throws `IndigoPrintError`; no test passes with a
+      "first match wins" implementation. Confirmed: PR 2 tasks 2.11-2.15, with mutation proof
+      (task 2.13) demonstrating a pick-first implementation fails the test.
+- [x] Introspected-shape IR (`relations: []` with `foreignKeys`) still prints `// @fk(…)`, and
+      `pull-roundtrip.mjs` passes unmodified. Confirmed: task 2.27 — file is byte-unmodified
+      (`git diff --stat` empty) and green in both the standalone run and the root `pnpm test`.
+- [x] The module docstring's failure promise is true as written, and the residual `db pull` gap is
+      stated in the docstring with its follow-up change named. Confirmed: task 2.26 — `print.ts`'s
+      module docstring narrows the "never guesses" claim and names `db-pull-relation-synthesis`.
+- [x] The archive report states that this change does **not** fix `db pull`'s FK loss. Recorded in
+      `apply-progress.md` (task 3.5); `introspect.ts:350` still hardcodes `relations: []`.
 
 ## Proposal question round
 

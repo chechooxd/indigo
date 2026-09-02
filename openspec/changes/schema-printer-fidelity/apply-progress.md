@@ -141,3 +141,209 @@ current WASM artifact for all 21 fixtures including the two new/reclassified one
 
 23/23 Phase 1 tasks complete. Ready for verify (Phase 1 slice) or for `sdd-apply` to continue with
 Phase 2 on its own stacked branch.
+
+---
+
+# Phase 2 + Phase 3 — PR 2: Relations, and cross-package verification
+
+**Branch**: `feat/schema-printer-fidelity-2`, stacked on `feat/schema-printer-fidelity-1` (tip
+`ab58f75`). PR 1's 23/23 tasks (above) are unchanged and confirmed still green before this batch
+started (safety net: `node packages/core/test/print.mjs` → 55/55 checks passing, baseline).
+
+## Task 2.1 — Design-correction guard (read, not a test)
+
+Confirmed before writing any code: the FK-holder discriminator is
+`rel.inverse !== true && rel.fkColumns.length > 0`, implemented as `isRelationHolder(rel)` in
+`print.ts`. Verified live against `12-relation-naming.indigo` (task 2.3's manual swap-and-revert,
+recorded below) that `fkColumns.length > 0` alone is the wrong discriminator and throws.
+
+## Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `packages/core/src/print.ts` | Modified | Added `arrayEq`, `isRelationHolder`, `claimForeignKeys`, `printRelationField`; rewrote `printFieldLines` to take `schema`/`fkFor` and append relation rows after scalar columns in the same aligned block; wired `printTable` to call `claimForeignKeys` and build the FK comment list from `orphans` instead of `table.foreignKeys`; narrowed the module docstring (task 2.26) |
+| `packages/core/test/print.mjs` | Modified | Added 9 new `check(...)` blocks under a new "Relations" section (T6-T11 coverage); rewrote `normalizeForRoundTrip` to its final one-exclusion form (deleted `foreignKeys: []`/`relations: []`); updated `05-relations.indigo`'s exclusion-reason comment (task 2.21) to name `printRelationField` as the new throw site |
+| `openspec/changes/schema-printer-fidelity/proposal.md` | Modified | Checked all 7 Success Criteria boxes with evidence pointers (task 3.4) |
+| `openspec/changes/schema-printer-fidelity/tasks.md` | Modified | Marked all Phase 2 (29) and Phase 3 (6) tasks `[x]` |
+
+`packages/migrator/test/pull-roundtrip.mjs` and `packages/cli/src/util.ts` — **confirmed
+byte-unmodified** (`git diff --stat` empty for both, task 3.3).
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.2/2.3/2.4 | `packages/core/test/print.mjs` | Unit + fixture (08, 12) | ✅ 55/55 (baseline) | ✅ Written, confirmed failing (both fixture-round-trip text assertions threw/failed against pre-`claimForeignKeys` tree) | ✅ Passed after `claimForeignKeys`/`printRelationField`/`printFieldLines` wiring | ✅ Two fixtures (self-relation holder, name-paired inverse vs. holder) | ➖ None needed |
+| 2.5/2.6 | `packages/core/test/print.mjs` | Unit | N/A (GREEN-TODAY guard, per design) | N/A — confirmed passes against current tree before AND after `claimForeignKeys` lands (all-orphan path unconditionally true when `relations` is empty) | ✅ Passed both before and after | ➖ Single (guard, not new coverage) | ➖ None needed |
+| 2.7/2.8 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing (`@relation(` half failed — nothing emitted yet) | ✅ Passed once claiming wired into `printTable` | ➖ Single | ➖ None needed |
+| 2.9/2.10 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing | ✅ Passed on first run (no fix needed — non-holder branch already emits `attrs = []`) | ➖ Single | ➖ None needed |
+| 2.11/2.12/2.13 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing (no throw at all pre-implementation) | ✅ Passed after ambiguity throw added, message pinned to `"matches"` | ✅ Mutation proof (below) is the triangulating case | ➖ None needed |
+| 2.14/2.15 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing | ✅ Passed after `claimedBy` map + "claimed by both" throw added | ➖ Single (distinct ambiguity direction from 2.11) | ➖ None needed |
+| 2.16/2.17/2.18 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing | ✅ Passed after `fk.name !== undefined` check added, message pinned to `"constraint name"` | ✅ Mutation proof (below) is the triangulating case | ➖ None needed |
+| 2.19/2.20 | `packages/core/test/print.mjs` | Unit | ✅ (above) | ✅ Written, confirmed failing (initial draft had a false-positive substring collision, corrected — see Issues below) | ✅ Passed on first correct run (no production fix needed) | ➖ Single (ordering — one scenario) | ➖ None needed |
+| 2.21 | `packages/core/test/print.mjs` (comment only) | N/A | N/A | N/A — comment-only, no behavior change | N/A | N/A | ➖ None needed |
+| 2.22/2.23 | `packages/core/test/print.mjs` | Fixture round trip (21 fixtures total, 3 excluded) | ✅ (above) | N/A — refactor of comparison logic (deletion) | ✅ All 18 in-scope fixtures pass, including 07/08/12/13 newly unblinded | ✅ Exercises every relation-bearing fixture in the corpus | ✅ Docstring rewritten to name the single final exclusion |
+| 2.24 | `packages/core/test/print.mjs` | Structural diff | N/A | N/A | ✅ Confirmed `normalizeForRoundTrip`'s final body matches the design's quoted target exactly — one `indexes` re-bucketing line, its inline comment, nothing else | N/A | N/A |
+| 2.25 | `packages/core/test/print.mjs` | Fixture round trip | ✅ (above) | N/A — mutation-testing task | N/A | N/A | ✅ Mutation → RED confirmed → reverted (see Mutation Proofs) |
+| 2.26 | `packages/core/src/print.ts` (docstring) | N/A | N/A | N/A — prose change | N/A | N/A | ✅ Narrowed truthfully, `db-pull-relation-synthesis` named |
+| 2.27 | `packages/migrator/test/pull-roundtrip.mjs` | Integration (PGlite) | N/A | N/A — regression guard, unmodified file | ✅ Ran standalone (`node packages/migrator/test/pull-roundtrip.mjs`) → all green, both assertions (`!includes("@relation")`, `includes("@fk(")`) pass unchanged | N/A | N/A |
+| 2.28 | `packages/core/test/print.mjs` (console output) | N/A | N/A | N/A — reachability guard | ✅ Confirmed: `console.log` reports `18/21 fixtures in scope`; `UNPRINTABLE_FIXTURES` has exactly 3 entries (05, 19, 21), each with its own per-fixture reason comment | N/A | N/A |
+| 2.29 | `packages/core/test/print.mjs` | Full suite | ✅ 55/55 (baseline) | N/A | ✅ 63/63 checks green (55 baseline + 8 new relation checks, one net-new after the T11 test fix) | N/A | N/A |
+
+### Test Summary
+- **Total tests written this batch**: 9 new `check(...)` blocks under "Relations" (2.2/2.3 combined into one fixture-round-trip check each for 08/12, plus T8/T7/T9-inverse/T9-ambiguous/T9-claimed-by-both/T10/T11 — 9 total new `check` calls)
+- **Total tests passing**: 63/63 in `packages/core/test/print.mjs` (up from 55/55 PR-1 baseline)
+- **Layers used**: Unit (7 new), fixture round trip (2 new relation-bearing fixtures directly asserted: 08, 12; plus 07/13 newly unblinded as a side effect of 2.22's deletion)
+- **Mutation proofs**: 4 total this batch — task 2.3's discriminator regression guard, task 2.13's ambiguity-throw closure, task 2.18's FK-name-throw closure, task 2.25's final-exclusion closure (all detailed below)
+- **Pure functions created**: 3 (`isRelationHolder`, `claimForeignKeys`, `printRelationField`) — all side-effect-free (`claimForeignKeys` builds local `Map`s, no external state)
+
+## Mutation Proofs
+
+### Task 2.3 — discriminator regression guard: `fkColumns.length > 0` alone (dropping `inverse !== true`)
+
+- **Mutation**: replaced `return rel.inverse !== true && rel.fkColumns.length > 0;` with
+  `return rel.fkColumns.length > 0;` in `isRelationHolder`.
+- **Command**: `pnpm build --filter=@indigodb/core && node packages/core/test/print.mjs`
+- **Observed result**: RED — `FAIL relation: holder vs. name-paired-inverse discriminator
+  (12-relation-naming.indigo)`. The failure was not a soft assertion mismatch but an uncaught
+  `IndigoPrintError`: `Table "User": column with physical name "authorId" has no matching field —
+  cannot print`, thrown from inside `printRelationField`'s `fieldNameFor` call — exactly the
+  failure mode the design's correction #1 predicts (`User.authoredPosts`'s back-filled `fkColumns`
+  wrongly qualifying it as a holder, then `fieldNameFor(User, "authorId")` throwing because
+  `authorId` lives on `Post`).
+- **Reverted**: yes, confirmed GREEN again after revert (63/63).
+
+### Task 2.13 — ambiguity-throw closure: pick-first instead of throwing on `matches.length > 1`
+
+- **Mutation**: commented out the `if (matches.length > 1) throw ...` block in `claimForeignKeys`.
+- **Command**: `pnpm build --filter=@indigodb/core && node packages/core/test/print.mjs`
+- **Observed result**: RED — `FAIL relation: ambiguous claim (one relation matches 2 FKs) throws,
+  message pinned` — `Missing expected exception: expected throw naming ambiguous 'matches'`. No
+  throw occurred; a pick-first implementation would have silently claimed `matches[0]`.
+- **Reverted**: yes, confirmed GREEN again after revert.
+
+### Task 2.18 — FK-name-throw closure: removed the `fk.name !== undefined` check
+
+- **Mutation**: commented out the `if (fk.name !== undefined) throw ...` block in
+  `claimForeignKeys`.
+- **Command**: `pnpm build --filter=@indigodb/core && node packages/core/test/print.mjs`
+- **Observed result**: RED — `FAIL relation: claimed FK carrying name throws, message pinned to
+  constraint name` — `Missing expected exception: expected throw naming 'constraint name'`. The
+  named FK would have been silently claimed and printed with its `name` invisibly dropped.
+- **Reverted**: yes, confirmed GREEN again after revert.
+
+### Task 2.25 — final normalizer closure: re-adding a deleted exclusion (`relations: []`)
+
+- **Mutation**: added `relations: []` back into `normalizeForRoundTrip`'s per-table spread
+  (after the fully-restored, one-exclusion state from task 2.22).
+- **Command**: `node packages/core/test/print.mjs` (test-file-only change, no rebuild needed)
+- **Observed result**: RED — immediate failure on every relation-bearing fixture:
+  `01-cli-template`, `02-studio-initial`, `03-quirks-values`, `07-referential-actions`,
+  `08-self-relation`, `12-relation-naming`, `13-ambiguous-relations` all failed
+  `deepStrictEqual`, each diffing on a populated `relations` array on the actual (re-resolved)
+  side against the zeroed expected side — exactly the "printer prints it, normalizer still hides
+  it" failure mode this task exists to prove is detectable, now demonstrated across 7 fixtures
+  simultaneously (a stronger proof than PR 1's task 1.20, which affected 1 fixture).
+- **Reverted**: yes, confirmed GREEN again after revert (63/63).
+
+## Deviations from Design
+
+None — implementation matches design. `claimForeignKeys`'s exact interface signature (`{ fkFor,
+orphans }`) and `printRelationField`'s exact algorithm (holder/non-holder branches, argument
+order: relationName positional first, then `fields:`, then `references:`, then `onDelete:`/
+`onUpdate:`) match the design's Interfaces section verbatim.
+
+## Issues Found
+
+- First draft of the T11 ordering test ("relation fields print after all scalars") used a
+  hardcoded padded string (`"author     User"`) copied from the design's two-relation
+  `12-relation-naming` walkthrough, but the test's own fixture has only one relation field, so the
+  computed column alignment padding differs (fewer characters to pad against). This produced a
+  false RED unrelated to the actual behavior under test. Corrected to search for stable,
+  padding-independent substrings (`"authorId Int"` for the last scalar, `"@relation(fields:
+  [authorId]"` for the relation clause) — this isolates the ordering assertion (task 2.19's actual
+  intent) from incidental column-width arithmetic. Caught before GREEN was declared; no incorrect
+  task was marked complete on the flawed assertion.
+- **Task 2.28's own text has an off-by-one arithmetic error** (pre-existing in `tasks.md`, not
+  introduced by this batch): it states "20/20 round-trippable fixtures minus the three permanent
+  exclusions ... = 17/20 in scope", but the fixtures directory genuinely contains **21** `.indigo`
+  files (confirmed via `ls fixtures/*.indigo | wc -l`), not 20. With 3 exclusions the correct math
+  is 21 − 3 = **18/21**, which is exactly what `console.log` reports and what PR 1's own
+  `apply-progress.md` already recorded ("18/21 fixtures round-trip in scope") — PR 1's task 1.22
+  text has the identical typo ("18/20 after 1.21"). This is reported per the task instructions
+  ("if a task is wrong or unimplementable as written, say so with evidence and stop — do not
+  silently redesign") rather than silently corrected: the code and its dynamically-computed
+  console output are correct (21 total, 3 excluded, 18 in scope); only the task-file prose in both
+  1.22 and 2.28 undercounts the corpus by one file. No code change was made in response — the
+  guard's actual behavior (task's real intent) is satisfied.
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `node packages/core/test/print.mjs` → `print: all green` (63/63 checks; 18/21 fixtures round-trip in scope, 3 exclusions each with a pinned throw) |
+| Runtime harness command/scenario and exact result | N/A — `printSchema` is a pure `(ResolvedSchema) -> string` function per design's Threat Matrix. Cross-package integration substitute: `node packages/migrator/test/pull-roundtrip.mjs` → all green, unmodified (task 2.27/3.3), and `node packages/compiler/test/parity.mjs` → all green, no snapshot drift (task 3.2) |
+| Rollback boundary | Revert `packages/core/src/print.ts` to drop `claimForeignKeys`/`printRelationField`/`isRelationHolder`/`arrayEq` and the `printFieldLines`/`printTable` wiring (relation printing reverts to the `// @fk(…)` comment for every FK); revert `packages/core/test/print.mjs`'s `normalizeForRoundTrip` to restore the `foreignKeys: []`/`relations: []` exclusions. PR 1's `@@allow`/`@@realtime(columns:)`/`TableGroup` output and normalizer deletions are untouched by this revert |
+
+## Root Gate (task 3.1, full repo)
+
+```
+pnpm clean                          → 10/10 tasks successful
+pnpm build --force                  → 10/10 tasks successful (Time: 23.611s)
+pnpm lint                           → 19/19 tasks successful (tsc --noEmit / tsc -b --noEmit)
+pnpm test                           → 18/18 tasks successful, exit code 0 (Time: 8m46.605s)
+node packages/compiler/test/parity.mjs        → all green (no snapshot drift; task 3.2)
+node packages/migrator/test/pull-roundtrip.mjs → all green, unmodified (task 2.27/3.3)
+```
+
+`fixtures/snapshots/` regeneration: **not needed** — `parity.mjs` passed unmodified against the
+current WASM artifact for all 21 fixtures (task 3.2).
+
+`packages/cli/src/util.ts` and `packages/migrator/test/pull-roundtrip.mjs`: confirmed
+byte-unmodified via `git diff --stat` (task 3.3, empty output for both files).
+
+## Phase 3 — Cross-package verification
+
+- [x] 3.1 Root gate run as above — all green.
+- [x] 3.2 `node packages/compiler/test/parity.mjs` — all green, no golden/snapshot regeneration
+      needed, confirmed against the actual final diff (not merely assumed from the design).
+- [x] 3.3 `packages/cli/src/util.ts` and `packages/migrator/test/pull-roundtrip.mjs` confirmed
+      byte-unmodified (`git diff --stat` empty for both).
+- [x] 3.4 `proposal.md` Success Criteria — all 7 boxes checked with evidence pointers (see diff
+      above).
+- [x] 3.5 **Explicitly recorded**: this change does **not** fix `db pull`'s FK loss.
+      `packages/cli/src/introspect.ts:350` still hardcodes `relations: []` for every introspected
+      table — confirmed unchanged in this diff (`introspect.ts` was not touched by either PR).
+      `packages/migrator/test/pull-roundtrip.mjs` (task 2.27) continues to pin the `// @fk(…)`
+      fallback as the correct, deliberate representation for that path — not a bug, a documented
+      gap. Follow-up: **`db-pull-relation-synthesis`** (relation-field-name synthesis for
+      introspected schemas — deferred, not started in this change).
+- [x] 3.6 **Explicitly out-of-scope** (matching the proposal's Non-Goals, not silently dropped):
+      - Relation-field-name synthesis for introspected (`db pull`) schemas — deferred to
+        `db-pull-relation-synthesis`.
+      - Re-collapsing expanded `@@allow` `write`/`all` aliases back to their authored sugar — the
+        printer always emits the expanded 3/4-line form; a "preserve authored alias" IR field
+        would be a separate change (proposal's decision #3).
+      - Any change to `fixtures/snapshots/` or the WASM artifact — none was needed or made; `crates/
+        indigo-compiler` (Rust) was not touched by either PR.
+
+## Workload / PR Boundary
+
+- Mode: stacked-to-main, PR 2 of 2 (final slice)
+- Current work unit: Unit 2 (`claimForeignKeys`, `printRelationField`, ambiguity + FK-`name`
+  throws, `05-relations.indigo` comment update, `normalizeForRoundTrip` final exclusion,
+  docstring narrowing) + Phase 3 (cross-package verification, proposal sign-off)
+- Boundary: starts from PR 1's baseline (55/55 tests green, 18/21 fixtures in scope, PR 1's five
+  normalizer exclusions fully deleted) and ends with 63/63 tests green, still 18/21 fixtures in
+  scope (same 3 permanent exclusions — no new ones added), PR 2's final two normalizer exclusions
+  deleted (down to the single permanent `indexes` re-bucketing exclusion). All 58/58 tasks across
+  both phases are now `[x]`.
+- Estimated review budget impact: 408 changed lines total this batch (153 in `print.ts` — net
+  additions after removing the old un-schema'd `printFieldLines` signature and old `fkLines`
+  wiring, 255 in `print.mjs`), somewhat above the design's ~305 authored-line estimate for PR 2 but
+  still well inside the 800-line review budget (`review_budget_lines: 800`).
+
+## Status
+
+58/58 tasks complete across both phases (Phase 1: 23/23, Phase 2: 29/29, Phase 3: 6/6). Root gate
+green end-to-end. Ready for `sdd-verify`.

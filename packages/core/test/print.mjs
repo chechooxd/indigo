@@ -514,6 +514,198 @@ check("@@allow: write/all sugar prints expanded, never re-collapsed (18-allow-ru
   strictEqual(out.includes("@@allow(all,"), false, out);
 });
 
+// ─── Relations ───────────────────────────────────────────────────────────
+
+check("relation: self-relation holder prints @relation(fields:, references:), no @fk comment (08-self-relation.indigo)", () => {
+  const source = readFileSync(join(fixturesDir, "08-self-relation.indigo"), "utf8");
+  const resolved = resolve(parse(source));
+  const out = printSchema(resolved);
+  strictEqual(
+    out.includes("parent   Category? @relation(fields: [parentId], references: [id])"),
+    true,
+    out,
+  );
+  const categoryBlock = out.slice(out.indexOf("Table Category {"), out.indexOf("Table Category {") + out.slice(out.indexOf("Table Category {")).indexOf("\n}"));
+  strictEqual(categoryBlock.includes("// @fk("), false, categoryBlock);
+});
+
+check("relation: holder vs. name-paired-inverse discriminator (12-relation-naming.indigo) — regression guard for the fkColumns-alone bug", () => {
+  const source = readFileSync(join(fixturesDir, "12-relation-naming.indigo"), "utf8");
+  const resolved = resolve(parse(source));
+  const out = printSchema(resolved);
+  const userBlock = out.slice(out.indexOf("Table User {"), out.indexOf("Table User {") + out.slice(out.indexOf("Table User {")).indexOf("\n}"));
+  strictEqual(userBlock.includes('authoredPosts Post[]   @relation("PostAuthor")'), true, userBlock);
+  strictEqual(userBlock.includes('reviewedPosts Post[]   @relation("PostReviewer")'), true, userBlock);
+  strictEqual(userBlock.includes("profile       Profile?"), true, userBlock);
+  strictEqual(userBlock.includes("fields:"), false, userBlock);
+  strictEqual(userBlock.includes("references:"), false, userBlock);
+
+  const postBlock = out.slice(out.indexOf("Table Post {"), out.indexOf("Table Post {") + out.slice(out.indexOf("Table Post {")).indexOf("\n}"));
+  strictEqual(
+    postBlock.includes('author     User @relation("PostAuthor", fields: [authorId], references: [id])'),
+    true,
+    postBlock,
+  );
+  strictEqual(
+    postBlock.includes('reviewer   User @relation("PostReviewer", fields: [reviewerId], references: [id])'),
+    true,
+    postBlock,
+  );
+});
+
+check("relation: relation-free FK metadata still prints // @fk(...) (db pull shape, T8 guard)", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [{ columns: ["authorId"], refTable: "User", refColumns: ["id"] }],
+        relations: [],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("// @fk(fields: [authorId], references: [id], model: User)"), true, out);
+  strictEqual(out.includes("@relation("), false, out);
+});
+
+check("relation: a claimed FK emits no // @fk(...) comment (no double representation, T7)", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [{ columns: ["authorId"], refTable: "User", refColumns: ["id"] }],
+        relations: [
+          { name: "author", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+        ],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("@relation("), true, out);
+  strictEqual(out.includes("// @fk("), false, out);
+});
+
+check("relation: unpaired inverse (fkColumns empty, no relationName) prints bare type, no @relation clause", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "User",
+        dbName: "User",
+        columns: [col({ name: "id", isPk: true })],
+        primaryKey: ["id"],
+        relations: [
+          { name: "profile", targetModel: "Profile", type: "one", list: false, optional: true, fkColumns: [], refColumns: [] },
+        ],
+      }),
+      table({ name: "Profile", dbName: "Profile", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("profile Profile?"), true, out);
+  strictEqual(out.includes("@relation("), false, out);
+});
+
+check("relation: ambiguous claim (one relation matches 2 FKs) throws, message pinned", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [
+          { columns: ["authorId"], refTable: "User", refColumns: ["id"] },
+          { columns: ["authorId"], refTable: "User", refColumns: ["id"], name: "dup_fkey" },
+        ],
+        relations: [
+          { name: "author", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+        ],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  throws(() => printSchema(s), (err) => err instanceof IndigoPrintError && err.message.includes("matches"), "expected throw naming ambiguous 'matches'");
+});
+
+check("relation: FK claimed by two relations throws, message pinned to 'claimed by both'", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [{ columns: ["authorId"], refTable: "User", refColumns: ["id"] }],
+        relations: [
+          { name: "author", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+          { name: "author2", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+        ],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  throws(
+    () => printSchema(s),
+    (err) => err instanceof IndigoPrintError && err.message.includes("claimed by both"),
+    "expected throw naming 'claimed by both'",
+  );
+});
+
+check("relation: claimed FK carrying name throws, message pinned to constraint name", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [{ columns: ["authorId"], refTable: "User", refColumns: ["id"], name: "post_author_fkey" }],
+        relations: [
+          { name: "author", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+        ],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  throws(
+    () => printSchema(s),
+    (err) => err instanceof IndigoPrintError && err.message.includes("constraint name"),
+    "expected throw naming 'constraint name'",
+  );
+});
+
+check("relation: relation fields print after all scalar fields (T11 ordering)", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "Post",
+        dbName: "Post",
+        columns: [col({ name: "id", isPk: true }), col({ name: "authorId", dbName: "authorId", type: "Int" })],
+        primaryKey: ["id"],
+        foreignKeys: [{ columns: ["authorId"], refTable: "User", refColumns: ["id"] }],
+        relations: [
+          { name: "author", targetModel: "User", type: "one", list: false, optional: false, fkColumns: ["authorId"], refColumns: ["id"] },
+        ],
+      }),
+      table({ name: "User", dbName: "User", columns: [col({ name: "id", isPk: true })], primaryKey: ["id"] }),
+    ],
+  });
+  const out = printSchema(s);
+  const lastScalarIdx = out.indexOf("authorId Int");
+  const relationIdx = out.indexOf("@relation(fields: [authorId]");
+  strictEqual(lastScalarIdx !== -1, true, out);
+  strictEqual(relationIdx !== -1, true, out);
+  strictEqual(relationIdx > lastScalarIdx, true, out);
+});
+
 // ─── TableGroup ──────────────────────────────────────────────────────────
 
 check("TableGroup blocks print after all model/enum blocks", () => {
@@ -604,12 +796,15 @@ check("IndigoPrintError is a real Error subclass", () => {
  *   unresolved local/target columns (`missingLocal`/`missingTarget`) to
  *   exercise validate.rs's unknown-reference diagnostics. `resolve.rs`
  *   still structurally records this as a `ForeignKey` carrying those
- *   dangling physical column names. The printer's "throw, never guess"
- *   invariant (spec: Loud Failure on Unmappable Constructs) means it
- *   correctly THROWS `IndigoPrintError` trying to map
- *   `missingLocal`/`missingTarget` back to field names that do not exist on
- *   the referenced table (currently inside `printFkComment`; PR 2 moves this
- *   to `printRelationField` once relation claiming lands).
+ *   dangling physical column names, and `ghost` qualifies as a holder
+ *   relation (`fkColumns: ["missingLocal"]`, not inverse), so
+ *   `claimForeignKeys` claims that FK for it. The printer's "throw, never
+ *   guess" invariant (spec: Loud Failure on Unmappable Constructs) means it
+ *   correctly THROWS `IndigoPrintError` trying to map `missingLocal` back to
+ *   a field name that does not exist on `Post` — now inside
+ *   `printRelationField`'s `fieldNameFor(table, ...)` call for `fields:
+ *   [...]`, not `printFkComment` (relation claiming means `ghost`'s FK is no
+ *   longer an orphan comment at all).
  * - `19-rejected-allow.indigo`: `UnknownField`'s `@@allow(read, auth.userId
  *   == this.owner)` resolves to `{kind:"field", name:"owner"}`, but no
  *   column on that table carries the physical `dbName` "owner" — `owner` is
@@ -630,35 +825,21 @@ const UNPRINTABLE_FIXTURES = new Set([
 ]);
 
 /**
- * Normalizes a `ResolvedSchema` for round-trip comparison. Two categories of
- * documented, real divergence remain — verified empirically against this
- * corpus, not assumed:
+ * Round-trip normalization. ONE divergence remains, and it is an ordering
+ * artifact, not a dropped field:
  *
- * 1. Relations/foreign keys (PR 2's job, still excluded here): `.indigo` has
- *    no bare-FK syntax — FKs only exist via `@relation(fields:,
- *    references:)` on a relation field, and this PR deliberately does NOT
- *    yet synthesize `@relation(...)` (raw FKs print as lexer-invisible
- *    comments instead, spec: Raw Foreign Key Output). So re-resolving
- *    printed text always yields empty `foreignKeys`/`relations` for tables
- *    that had them. Dropped on both sides for comparison. PR 2 deletes this
- *    exclusion once `claimForeignKeys`/`printRelationField` land.
- * 2. Index/unique ordering (permanent): the spec's fixed block-attribute
- *    order (`@@map` -> `@@unique` -> `@@index` -> `@@realtime` -> `@@allow`
- *    -> `@@note`) means the printer always emits every `@@unique` before
- *    every `@@index`, regardless of how the original schema interleaved
- *    them (see fixture 16, which interleaves unique/non-unique indexes).
- *    Re-resolving the printed text therefore yields `indexes` re-bucketed
- *    (all `unique: true` first, in original relative order, then all
- *    `unique: false`, in original relative order) rather than in the
- *    original array order. This is the printer's fixed emission order
- *    working as designed, not a bug, so the "expected" side is re-bucketed
- *    identically for comparison.
+ * Index/unique ordering — the spec's fixed block-attribute order emits every
+ * `@@unique` before every `@@index`, so re-resolving printed text yields
+ * `indexes` re-bucketed (all `unique: true` first in original relative
+ * order, then all `unique: false`) rather than interleaved as fixture 16
+ * writes them. That is the printer's designed emission order, not a loss,
+ * so the expected side is re-bucketed identically.
  *
- * Everything else — `tableGroups`, `color`, `group`, `allow`,
- * `realtimeColumns` — is now printed and compared in full as of this PR.
- * Adding an exclusion beyond these two re-opens the exact blind spot this
- * change closes: any new entry MUST name the IR field and why it is
- * unrepresentable, and MUST be called out in the verify report.
+ * Everything else — foreignKeys, relations, tableGroups, color, group,
+ * allow, realtimeColumns — is now printed and compared in full. Adding an
+ * exclusion here re-opens the exact blind spot this change closed: any new
+ * entry MUST name the IR field and why it is unrepresentable, and MUST be
+ * called out in the verify report.
  *
  * NOTE on the design doc's identity-column caveat ("introspect.ts emits
  * `{autoincrement:true}` with no `default`, while resolve.rs emits
@@ -672,14 +853,14 @@ const UNPRINTABLE_FIXTURES = new Set([
 function normalizeForRoundTrip(resolved) {
   return {
     ...resolved,
-    tables: resolved.tables.map((t) => {
+    tables: resolved.tables.map((t) => ({
+      ...t,
       // `indexes`: re-bucketed (unique first, then non-unique, each group's
       // relative order preserved) because the printer's fixed emission
       // order groups `@@unique` before `@@index` — a documented ordering
       // artifact, not a dropped field. The one permitted exclusion.
-      const indexes = [...t.indexes.filter((i) => i.unique), ...t.indexes.filter((i) => !i.unique)];
-      return { ...t, indexes, foreignKeys: [], relations: [] };
-    }),
+      indexes: [...t.indexes.filter((i) => i.unique), ...t.indexes.filter((i) => !i.unique)],
+    })),
   };
 }
 
