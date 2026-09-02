@@ -68,6 +68,7 @@ type MessageRelation = Pgoutput.MessageRelation;
 import type { ResolvedSchema, ResolvedTable } from "@indigodb/core";
 import { resolveSlotName, REALTIME_LOG_TABLE, quoteIdent, computeBuckets } from "@indigodb/migrator";
 import type { RealtimeEvent, RealtimeOp, RealtimeSource } from "./protocol.js";
+import { project, projectionSet } from "./projection.js";
 
 // `resolveSlotName` is re-exported for `@indigodb/realtime` consumers (and
 // this module's own default below) — canonical implementation now lives in
@@ -91,6 +92,14 @@ interface TableNames {
    * itself is derived once, here, not per event.
    */
   table: ResolvedTable;
+  /**
+   * `@@realtime(columns: [...])` allowlist (`realtime-column-projection`,
+   * design decision 3-4), resolved once here alongside `columns`/
+   * `primaryKey`. `null` = bare `@@realtime`, no narrowing. Physical
+   * (dbName) keyed, like `columns`/`primaryKey` — applied to the RAW
+   * pgoutput tuple in `decodeRow`, before `renameKeys`.
+   */
+  projection: Set<string> | null;
 }
 
 /** A single decoded row change, buffered until its transaction commits. */
@@ -200,6 +209,7 @@ export class WalSource implements RealtimeSource {
         columns,
         primaryKey: table.primaryKey,
         table,
+        projection: projectionSet(table),
       });
     }
   }
@@ -589,9 +599,16 @@ export class WalSource implements RealtimeSource {
     const secondary = fresh && old ? old : undefined;
     const buckets = computeBuckets(names.table, primary, secondary);
 
+    // Column projection (`realtime-column-projection`, design decision 4):
+    // narrow the RAW, physical-column-keyed row to the allowlist BEFORE
+    // `renameKeys`, immediately after `computeBuckets` above — buckets are
+    // always derived from the full row (decision 4 ordering; RCP-12), and
+    // `new`/`old` are narrowed via the exact same `project()` call, adjacent
+    // lines, so a half-fix that only narrows one of them cannot happen
+    // (decision 5). `pk`, built above, is never passed through `project()`.
     const row: PendingRow = { table: names.model, op, pk, buckets };
-    if (fresh) row.new = renameKeys(fresh, names.columns);
-    if (old) row.old = renameKeys(old, names.columns);
+    if (fresh) row.new = renameKeys(project(fresh, names.projection), names.columns);
+    if (old) row.old = renameKeys(project(old, names.projection), names.columns);
     return row;
   }
 }

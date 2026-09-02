@@ -76,9 +76,11 @@ Revert the two PR commit ranges (PR-2 then PR-1) and re-run `pnpm clean && pnpm 
 
 ## Success Criteria
 
-- [ ] `@@realtime(columns: [...])` parses, validates unknown fields as errors, and reaches `ResolvedTable` in both Rust and TS IR.
-- [ ] A projected column never appears in `_indigo_realtime_log`, an SSE frame, a replay page, or a `subscribe()` callback.
-- [ ] Bare `@@realtime` behavior is byte-identical to today.
-- [ ] `computeBuckets` output is unchanged when a bucket field is projected away.
-- [ ] New coverage passes with `INDIGODB_TEST_DATABASE_URL` unset.
-- [ ] `pnpm build && pnpm lint && pnpm test` and `cd crates && cargo test --locked` green.
+- [x] `@@realtime(columns: [...])` parses, validates unknown fields as errors, and reaches `ResolvedTable` in both Rust and TS IR. (PR 1: `tasks.md` Phase 1, 16/16 tasks)
+- [x] A projected column never appears in `_indigo_realtime_log`, an SSE frame, a replay page, or a `subscribe()` callback. (PR 2: `tasks.md` Phases 2-4, RCP-2/RCP-4/RCP-10/RCP-11, RWS-1, RSL-1, RLE-1/RLE-4 — all default-checkout. Replay-page leg, RLE-2, is the one scenario proven only structurally in a default checkout — see the manual DB gate below)
+- [x] Bare `@@realtime` behavior is byte-identical to today. (PR 1: fixtures 01-19 byte-identical snapshots. PR 2: `wal-source.mjs`'s `:76`/`:98`/`:124` bare-`@@realtime` cases and the SQL-injection case pass unmodified — RWS-2, RWS-5, RSL-3)
+- [x] `computeBuckets` output is unchanged when a bucket field is projected away. (PR 2: `tasks.md` 3.11/3.12, RCP-12/RWS-3)
+- [x] New coverage passes with `INDIGODB_TEST_DATABASE_URL` unset. (PR 2: `tasks.md` Phase 5 — `strictEqual(ran, N)` reachability guards in `wal-source.mjs`/`dispatch.mjs`/`realtime-projection.mjs`, plus `scripts/check-realtime-projection-db-gate.mjs` asserting no reference to the env var in those files. RLE-2 remains the one manual-gate exception, tracked separately, not counted as coverage)
+- [x] `pnpm build && pnpm lint && pnpm test` and `cd crates && cargo test --locked` green. (PR 1: `tasks.md` 1.16. PR 2: `tasks.md` 6.1/6.2 — `pnpm clean && pnpm build --force && pnpm lint && pnpm test` exit 0 across all packages; `cargo test --locked` and `pnpm --filter @indigodb/compiler test` both green on the final tree)
+
+**Outstanding before merge (not a Success Criteria gap, a required manual step):** `tasks.md` 5.3 — run `INDIGODB_TEST_DATABASE_URL=… pnpm --filter @indigodb/realtime test` against a real Postgres to exercise RLE-2 (replay page narrowness) end-to-end before merging PR 2.

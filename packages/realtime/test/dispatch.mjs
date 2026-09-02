@@ -17,11 +17,13 @@
  * model must ALSO get wake-up-only treatment or it silently reopens the
  * leak the `@@realtime`+`@@allow` compiler guard existed to prevent.
  */
-import { deepStrictEqual, ok } from "node:assert";
+import { deepStrictEqual, ok, strictEqual } from "node:assert";
 import { RealtimeEngine } from "../dist/index.js";
 
 let passed = 0;
+let ran = 0;
 async function check(name, fn) {
+  ran++;
   try {
     await fn();
     passed++;
@@ -213,6 +215,72 @@ await check("B1.2: composite-PK model's wake frame omits pk entirely, no partial
   ok(!("pk" in payload), "wake frame must not carry pk at all, composite or otherwise");
 });
 
+// ── RLE-1/RLE-3 — column-projected events at dispatch (realtime-column-
+//    projection): `dispatch()` never re-derives or re-widens `new`/`old`; it
+//    forwards whatever the source already narrowed (design decision 4/8) ──
+
+await check("RLE-1: dispatch() forwards a pre-projected event's new/old verbatim — the frame's data key set equals the allowlist", async () => {
+  const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+  const event = {
+    table: "Post",
+    op: "INSERT",
+    pk: { id: "1" },
+    // Already narrowed by the source — passwordHash was never here to widen.
+    new: { id: "1", status: "ok" },
+    txid: "42",
+    ts: "2026-01-01T00:00:00.000Z",
+    lsn: "0/ABC",
+  };
+  const written = await subscribeAndDispatch(engine, emit, event);
+  const changeFrame = written.find((f) => f.includes("event: change"));
+  ok(changeFrame, `expected an event: change frame, got: ${written.join("|")}`);
+  const dataLine = changeFrame.split("\n").find((l) => l.startsWith("data: "));
+  const payload = JSON.parse(dataLine.slice("data: ".length));
+  deepStrictEqual(Object.keys(payload.new).sort(), ["id", "status"]);
+  ok(!("passwordHash" in payload.new), "dispatch() must not re-widen a projected new payload");
+});
+
+await check("RLE-3: column projection and @@allow row scoping compose — allow wins (wake-only), non-allow gets the narrowed frame", async () => {
+  // With @@allow: still wake-up-only, regardless of projection.
+  {
+    const { engine, emit } = makeEngine([{ name: "Order", realtime: true, allow: [readRule()] }]);
+    const event = {
+      table: "Order",
+      op: "UPDATE",
+      pk: { id: "7" },
+      new: { id: "7", status: "shipped" },
+      old: { id: "7", status: "pending" },
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/DEF",
+    };
+    const written = await subscribeAndDispatch(engine, emit, event);
+    ok(written.some((f) => f.includes("event: wake")), "an @@allow model must still get wake-only SSE, projection changes nothing");
+    ok(!written.some((f) => f.includes("event: change")), "must not additionally emit a full/change frame");
+  }
+  // Without @@allow: the narrowed change frame passes through untouched.
+  {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+    const event = {
+      table: "Post",
+      op: "UPDATE",
+      pk: { id: "1" },
+      new: { id: "1", status: "ok" },
+      old: { id: "1", status: "pending" },
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/GHI",
+    };
+    const written = await subscribeAndDispatch(engine, emit, event);
+    const changeFrame = written.find((f) => f.includes("event: change"));
+    ok(changeFrame, "a non-allow projected model must get the narrowed event: change frame");
+    const dataLine = changeFrame.split("\n").find((l) => l.startsWith("data: "));
+    const payload = JSON.parse(dataLine.slice("data: ".length));
+    deepStrictEqual(Object.keys(payload.new).sort(), ["id", "status"]);
+    deepStrictEqual(Object.keys(payload.old).sort(), ["id", "status"]);
+  }
+});
+
+// RCP-13 reachability guard: fails loudly if a case above is skipped/omitted.
+strictEqual(ran, 6, "expected exactly 6 check() cases to run in dispatch.mjs");
 // ── RSC-14 — a rejected engine.start() resets the engine's started state,
 //    and a SECOND start() genuinely reaches source.start() again ─────────
 
