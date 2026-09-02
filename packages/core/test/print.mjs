@@ -332,6 +332,30 @@ check("@@realtime emitted only when resolved with realtime true", () => {
   strictEqual(off.includes("@@realtime"), false, off);
 });
 
+check("@@realtime(columns: [...]) emitted for a non-empty allowlist", () => {
+  const s = schema({
+    tables: [
+      table({
+        columns: [col({ name: "id" }), col({ name: "status", dbName: "status", type: "String" })],
+        realtimeColumns: ["id", "status"],
+      }),
+    ],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("@@realtime(columns: [id, status])"), true, out);
+  strictEqual(/@@realtime\s*$/m.test(out), false, out);
+});
+
+check("@@realtime(columns: []) prints the empty list, not bare @@realtime, and round-trips as []", () => {
+  const s = schema({
+    tables: [table({ name: "T", dbName: "T", columns: [col({ name: "id" })], realtimeColumns: [] })],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("@@realtime(columns: [])"), true, out);
+  const reresolved = resolve(parse(out));
+  deepStrictEqual(reresolved.tables[0].realtimeColumns, []);
+});
+
 // ─── 17./18./19./20. Raw FK comments ───────────────────────────────────────
 
 check("raw FK prints as structured comment, no @relation(...) synthesis", () => {
@@ -438,6 +462,105 @@ check("throws when an FK column has no matching field dbName", () => {
   throws(() => printSchema(s), IndigoPrintError);
 });
 
+// ─── @@allow ─────────────────────────────────────────────────────────────
+
+check("@@allow: multiple rules print as separate lines in IR order; claim operand prints auth.<name>", () => {
+  const s = schema({
+    tables: [
+      table({
+        columns: [col({ name: "id" }), col({ name: "ownerId", dbName: "ownerId", type: "Int" })],
+        allow: [
+          { action: "read", left: { kind: "claim", name: "userId" }, right: { kind: "field", name: "ownerId" } },
+          { action: "read", left: { kind: "field", name: "ownerId" }, right: { kind: "claim", name: "userId" } },
+        ],
+      }),
+    ],
+  });
+  const out = printSchema(s);
+  const first = out.indexOf("@@allow(read, auth.userId == this.ownerId)");
+  const second = out.indexOf("@@allow(read, this.ownerId == auth.userId)");
+  strictEqual(first !== -1, true, out);
+  strictEqual(second !== -1, true, out);
+  strictEqual(first < second, true, out);
+});
+
+check("@@allow: field operand prints the schema field name, not the mapped dbName", () => {
+  const s = schema({
+    tables: [
+      table({
+        columns: [
+          col({ name: "id" }),
+          col({ name: "ownerId", dbName: "owner_id", type: "Int" }),
+        ],
+        allow: [
+          { action: "read", left: { kind: "claim", name: "userId" }, right: { kind: "field", name: "owner_id" } },
+        ],
+      }),
+    ],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes("this.ownerId"), true, out);
+  strictEqual(out.includes("this.owner_id"), false, out);
+});
+
+check("@@allow: write/all sugar prints expanded, never re-collapsed (18-allow-rules.indigo)", () => {
+  const source = readFileSync(join(fixturesDir, "18-allow-rules.indigo"), "utf8");
+  const resolved = resolve(parse(source));
+  const out = printSchema(resolved);
+  strictEqual(out.includes("@@allow(create, auth.userId == this.ownerId)"), true, out);
+  strictEqual(out.includes("@@allow(update, auth.userId == this.ownerId)"), true, out);
+  strictEqual(out.includes("@@allow(delete, auth.userId == this.ownerId)"), true, out);
+  strictEqual(out.includes("@@allow(write,"), false, out);
+  strictEqual(out.includes("@@allow(all,"), false, out);
+});
+
+// ─── TableGroup ──────────────────────────────────────────────────────────
+
+check("TableGroup blocks print after all model/enum blocks", () => {
+  const s = schema({
+    tables: [table({ name: "A", dbName: "A", columns: [col()] })],
+    enums: [{ name: "E", values: ["X"] }],
+    tableGroups: [{ name: "G1", color: "#ff0000", tables: ["A"] }],
+  });
+  const out = printSchema(s);
+  const groupIdx = out.indexOf('TableGroup "G1"');
+  strictEqual(groupIdx !== -1, true, out);
+  const tableEnd = out.indexOf("Table A {") + out.slice(out.indexOf("Table A {")).indexOf("}");
+  const enumEnd = out.indexOf("enum E {") + out.slice(out.indexOf("enum E {")).indexOf("}");
+  strictEqual(groupIdx > tableEnd, true, out);
+  strictEqual(groupIdx > enumEnd, true, out);
+});
+
+check("TableGroup 'last group wins' overlap round-trips faithfully (04-tablegroup-edge.indigo)", () => {
+  const source = readFileSync(join(fixturesDir, "04-tablegroup-edge.indigo"), "utf8");
+  const original = resolve(parse(source));
+  const printed = printSchema(original);
+  const reresolved = resolve(parse(printed));
+  deepStrictEqual(reresolved.tableGroups, original.tableGroups);
+  const reA = reresolved.tables.find((t) => t.name === "A");
+  strictEqual(reA.group, "NoColor");
+  strictEqual(reA.color, undefined);
+});
+
+check("TableGroup printing reads schema.tableGroups, not the inconsistent derived table.color/table.group", () => {
+  const s = schema({
+    tables: [
+      table({
+        name: "A",
+        dbName: "A",
+        columns: [col()],
+        color: "bogus",
+        group: "NotReal",
+      }),
+    ],
+    tableGroups: [{ name: "Real", tables: ["A"] }],
+  });
+  const out = printSchema(s);
+  strictEqual(out.includes('TableGroup "Real"'), true, out);
+  strictEqual(out.includes('TableGroup "NotReal"'), false, out);
+  strictEqual(out.includes("bogus"), false, out);
+});
+
 // ─── 21./22. Determinism, LF-only, single trailing newline ─────────────────
 
 check("printSchema is pure: identical IR prints byte-identical text twice", () => {
@@ -470,62 +593,72 @@ check("IndigoPrintError is a real Error subclass", () => {
  * type, bad index args, ...), not a parse/resolve failure — `resolve()`
  * only reads recognized attributes and silently drops the rest (e.g.
  * `@@id([...])`, `@updatedAt`, `@@ignore` never reach the IR at all), so
- * there is nothing structurally unrepresentable for the printer here. All
- * five `rejected` fixtures round-trip cleanly and are therefore INCLUDED
- * below, not excluded.
+ * there is nothing structurally unrepresentable for the printer here for
+ * most of these fixtures — they round-trip cleanly and are INCLUDED below.
  *
- * The one fixture that genuinely cannot round-trip is 05-relations.indigo:
- * its `ghost` relation deliberately references unresolved local/target
- * columns (`missingLocal`/`missingTarget`) to exercise validate.rs's
- * unknown-reference diagnostics. `resolve.rs` still structurally records
- * this as a `ForeignKey` carrying those dangling physical column names.
- * The printer's "throw, never guess" invariant (spec: Loud Failure on
- * Unmappable Constructs) means it correctly THROWS `IndigoPrintError`
- * trying to map `missingLocal`/`missingTarget` back to field names that do
- * not exist on the referenced table — the printer working as designed,
- * not a bug — so only this one fixture is excluded, and a dedicated test
- * below pins exactly that throw.
+ * Three fixtures genuinely cannot round-trip. Each is a case where the
+ * printer PROVABLY THROWS — a different category from a normalizer field
+ * exclusion (which would silently drop data instead):
+ *
+ * - `05-relations.indigo`: its `ghost` relation deliberately references
+ *   unresolved local/target columns (`missingLocal`/`missingTarget`) to
+ *   exercise validate.rs's unknown-reference diagnostics. `resolve.rs`
+ *   still structurally records this as a `ForeignKey` carrying those
+ *   dangling physical column names. The printer's "throw, never guess"
+ *   invariant (spec: Loud Failure on Unmappable Constructs) means it
+ *   correctly THROWS `IndigoPrintError` trying to map
+ *   `missingLocal`/`missingTarget` back to field names that do not exist on
+ *   the referenced table (currently inside `printFkComment`; PR 2 moves this
+ *   to `printRelationField` once relation claiming lands).
+ * - `19-rejected-allow.indigo`: `UnknownField`'s `@@allow(read, auth.userId
+ *   == this.owner)` resolves to `{kind:"field", name:"owner"}`, but no
+ *   column on that table carries the physical `dbName` "owner" — `owner` is
+ *   an unresolved reference `resolve.rs` records verbatim. `fieldNameFor`
+ *   throws inside `printAllowOperand`.
+ * - `21-rejected-realtime-columns.indigo`: `UnknownColumn`'s
+ *   `@@realtime(columns: [id, ghostField])` resolves to `realtimeColumns:
+ *   ["id", "ghostField"]`, but no column carries the physical `dbName`
+ *   "ghostField". `fieldNameFor` throws inside the `@@realtime(columns:)`
+ *   branch of `printTable`.
+ *
+ * A dedicated test below pins each fixture's exact throw.
  */
-const UNPRINTABLE_FIXTURES = new Set(["05-relations.indigo"]);
+const UNPRINTABLE_FIXTURES = new Set([
+  "05-relations.indigo",
+  "19-rejected-allow.indigo",
+  "21-rejected-realtime-columns.indigo",
+]);
 
 /**
- * Normalizes a `ResolvedSchema` for round-trip comparison. Three
- * categories of documented, real divergence apply here — all verified
- * empirically against this exact 17-fixture corpus, not assumed from the
- * design doc's separate DB-introspection caveat:
+ * Normalizes a `ResolvedSchema` for round-trip comparison. Two categories of
+ * documented, real divergence remain — verified empirically against this
+ * corpus, not assumed:
  *
- * 1. Relations/foreign keys: `.indigo` has no bare-FK syntax — FKs only
- *    exist via `@relation(fields:, references:)` on a relation field, and
- *    this slice deliberately does NOT synthesize `@relation(...)` (raw FKs
- *    print as lexer-invisible comments instead, spec: Raw Foreign Key
- *    Output). So re-resolving printed text always yields empty
- *    `foreignKeys`/`relations` for tables that had them. Dropped on both
- *    sides for comparison.
- * 2. TableGroups: Phase 1 (this PR) prints models only — `TableGroup`
- *    blocks are out of scope for `print.ts` per the task list, so a
- *    reprinted schema never carries `tableGroups`, and tables lose the
- *    `color`/`group` fields that only exist because a `TableGroup`
- *    resolved them. Dropped on both sides.
- * 3. Index/unique ordering: the spec's fixed block-attribute order
- *    (`@@map` -> `@@unique` -> `@@index` -> `@@realtime` -> `@@note`)
- *    means the printer always emits every `@@unique` before every
- *    `@@index`, regardless of how the original schema interleaved them
- *    (see fixture 16, which interleaves unique/non-unique indexes).
+ * 1. Relations/foreign keys (PR 2's job, still excluded here): `.indigo` has
+ *    no bare-FK syntax — FKs only exist via `@relation(fields:,
+ *    references:)` on a relation field, and this PR deliberately does NOT
+ *    yet synthesize `@relation(...)` (raw FKs print as lexer-invisible
+ *    comments instead, spec: Raw Foreign Key Output). So re-resolving
+ *    printed text always yields empty `foreignKeys`/`relations` for tables
+ *    that had them. Dropped on both sides for comparison. PR 2 deletes this
+ *    exclusion once `claimForeignKeys`/`printRelationField` land.
+ * 2. Index/unique ordering (permanent): the spec's fixed block-attribute
+ *    order (`@@map` -> `@@unique` -> `@@index` -> `@@realtime` -> `@@allow`
+ *    -> `@@note`) means the printer always emits every `@@unique` before
+ *    every `@@index`, regardless of how the original schema interleaved
+ *    them (see fixture 16, which interleaves unique/non-unique indexes).
  *    Re-resolving the printed text therefore yields `indexes` re-bucketed
  *    (all `unique: true` first, in original relative order, then all
  *    `unique: false`, in original relative order) rather than in the
  *    original array order. This is the printer's fixed emission order
  *    working as designed, not a bug, so the "expected" side is re-bucketed
  *    identically for comparison.
- * 4. `@@allow`: out of the printer's scope (`realtime-rls-allow-rule` only
- *    added grammar/validation/resolve — `print.ts` was not touched by that
- *    change), so a reprinted schema never carries `@@allow` and re-resolving
- *    it always yields `allow: undefined`. Dropped on both sides.
- * 5. `@@realtime(columns:…)`: same precedent as (4) — `realtime-column-
- *    projection` PR 1 only adds grammar/validation/resolve/IR
- *    (`realtimeColumns`); `print.ts` is intentionally untouched (see that
- *    change's design doc File Changes table). A reprinted schema always
- *    yields `realtimeColumns: undefined`. Dropped on both sides.
+ *
+ * Everything else — `tableGroups`, `color`, `group`, `allow`,
+ * `realtimeColumns` — is now printed and compared in full as of this PR.
+ * Adding an exclusion beyond these two re-opens the exact blind spot this
+ * change closes: any new entry MUST name the IR field and why it is
+ * unrepresentable, and MUST be called out in the verify report.
  *
  * NOTE on the design doc's identity-column caveat ("introspect.ts emits
  * `{autoincrement:true}` with no `default`, while resolve.rs emits
@@ -534,17 +667,18 @@ const UNPRINTABLE_FIXTURES = new Set(["05-relations.indigo"]);
  * this pure fixture round trip — both the original and the reprinted side
  * go through `resolve.rs` exclusively. Empirically, no such divergence was
  * observed here, so this normalizer does NOT special-case identity
- * defaults; the two `resolve.rs` outputs already agree once relations/FKs,
- * TableGroup-derived fields, and index bucketing are normalized.
+ * defaults.
  */
 function normalizeForRoundTrip(resolved) {
   return {
     ...resolved,
-    tableGroups: [],
     tables: resolved.tables.map((t) => {
-      const { color, group, allow, realtimeColumns, ...rest } = t;
+      // `indexes`: re-bucketed (unique first, then non-unique, each group's
+      // relative order preserved) because the printer's fixed emission
+      // order groups `@@unique` before `@@index` — a documented ordering
+      // artifact, not a dropped field. The one permitted exclusion.
       const indexes = [...t.indexes.filter((i) => i.unique), ...t.indexes.filter((i) => !i.unique)];
-      return { ...rest, indexes, foreignKeys: [], relations: [] };
+      return { ...t, indexes, foreignKeys: [], relations: [] };
     }),
   };
 }
@@ -564,8 +698,10 @@ for (const file of roundTripFixtures) {
   });
 }
 
-// Confirm the excluded fixture behaves exactly as documented, and that
-// "rejected" fixtures are NOT excluded because they resolve successfully.
+// Confirm each excluded fixture behaves exactly as documented, and that
+// "rejected" fixtures in general are NOT excluded merely because their name
+// says "rejected" — only these three, because they resolve successfully but
+// printSchema throws.
 for (const file of UNPRINTABLE_FIXTURES) {
   check(`${file} resolves but printSchema throws (confirms exclusion reason)`, () => {
     const resolved = resolve(parse(readFileSync(join(fixturesDir, file), "utf8")));

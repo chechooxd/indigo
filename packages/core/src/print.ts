@@ -14,12 +14,15 @@
 
 import type { AttributeValue } from "@indigodb/ast";
 import type {
+  AllowOperand,
+  AllowRule,
   ForeignKey,
   ResolvedColumn,
   ResolvedEnum,
   ResolvedIndex,
   ResolvedSchema,
   ResolvedTable,
+  ResolvedTableGroup,
 } from "./ir.js";
 
 export interface PrintOptions {
@@ -211,6 +214,32 @@ function printIndexAttr(table: ResolvedTable, idx: ResolvedIndex): string {
   return `${attrName}(${args.join(", ")})`;
 }
 
+/**
+ * Prints one side of a resolved `@@allow` equality condition. Deliberately
+ * separate from `printAttributeValue` (design D6): that function's
+ * `path`/`comparison` throw guard belongs to the unrelated `datasource.url`
+ * path and must stay a dead branch.
+ */
+function printAllowOperand(table: ResolvedTable, op: AllowOperand): string {
+  switch (op.kind) {
+    case "field":
+      return `this.${fieldNameFor(table, op.name)}`;
+    case "claim":
+      return `auth.${op.name}`;
+    case "string":
+      return quoteString(op.value);
+    case "number":
+    case "boolean":
+      return String(op.value);
+  }
+}
+
+function printAllowRule(table: ResolvedTable, rule: AllowRule): string {
+  const left = printAllowOperand(table, rule.left);
+  const right = printAllowOperand(table, rule.right);
+  return `@@allow(${rule.action}, ${left} == ${right})`;
+}
+
 function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string): string {
   checkPrimaryKeySubsequence(table);
 
@@ -226,7 +255,15 @@ function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string
   for (const idx of table.indexes) {
     if (!idx.unique) blockLines.push(`${indent}${printIndexAttr(table, idx)}`);
   }
-  if (table.realtime) blockLines.push(`${indent}@@realtime`);
+  if (table.realtimeColumns !== undefined) {
+    const cols = table.realtimeColumns.map((c) => fieldNameFor(table, c));
+    blockLines.push(`${indent}@@realtime(columns: [${cols.join(", ")}])`);
+  } else if (table.realtime) {
+    blockLines.push(`${indent}@@realtime`);
+  }
+  if (table.allow) {
+    for (const rule of table.allow) blockLines.push(`${indent}${printAllowRule(table, rule)}`);
+  }
   if (table.note !== undefined) blockLines.push(`${indent}@@note(${quoteString(table.note)})`);
 
   const tail = [...fkLines, ...blockLines];
@@ -234,6 +271,18 @@ function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string
   if (tail.length > 0) body += `\n\n${tail.join("\n")}`;
 
   return `Table ${table.name} {\n${body}\n}`;
+}
+
+/**
+ * Prints one `TableGroup` block verbatim from `ResolvedSchema.tableGroups`
+ * (design D8) — never derived from `table.color`/`table.group`, so a
+ * declared overlap ("last group wins") replays identically on re-resolve.
+ */
+function printTableGroup(group: ResolvedTableGroup, indent: string): string {
+  const lines: string[] = [];
+  if (group.color !== undefined) lines.push(`${indent}color = ${quoteString(group.color)}`);
+  for (const t of group.tables) lines.push(`${indent}${t}`);
+  return `TableGroup ${quoteString(group.name)} {\n${lines.join("\n")}\n}`;
 }
 
 function printHeader(header: string): string {
@@ -257,6 +306,7 @@ export function printSchema(schema: ResolvedSchema, options: PrintOptions = {}):
   if (schema.datasource) blocks.push(printDatasource(schema, indent));
   for (const en of schema.enums) blocks.push(printEnum(en));
   for (const table of schema.tables) blocks.push(printTable(schema, table, indent));
+  for (const group of schema.tableGroups) blocks.push(printTableGroup(group, indent));
 
   const text = blocks.join("\n\n").replace(/\r\n/g, "\n");
   return `${text.replace(/\n+$/, "")}\n`;
