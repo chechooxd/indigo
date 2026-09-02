@@ -314,5 +314,5 @@ RED-sensitive (proven by the deliberate-trip-and-revert above).
 
 ### Status
 
-8/8 Phase 3 (PR 3) tasks complete. **28/28 tasks across all three phases complete.** Ready for
+8/8 Phase 3 (PR 3) tasks complete. **26/26 tasks across all three phases complete** (10 + 8 + 8; an earlier summary said 28, which never matched the checklist). Ready for
 `sdd-verify`.
