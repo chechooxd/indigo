@@ -54,9 +54,20 @@ function fakeSource() {
   };
 }
 
-/** Minimal duck-typed `IncomingMessage`/`ServerResponse` for `handleRequest`. */
-function fakeSubscriber(urlPath = "/") {
+/**
+ * Minimal duck-typed `IncomingMessage`/`ServerResponse` for `handleRequest`,
+ * upgraded for `realtime-sse-backpressure`: simulates a socket buffer via a
+ * mutable `writableLength` that only rises on `write()` and falls on an
+ * explicit `drain(n)` — no timing dependence needed to reproduce "stalled".
+ *
+ * `hwm` mirrors the measured 64 KiB `writableHighWaterMark` on a real
+ * `http.ServerResponse` (design decision 1) purely so `write()`'s boolean
+ * return value stays realistic; production code does not consume it
+ * (decision 2) — only the backpressure suite's mutation task (3.3) reads it.
+ */
+function fakeSubscriber(urlPath = "/", { writableLength = 0, refuse = false, hwm = 65536 } = {}) {
   const written = [];
+  let ended = false;
   const req = {
     url: urlPath,
     on() {
@@ -66,25 +77,46 @@ function fakeSubscriber(urlPath = "/") {
   const res = {
     status: null,
     headers: null,
+    writableLength,
     writeHead(status, headers) {
       res.status = status;
       res.headers = headers;
     },
     write(chunk) {
+      if (refuse) return false; // socket accepts nothing at all (RSB-6)
       written.push(chunk);
+      res.writableLength += Buffer.byteLength(chunk); // never drains unless drain() is called
+      return res.writableLength < hwm;
+    },
+    end(chunk) {
+      if (chunk !== undefined) written.push(chunk);
+      ended = true;
     },
   };
-  return { req, res, written };
+  return {
+    req,
+    res,
+    written,
+    isEnded: () => ended,
+    drain: (n) => {
+      res.writableLength = Math.max(0, res.writableLength - n);
+    },
+  };
 }
 
-function makeEngine(tables) {
+function makeEngine(tables, extra = {}) {
   const { source, emit } = fakeSource();
   const engine = new RealtimeEngine({
     connectionString: "postgres://unused/unused",
     schema: { tables },
     source,
+    ...extra,
   });
   return { engine, emit };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function readRule(fieldName = "ownerId") {
@@ -336,6 +368,251 @@ await check(
     await engine.stop();
   },
 );
+
+// ── realtime-sse-backpressure ──────────────────────────────────────────────
+// Bounded per-subscriber write buffering. Every engine below is constructed
+// with an explicit small `maxBufferedBytes` (never a megabyte) so the fake
+// socket's `writableLength` can be driven directly instead of by volume.
+
+// ── RSB-1 — heartbeat is subject to the same cap as data frames ───────────
+
+await check(
+  "RSB-1: heartbeat tick over a stalled subscriber evicts it via the same bounded path",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], {
+      heartbeatMs: 5,
+      maxBufferedBytes: 1000,
+    });
+    void emit;
+    const { req, res, written, isEnded } = fakeSubscriber("/", { writableLength: 5000 });
+    engine.handleRequest(req, res);
+    await engine.start();
+    await sleep(40);
+    await engine.stop();
+    ok(!written.some((f) => f.includes(":ping")), `stalled subscriber must not receive a :ping frame, got: ${written.join("|")}`);
+    ok(isEnded(), "stalled subscriber's stream must be ended by the heartbeat eviction");
+    strictEqual(engine["subscribers"].size, 0, "evicted subscriber must be removed from the registry");
+  },
+);
+
+// ── RSB-3 / RSB-5 — over-cap subscriber evicted instead of written to ─────
+
+await check(
+  "RSB-3/RSB-5: over-cap subscriber is evicted instead of written to, and stays evicted on a second dispatch",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const { req, res, written, isEnded } = fakeSubscriber("/", { writableLength: 5000 });
+    engine.handleRequest(req, res);
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    ok(!written.some((f) => f.includes("event: change")), `over-cap subscriber must not receive the change frame, got: ${written.join("|")}`);
+    ok(isEnded(), "over-cap subscriber's stream must be ended");
+    strictEqual(engine["subscribers"].size, 0, "evicted subscriber must be removed from the registry");
+    const writtenLengthAfterFirst = written.length;
+    emit(event);
+    strictEqual(written.length, writtenLengthAfterFirst, "a second dispatch to the now-removed subscriber must write nothing");
+    await engine.stop();
+  },
+);
+
+// ── RSB-6 — eviction proceeds even if the overflow frame cannot be flushed ─
+
+await check(
+  "RSB-6: eviction removes and ends the subscriber even when the socket refuses every write",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const { req, res, written, isEnded } = fakeSubscriber("/", { writableLength: 5000, refuse: true });
+    engine.handleRequest(req, res);
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    strictEqual(written.length, 0, "not even the overflow frame should land when the socket refuses every write");
+    ok(isEnded(), "subscriber must still be ended even though no frame could be flushed");
+    strictEqual(engine["subscribers"].size, 0, "subscriber must still be removed from the registry");
+    await engine.stop();
+  },
+);
+
+// ── RSB-7 — eviction invokes onError ───────────────────────────────────────
+
+await check("RSB-7: eviction reports through onError exactly once", async () => {
+  const errors = [];
+  const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], {
+    maxBufferedBytes: 1000,
+    onError: (err) => errors.push(err),
+  });
+  const { req, res } = fakeSubscriber("/", { writableLength: 5000 });
+  engine.handleRequest(req, res);
+  await engine.start();
+  const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+  emit(event);
+  strictEqual(errors.length, 1, "onError must be invoked exactly once for one eviction");
+  ok(errors[0] instanceof Error, "onError must be called with an Error");
+  ok(
+    errors[0].message.includes("[backpressure] SSE subscriber evicted"),
+    `onError message must identify the eviction, got: ${errors[0].message}`,
+  );
+  await engine.stop();
+});
+
+// ── RSB-10 — eviction mid-dispatch() does not skip a later subscriber ─────
+
+await check(
+  "RSB-10: a healthy subscriber registered after the evicted one still receives the frame",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const a = fakeSubscriber("/", { writableLength: 0 });
+    const b = fakeSubscriber("/", { writableLength: 5000 });
+    const c = fakeSubscriber("/", { writableLength: 0 });
+    engine.handleRequest(a.req, a.res);
+    engine.handleRequest(b.req, b.res);
+    engine.handleRequest(c.req, c.res);
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    strictEqual(a.written.filter((f) => f.includes("event: change")).length, 1, "A must receive exactly one change frame");
+    strictEqual(c.written.filter((f) => f.includes("event: change")).length, 1, "C must receive exactly one change frame — must not be skipped as a side effect of B's eviction");
+    ok(!b.written.some((f) => f.includes("event: change")), "B must not receive the change frame");
+    ok(b.isEnded(), "B must be evicted");
+    strictEqual(engine["subscribers"].size, 2, "only B is removed — A and C remain registered");
+    await engine.stop();
+  },
+);
+
+// ── RSB-11 — eviction mid-heartbeat does not skip a later subscriber ──────
+
+await check(
+  "RSB-11: a healthy subscriber registered after the evicted one still receives the heartbeat",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], {
+      heartbeatMs: 5,
+      maxBufferedBytes: 1000,
+    });
+    void emit;
+    const a = fakeSubscriber("/", { writableLength: 0 });
+    const b = fakeSubscriber("/", { writableLength: 5000 });
+    const c = fakeSubscriber("/", { writableLength: 0 });
+    engine.handleRequest(a.req, a.res);
+    engine.handleRequest(b.req, b.res);
+    engine.handleRequest(c.req, c.res);
+    await engine.start();
+    await sleep(40);
+    ok(a.written.some((f) => f.includes(":ping")), "A must receive the heartbeat");
+    ok(c.written.some((f) => f.includes(":ping")), "C must receive the heartbeat — must not be skipped as a side effect of B's eviction");
+    ok(!b.written.some((f) => f.includes(":ping")), "B must not receive the heartbeat");
+    ok(b.isEnded(), "B must be evicted");
+    // Asserted BEFORE stop() — stop() clears every remaining subscriber
+    // (A and C included), so checking registry size after stop() would
+    // read 0 regardless of eviction correctness.
+    strictEqual(engine["subscribers"].size, 2, "only B is removed — A and C remain registered");
+    await engine.stop();
+  },
+);
+
+// ── RSB-2 — a stalled subscriber does not delay dispatch to others ────────
+// The "A evicted / A has no frame" half of this case IS RED against the
+// untouched tree (fails until Phase 2 lands). The synchrony half (asserted
+// immediately after emit() returns, no `await` in between) already passes
+// today by construction — it is a REGRESSION GUARD for a future async
+// drift in dispatch(), not a RED scenario. Both halves must hold now.
+
+await check(
+  "RSB-2: a stalled subscriber (A) is evicted without delaying delivery to a healthy one (B); dispatch() stays synchronous",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const a = fakeSubscriber("/", { writableLength: 5000 });
+    const b = fakeSubscriber("/", { writableLength: 0 });
+    engine.handleRequest(a.req, a.res);
+    engine.handleRequest(b.req, b.res);
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    // Synchrony regression guard: these must already be true the instant
+    // emit() (→ dispatch()) returns, with no await in between.
+    ok(b.written.some((f) => f.includes("event: change")), "B must have its change frame immediately after emit() returns");
+    ok(!a.written.some((f) => f.includes("event: change")), "A must not have received the change frame");
+    ok(a.isEnded(), "A must be evicted");
+    strictEqual(engine["subscribers"].size, 1, "only B remains registered");
+    await engine.stop();
+  },
+);
+
+// ── RSB-4 — negative control: cap − 1 is NOT evicted ───────────────────────
+// This test PASSES against the untouched tree by construction (no
+// production code exists yet to evict anyone) — it is deliberately not RED.
+// Its only proof of value comes from the mutation task (3.3), recorded in
+// tasks.md, not from this test failing on the untouched tree.
+
+await check(
+  "RSB-4: a subscriber buffered at exactly maxBufferedBytes - 1 is NOT evicted (negative control)",
+  async () => {
+    // hwm pinned to the cap (not the default 65536) so this fixture is
+    // sensitive to BOTH candidate probes (task 3.3, mutation B): if `send()`
+    // ever acted on write()'s boolean return instead of `writableLength`,
+    // writing the ~90-byte frame on top of writableLength=999 would push
+    // past this hwm and make write() itself report "rejected", which must
+    // NOT translate into an eviction here.
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const { req, res, written, isEnded } = fakeSubscriber("/", { writableLength: 0, hwm: 1000 });
+    engine.handleRequest(req, res);
+    // Pin the probe to exactly cap - 1 for the change frame below, after the
+    // ready frame's own (small) contribution has already landed — this
+    // isolates the boundary condition under test from the ready write's
+    // incidental byte cost.
+    res.writableLength = 999;
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    ok(written.some((f) => f.includes("event: change")), "a subscriber at cap - 1 must still receive the frame");
+    ok(!isEnded(), "a subscriber at cap - 1 must not be evicted");
+    strictEqual(engine["subscribers"].size, 1, "subscriber at cap - 1 must remain registered");
+    // Simulate the socket draining back to the same boundary before the next
+    // frame — a healthy (non-stalled) subscriber's buffer does not grow
+    // without bound between frames. Without this, the fake's monotonic
+    // `writableLength` would make ANY second write cross the cap regardless
+    // of eviction logic, which would test drain simulation, not the probe.
+    res.writableLength = 999;
+    const writtenLengthAfterFirst = written.length;
+    emit(event);
+    strictEqual(written.length, writtenLengthAfterFirst + 1, "a second dispatch must also land for a non-evicted subscriber");
+    ok(written[written.length - 1].includes("event: change"), "the second landed frame must be the real change frame, not an overflow frame");
+    ok(!isEnded(), "subscriber must still not be evicted after the second dispatch");
+    await engine.stop();
+  },
+);
+
+// ── RSB-4b — boundary-exact companion: buffered == cap is also NOT evicted.
+// This is the assertion that actually distinguishes `buffered > cap` from
+// `buffered >= cap`: at `cap - 1` BOTH operators agree (not evicted), so
+// that fixture alone cannot bite the `>` → `>=` mutation. Only `buffered ===
+// cap` disagrees between the two operators (spec: "at or under the cap, the
+// frame MUST be written normally"). Kept as a separate `check()` — not
+// folded into RSB-4 above — so a reader sees exactly which assertion the
+// mutation task (3.3) is proving.
+
+await check(
+  "RSB-4b: a subscriber buffered at EXACTLY maxBufferedBytes (boundary) is NOT evicted — the >/>=  distinguishing case",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }], { maxBufferedBytes: 1000 });
+    const { req, res, written, isEnded } = fakeSubscriber("/", { writableLength: 0, hwm: 1000 });
+    engine.handleRequest(req, res);
+    res.writableLength = 1000; // exactly at cap, not over it
+    await engine.start();
+    const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
+    emit(event);
+    ok(written.some((f) => f.includes("event: change")), "a subscriber buffered at exactly the cap must still receive the frame");
+    ok(!isEnded(), "a subscriber buffered at exactly the cap must not be evicted");
+    strictEqual(engine["subscribers"].size, 1, "subscriber at exactly the cap must remain registered");
+    await engine.stop();
+  },
+);
+
+// realtime-sse-backpressure reachability guard: fails loudly if a case
+// above is skipped/omitted. Counted from an actual run (17 total
+// `check()` calls in this file), not carried forward from provisional
+// design-phase arithmetic.
+strictEqual(ran, 17, "expected exactly 17 check() cases in dispatch.mjs");
 
 console.log(`\n${passed} check(s) passed.`);
 if (process.exitCode) {

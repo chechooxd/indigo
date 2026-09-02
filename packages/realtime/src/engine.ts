@@ -45,7 +45,18 @@ export interface RealtimeEngineOptions {
    * never at construction. Injectable for tests.
    */
   logDb?: RealtimeLogDb;
+  /** Per-subscriber socket-buffer cap in bytes, probed before every frame.
+   *  Over cap ⇒ the subscriber is evicted (stream ended) and reported via `onError`.
+   *  NOTE: `.live()`/`useLiveTable` refetch on reconnect and are unaffected; a raw
+   *  `RealtimeModelDelegate.subscribe()` caller has NO automatic resync and misses
+   *  events after an eviction until it supplies its own (documented limitation). */
+  maxBufferedBytes?: number;
 }
+
+/** Default per-subscriber buffered-bytes cap — 16x the measured 64 KiB
+ *  `writableHighWaterMark` on Node v22.23.2, comfortably separating a busy
+ *  socket from a stalled one. */
+export const DEFAULT_MAX_BUFFERED_BYTES = 1_048_576;
 
 /** Minimal query result shape `RealtimeLogDb.readOnly`'s `query` resolves to. */
 export interface RealtimeLogQueryResult {
@@ -119,6 +130,7 @@ export class RealtimeEngine {
   private readonly allowModels: Set<string>;
   private readonly subscribers = new Set<Subscriber>();
   private readonly listeners = new Set<(event: RealtimeEvent) => void>();
+  private readonly maxBufferedBytes: number;
   private heartbeat: NodeJS.Timeout | null = null;
   private started = false;
 
@@ -143,6 +155,7 @@ export class RealtimeEngine {
       options.schema.tables.filter((t) => t.allow !== undefined).map((t) => t.name),
     );
     this.injectedLogDb = options.logDb ?? null;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
   }
 
   /** Model names served by this engine. */
@@ -174,7 +187,7 @@ export class RealtimeEngine {
       throw err;
     }
     this.heartbeat = setInterval(() => {
-      for (const sub of this.subscribers) sub.res.write(":ping\n\n");
+      for (const sub of [...this.subscribers]) this.send(sub, ":ping\n\n");
     }, this.heartbeatMs);
     // A daemon with subscribers shouldn't be kept alive by the heartbeat alone.
     this.heartbeat.unref?.();
@@ -234,7 +247,7 @@ export class RealtimeEngine {
     const sub: Subscriber = { res, tables, seq: 0 };
     this.subscribers.add(sub);
     const ready: RealtimeReady = { tables: tables ? [...tables] : this.models };
-    res.write(`event: ready\ndata: ${JSON.stringify(ready)}\n\n`);
+    this.send(sub, `event: ready\ndata: ${JSON.stringify(ready)}\n\n`);
 
     req.on("close", () => {
       this.subscribers.delete(sub);
@@ -399,16 +412,63 @@ export class RealtimeEngine {
     // Any `@@allow` block at all (not just one carrying a `read` rule) scopes
     // SSE to a data-free wake-up signal — see `allowModels`'s doc comment.
     const scoped = this.allowModels.has(event.table);
-    for (const sub of this.subscribers) {
+    for (const sub of [...this.subscribers]) {
       if (sub.tables && !sub.tables.has(event.table)) continue;
       sub.seq += 1;
       if (scoped) {
         const wake: RealtimeWakeEvent = { table: event.table, op: event.op, lsn: event.lsn, seq: sub.seq };
-        sub.res.write(`id: ${sub.seq}\nevent: wake\ndata: ${JSON.stringify(wake)}\n\n`);
+        this.send(sub, `id: ${sub.seq}\nevent: wake\ndata: ${JSON.stringify(wake)}\n\n`);
         continue;
       }
       const payload: RealtimeEvent = { ...event, seq: sub.seq };
-      sub.res.write(`id: ${sub.seq}\nevent: change\ndata: ${JSON.stringify(payload)}\n\n`);
+      this.send(sub, `id: ${sub.seq}\nevent: change\ndata: ${JSON.stringify(payload)}\n\n`);
     }
+  }
+
+  /**
+   * Single bounded write choke point — every SSE frame (heartbeat, ready,
+   * wake, change) MUST route through here, never `res.write()` directly.
+   * Probes `res.writableLength` BEFORE writing (design decision 1): over
+   * `maxBufferedBytes` ⇒ evict instead of writing, so one oversized frame
+   * cannot itself evict an otherwise-healthy subscriber. Returns `true` if
+   * the frame was written, `false` if evicted or the subscriber was already
+   * gone (re-entrancy guard for the snapshot-iteration pattern).
+   */
+  private send(sub: Subscriber, frame: string): boolean {
+    if (!this.subscribers.has(sub)) return false;
+    const buffered = sub.res.writableLength ?? 0;
+    if (buffered > this.maxBufferedBytes) {
+      this.evict(sub, buffered);
+      return false;
+    }
+    sub.res.write(frame);
+    return true;
+  }
+
+  /**
+   * Removes `sub` from the registry and terminates its stream. Idempotent —
+   * `res.end()` fires `req.on("close")`, which deletes the same `sub`, so
+   * `evict()` must be safe to call twice (design decision 5). The
+   * `event: overflow` frame is best-effort only: its delivery is never a
+   * precondition for removal or termination (RSB-6).
+   */
+  private evict(sub: Subscriber, buffered: number): void {
+    if (!this.subscribers.delete(sub)) return;
+    try {
+      sub.res.write("event: overflow\n\n");
+    } catch {
+      // best-effort — a backed-up or already-broken socket may reject this.
+    }
+    try {
+      sub.res.end();
+    } catch {
+      // best-effort — removal and eviction reporting still proceed.
+    }
+    const tables = sub.tables ? [...sub.tables].join(",") : "*";
+    this.onError(
+      new Error(
+        `[backpressure] SSE subscriber evicted: buffered=${buffered} cap=${this.maxBufferedBytes} tables=${tables}`,
+      ),
+    );
   }
 }
