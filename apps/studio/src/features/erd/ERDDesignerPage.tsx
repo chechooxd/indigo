@@ -3,29 +3,60 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { PanelLeft, PanelRight, Columns } from 'lucide-react';
 import { INITIAL_DSL_CODE } from '../../data/mockData';
 import { registerIndigoLanguage } from '../../lib/monaco-indigo';
-import { fetchSchemaSource } from '../../lib/api';
+import { fetchSchemaSource, saveSchemaSource } from '../../lib/api';
+import { useAuthStore } from '../../store/useAuthStore';
 
 import { useERDParser } from './hooks/useERDParser';
 import { usePanelLayout } from './hooks/usePanelLayout';
 import ERDCanvas from './ERDCanvas';
 import ERDSidebar from './components/ERDSidebar';
 import { DslEditorToolbar } from './components/DslEditorToolbar';
+import { DiagnosticsPanel } from './components/DiagnosticsPanel';
+import type { Diagnostic } from './lib/diagnostics';
+
+/** A refusal that gets its own banner, distinct from the diagnostics panel
+ * (422, handled via `saveDiagnostics` below) and from success (a toast). */
+type SaveBanner =
+  | { kind: 'stale' }
+  | { kind: 'error'; message: string };
+
+const TOAST_DURATION_MS = 3000;
 
 export default function ERDDesignerPage() {
   const [dslCode, setDslCode] = useState<string>(INITIAL_DSL_CODE);
+  const [savedSource, setSavedSource] = useState<string>(INITIAL_DSL_CODE);
+  const [version, setVersion] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveBanner, setSaveBanner] = useState<SaveBanner | null>(null);
+  const [saveDiagnostics, setSaveDiagnostics] = useState<Diagnostic[]>([]);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [preReloadBuffer, setPreReloadBuffer] = useState<string | null>(null);
+
+  const schemaWritable = useAuthStore((s) => s.schemaWritable);
+  const dirty = dslCode !== savedSource;
 
   // Under `indigodb studio`, load the project's real schema.indigo source.
   useEffect(() => {
-    fetchSchemaSource().then((source) => {
-      if (source) setDslCode(source);
+    fetchSchemaSource().then((result) => {
+      if (result) {
+        setDslCode(result.source);
+        setSavedSource(result.source);
+        setVersion(result.version);
+      }
     });
   }, []);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), TOAST_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
 
   const [hiddenTables, setHiddenTables] = useState<Set<string>>(new Set());
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
@@ -34,7 +65,83 @@ export default function ERDDesignerPage() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
   const { layout, setLayout, editorWidth, startResize } = usePanelLayout();
-  const { nodes, links, tableGroups } = useERDParser(dslCode);
+  const { nodes, links, tableGroups, diagnostics: parseDiagnostics } = useERDParser(dslCode);
+
+  // Combined for display: live parse/validate diagnostics plus, if the last
+  // save attempt was refused as 422, the server's diagnostics translated
+  // back to buffer-relative coordinates by `saveSchemaSource`'s caller.
+  const diagnostics = useMemo(
+    () => [...parseDiagnostics, ...saveDiagnostics],
+    [parseDiagnostics, saveDiagnostics],
+  );
+
+  const handleDslChange = useCallback((value: string) => {
+    setDslCode(value);
+    // A fresh edit invalidates the last save refusal's context.
+    setSaveDiagnostics([]);
+    setSaveBanner(null);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (version === null) return;
+    setSaving(true);
+    const result = await saveSchemaSource(dslCode, version);
+    setSaving(false);
+
+    if (result.ok) {
+      setSavedSource(dslCode);
+      setVersion(result.version);
+      setSaveBanner(null);
+      setSaveDiagnostics([]);
+      setToastMessage('Schema saved.');
+      return;
+    }
+
+    if (result.status === 409) {
+      setSaveBanner({ kind: 'stale' });
+      return;
+    }
+
+    if (result.status === 422) {
+      const translated: Diagnostic[] = [
+        ...(result.parseErrors ?? []).map((e) => ({
+          source: 'parse' as const,
+          message: e.message,
+          line: e.line,
+          column: e.column,
+          endLine: e.endLine,
+          endColumn: e.endColumn,
+        })),
+        ...(result.validationErrors ?? []).map((e) => ({
+          source: 'validate' as const,
+          message: e.message,
+        })),
+      ];
+      setSaveDiagnostics(translated);
+      return;
+    }
+
+    setSaveBanner({ kind: 'error', message: result.error });
+  }, [dslCode, version]);
+
+  const handleReload = useCallback(async () => {
+    const result = await fetchSchemaSource();
+    if (result) {
+      setPreReloadBuffer(dslCode);
+      setDslCode(result.source);
+      setSavedSource(result.source);
+      setVersion(result.version);
+      setSaveBanner(null);
+      setSaveDiagnostics([]);
+    }
+  }, [dslCode]);
+
+  const handleUndoReload = useCallback(() => {
+    if (preReloadBuffer !== null) {
+      setDslCode(preReloadBuffer);
+      setPreReloadBuffer(null);
+    }
+  }, [preReloadBuffer]);
 
   const toggleFolder = (folderName: string) => {
     setExpandedFolders(prev => {
@@ -98,6 +205,15 @@ export default function ERDDesignerPage() {
         </button>
       </div>
 
+      {toastMessage && (
+        <div
+          role="status"
+          className="absolute top-4 right-4 z-50 px-3 py-2 rounded-lg bg-emerald-900/80 border border-emerald-700 text-emerald-200 text-xs font-medium shadow-xl"
+        >
+          {toastMessage}
+        </div>
+      )}
+
       {layout !== 'canvas' && (
         <section
           className="h-full bg-[#09090b] flex flex-col shrink-0 relative"
@@ -107,8 +223,53 @@ export default function ERDDesignerPage() {
             <span className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest font-mono">
               INDIGODSL V1.0
             </span>
-            <DslEditorToolbar dslCode={dslCode} />
+            <DslEditorToolbar
+              dslCode={dslCode}
+              dirty={dirty}
+              schemaWritable={schemaWritable}
+              saving={saving}
+              onSave={handleSave}
+            />
           </div>
+
+          {saveBanner && (
+            <div
+              role="alert"
+              className="px-4 py-2 bg-amber-950/40 border-b border-amber-900/60 text-[11px] text-amber-300 font-mono flex items-center gap-3"
+            >
+              {saveBanner.kind === 'stale' ? (
+                <>
+                  <span className="flex-1">
+                    The file changed on disk since you loaded it. Your edits are kept — choose
+                    Reload to see the latest version.
+                  </span>
+                  <button
+                    onClick={handleReload}
+                    className="underline hover:text-amber-100 cursor-pointer shrink-0"
+                  >
+                    Reload from disk
+                  </button>
+                </>
+              ) : (
+                <span className="flex-1">{saveBanner.message}</span>
+              )}
+            </div>
+          )}
+
+          {preReloadBuffer !== null && (
+            <div
+              role="status"
+              className="px-4 py-2 bg-zinc-900/60 border-b border-zinc-800 text-[11px] text-zinc-400 font-mono flex items-center gap-3"
+            >
+              <span className="flex-1">Buffer replaced by Reload — your prior edits are kept.</span>
+              <button
+                onClick={handleUndoReload}
+                className="underline hover:text-zinc-100 cursor-pointer shrink-0"
+              >
+                Undo reload
+              </button>
+            </div>
+          )}
 
           <div className="flex-1 w-full h-full relative">
             <Editor
@@ -116,7 +277,7 @@ export default function ERDDesignerPage() {
               language="indigo"
               theme="indigo-dark"
               value={dslCode}
-              onChange={(value) => setDslCode(value || '')}
+              onChange={(value) => handleDslChange(value || '')}
               beforeMount={registerIndigoLanguage}
               options={{
                 minimap: { enabled: false },
@@ -141,6 +302,8 @@ export default function ERDDesignerPage() {
               }
             />
           </div>
+
+          <DiagnosticsPanel diagnostics={diagnostics} />
         </section>
       )}
 

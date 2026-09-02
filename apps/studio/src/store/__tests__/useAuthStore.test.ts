@@ -24,6 +24,7 @@ describe('useAuthStore', () => {
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
       environment: null,
+      schemaWritable: false,
     });
     vi.mocked(fetchAuthStatus).mockReset();
     vi.mocked(login).mockReset();
@@ -43,6 +44,7 @@ describe('useAuthStore', () => {
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
       environment: null,
+      schemaWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -59,6 +61,7 @@ describe('useAuthStore', () => {
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
       environment: null,
+      schemaWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -74,6 +77,7 @@ describe('useAuthStore', () => {
       queryTimeoutMs: 9000,
       queryRowCap: 250,
       environment: null,
+      schemaWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -112,6 +116,7 @@ describe('useAuthStore', () => {
       queryTimeoutMs: 30000,
       queryRowCap: 1000,
       environment: 'production',
+      schemaWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -125,6 +130,35 @@ describe('useAuthStore', () => {
     await expect(useAuthStore.getState().checkStatus()).resolves.not.toThrow();
 
     expect(useAuthStore.getState().environment).toBeNull();
+  });
+
+  it('defaults schemaWritable to false before any status check (SD-4 — disabled until confirmed)', () => {
+    useAuthStore.setState({ schemaWritable: false });
+    expect(useAuthStore.getState().schemaWritable).toBe(false);
+  });
+
+  it('checkStatus adopts the server-reported schemaWritable value', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      authRequired: false,
+      authenticated: true,
+      readOnly: false,
+      queryTimeoutMs: 30000,
+      queryRowCap: 1000,
+      environment: null,
+      schemaWritable: true,
+    });
+
+    await useAuthStore.getState().checkStatus();
+
+    expect(useAuthStore.getState().schemaWritable).toBe(true);
+  });
+
+  it('checkStatus leaves schemaWritable at its false default when the probe fails soft (standalone, no backend)', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(null);
+
+    await expect(useAuthStore.getState().checkStatus()).resolves.not.toThrow();
+
+    expect(useAuthStore.getState().schemaWritable).toBe(false);
   });
 
   it('a successful login sets authenticated true and clears any prior error', async () => {

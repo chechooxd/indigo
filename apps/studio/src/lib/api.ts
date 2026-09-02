@@ -51,7 +51,42 @@ export interface AuthStatus {
   queryRowCap: number;
   /** Resolved startup `--env`/`INDIGODB_ENV` label, verbatim; `null` when unset. Never an enforcement input. */
   environment: string | null;
+  /**
+   * `true` only when the server was started with a real `schemaPath` (see
+   * @indigodb/cli's `studio-server.ts`). Independent of `readOnly` — a
+   * read-only server with a real schema file still reports `true`; the
+   * read-only gate is what ultimately answers `403` on the write route.
+   */
+  schemaWritable: boolean;
 }
+
+/** Mirrors @indigodb/parser's `ParseErrorDetail` shape without a direct
+ * package dependency (this app depends on `@indigodb/core`, which does not
+ * re-export the type). */
+export interface SchemaParseErrorDetail {
+  message: string;
+  line?: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
+}
+
+export interface SchemaSource {
+  source: string;
+  /** Content-hash version token, echoed back on `PUT`. `null` when the
+   * server has no `schemaPath` configured (no version header published). */
+  version: string | null;
+}
+
+export type SaveSchemaResult =
+  | { ok: true; version: string }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      parseErrors?: SchemaParseErrorDetail[];
+      validationErrors?: { message: string }[];
+    };
 
 export interface LoginResult {
   ok: boolean;
@@ -100,14 +135,44 @@ export async function fetchSchema(): Promise<ResolvedSchema | null> {
   }
 }
 
-export async function fetchSchemaSource(): Promise<string | null> {
+export async function fetchSchemaSource(): Promise<SchemaSource | null> {
   try {
     const res = await fetch('/api/schema/source');
     notifyIfUnauthorized(res);
     if (!res.ok || !hasContentType(res, 'text/plain')) throw new Error();
-    return await res.text();
+    const source = await res.text();
+    return { source, version: res.headers.get('X-Indigo-Schema-Version') };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Submits an edited schema buffer for persistence. Never throws: every
+ * refusal (400/403/404/409/422) needs its own distinguishable UI, and
+ * `throw new Error(...)` would flatten five outcomes into one string and
+ * force the caller to re-derive the status it just lost — `login()` above
+ * already establishes this non-throwing, discriminated-result style.
+ */
+export async function saveSchemaSource(source: string, version: string): Promise<SaveSchemaResult> {
+  try {
+    const res = await fetch('/api/schema/source', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source, version }),
+    });
+    notifyIfUnauthorized(res);
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) return { ok: true, version: body.version as string };
+    return {
+      ok: false,
+      status: res.status,
+      error: body?.error ?? 'Save failed',
+      parseErrors: body?.parseErrors,
+      validationErrors: body?.validationErrors,
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Network error' };
   }
 }
 

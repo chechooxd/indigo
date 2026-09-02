@@ -215,16 +215,20 @@ Honest estimate, authored additions + deletions:
 
 ## Success Criteria
 
-- [ ] A round-trip test reads the `.indigo` file back off disk and proves the `datasource` block is
-      byte-identical after a save.
-- [ ] Exactly one brace-depth datasource scanner exists in `studio-server.ts`; the write path uses
-      literal sentinel substitution and never rescans.
-- [ ] `--read-only` refuses a schema write with `403` and one audit line, with the file unchanged.
-- [ ] A schema that does not compile is never written to disk.
-- [ ] Every failure mode has a distinct, user-visible message; Save is never a silent no-op and
-      never reports success on a non-2xx.
-- [ ] Parse errors produce exact-position markers; validation errors produce zero markers and a
-      labelled panel entry.
+- [x] A round-trip test reads the `.indigo` file back off disk and proves the `datasource` block is
+      byte-identical after a save. Evidence: `tasks.md` 2.1/2.32 (SW-1), verified independently by
+      the orchestrator's addendum after PR #1b.
+- [x] Exactly one brace-depth datasource scanner exists in `studio-server.ts`; the write path uses
+      literal sentinel substitution and never rescans. Evidence: `tasks.md` 1.1–1.2 (`splitDatasource`,
+      SW-17).
+- [x] `--read-only` refuses a schema write with `403` and one audit line, with the file unchanged.
+      Evidence: `tasks.md` 2.21–2.22 (SW-11).
+- [x] A schema that does not compile is never written to disk. Evidence: `tasks.md` 2.16–2.18 (SW-9).
+- [x] Every failure mode has a distinct, user-visible message; Save is never a silent no-op and
+      never reports success on a non-2xx. Evidence: `tasks.md` 3.15–3.22 (SD-5/6/7, the 409 banner
+      with Reload/Undo, the 422 diagnostics panel, and the 200-only toast).
+- [x] Parse errors produce exact-position markers; validation errors produce zero markers and a
+      labelled panel entry. Evidence: `tasks.md` 3.1–3.10 (SD-1/2/3, `toMarkers`/`isPositional`).
 
 ## Proposal question round
 

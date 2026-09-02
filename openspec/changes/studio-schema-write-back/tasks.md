@@ -331,120 +331,120 @@ None of the three count toward either suite's `ran` total.
 
 ## Phase 3: PR #2 — Studio Save UI
 
-- [ ] 3.1 RED (SD-1): `apps/studio/src/features/erd/__tests__/useERDParser.test.tsx` — render the
+- [x] 3.1 RED (SD-1): `apps/studio/src/features/erd/__tests__/useERDParser.test.tsx` — render the
       hook with a known-bad source; assert one diagnostic with `source:'parse'` and the exact
       1-based `line`/`column`/`endLine`/`endColumn` from `ParseErrorDetail`. Fails today:
       `useERDParser.ts:63` is `console.warn`, the hook returns no diagnostics field.
-- [ ] 3.2 GREEN: replace the `console.warn` fallback with diagnostics state shared by the editor
+- [x] 3.2 GREEN: replace the `console.warn` fallback with diagnostics state shared by the editor
       and the ERD canvas; map every `IndigoParseError.errors` entry to a `PositionalDiagnostic`.
       Markers must be cleared and replaced (not accumulated) on each re-parse. Make 3.1 green.
-- [ ] 3.3 RED (studio-editor-diagnostics: "fixing the error clears its marker" — distinct scenario
+- [x] 3.3 RED (studio-editor-diagnostics: "fixing the error clears its marker" — distinct scenario
       from 3.1, not folded into it): extend `useERDParser.test.tsx` — after a marker is showing,
       edit the buffer to fix that error and re-parse successfully; assert the previously shown
       marker is removed, not merely superseded.
-- [ ] 3.4 GREEN: rebuild markers from scratch each parse under owner `"indigo"` (decision 17);
+- [x] 3.4 GREEN: rebuild markers from scratch each parse under owner `"indigo"` (decision 17);
       `setModelMarkers(model, "indigo", [])` is the clear path when diagnostics are empty. Make 3.3
       green.
-- [ ] 3.5 RED (SD-2): `useERDParser.test.tsx` — a source that parses but fails `resolve`; assert
+- [x] 3.5 RED (SD-2): `useERDParser.test.tsx` — a source that parses but fails `resolve`; assert
       `diagnostics.length === 1`, `source:'validate'`, `line === undefined`, and
       `toMarkers(diagnostics)` returns `[]`.
-- [ ] 3.6 GREEN: classify `ValidationError`-shaped failures (`{message, model?, field?}`, no
+- [x] 3.6 GREEN: classify `ValidationError`-shaped failures (`{message, model?, field?}`, no
       position) as position-less diagnostics entries; no text-search inference, no line-1 fallback.
       Make 3.5 green.
-- [ ] 3.7 RED (strengthened SD-2, distinct assertion — "no marker fabricated via name search"):
+- [x] 3.7 RED (strengthened SD-2, distinct assertion — "no marker fabricated via name search"):
       extend the 3.5 test with a validation error naming a `model` value that also happens to
       appear at a specific line in the buffer text; assert no marker appears at that line, and none
       at line 1 either. This proves absence of a name-search fallback specifically — `toMarkers ===
       []` alone does not.
-- [ ] 3.8 GREEN: confirm 3.6's classification performs no buffer text search for `model`/`field`
+- [x] 3.8 GREEN: confirm 3.6's classification performs no buffer text search for `model`/`field`
       names and no line-1 anchoring; fix only if 3.7 fails.
-- [ ] 3.9 RED — **explicitly not RED against the untouched tree** (SD-3):
+- [x] 3.9 RED — **explicitly not RED against the untouched tree** (SD-3):
       `apps/studio/src/features/erd/__tests__/markers.test.ts` — a `// @ts-expect-error` on
       `toMarkers([validationDiagnostic])`. Neither `toMarkers` nor `PositionalDiagnostic` exists
       yet, so the file simply fails to compile — there is no failing-test moment to observe, only a
       compile failure. Record this explicitly rather than treating it as a RED case; it becomes a
       real typecheck guard only after 3.10 lands.
-- [ ] 3.10 GREEN: implement `toMarkers(diagnostics: PositionalDiagnostic[])` with non-optional
+- [x] 3.10 GREEN: implement `toMarkers(diagnostics: PositionalDiagnostic[])` with non-optional
       `line`/`column`/`endLine`/`endColumn`, and an `isPositional` filter narrowing `Diagnostic` to
       `PositionalDiagnostic`. Verified by `pnpm --filter @indigodb/studio lint` (`tsc -b --noEmit`
       — see 3.26), not by a runtime assertion.
-- [ ] 3.11 RED (SD-4): `apps/studio/src/features/erd/__tests__/DslEditorToolbar.test.tsx` — render
+- [x] 3.11 RED (SD-4): `apps/studio/src/features/erd/__tests__/DslEditorToolbar.test.tsx` — render
       with `schemaWritable:false`; assert the Save button is `disabled` and its `title` names the
       reason; then `dirty:false, schemaWritable:true` → still disabled; `dirty:true` → enabled.
       Fails today: the component takes only `{dslCode}` (`:16`) and renders no Save button.
-- [ ] 3.12 GREEN: add a Save button to `DslEditorToolbar` with disabled-with-reason logic and a
+- [x] 3.12 GREEN: add a Save button to `DslEditorToolbar` with disabled-with-reason logic and a
       saving state; `dirty` is passed in as a comparison result (decision 16), never recomputed
       locally. Make 3.11 green.
-- [ ] 3.13 RED: a unit test for `apps/studio/src/lib/api.ts`'s new shapes — `fetchSchemaSource`
+- [x] 3.13 RED: a unit test for `apps/studio/src/lib/api.ts`'s new shapes — `fetchSchemaSource`
       returns `Promise<{source, version} | null>` (BREAKING: was `Promise<string | null>`);
       `saveSchemaSource(source, version)` returns the discriminated union
       `{ok:true,version} | {ok:false,status,error,parseErrors?,validationErrors?}` and **never
       throws**. Place alongside the toolbar/page suites, or confirm during apply whether an
       existing `api.ts` test file already exists before creating a new one.
-- [ ] 3.14 GREEN: implement `fetchSchemaSource`, `saveSchemaSource`, `AuthStatus.schemaWritable`.
+- [x] 3.14 GREEN: implement `fetchSchemaSource`, `saveSchemaSource`, `AuthStatus.schemaWritable`.
       Make 3.13 green; grep every existing call site of `fetchSchemaSource` and update it for the
       breaking return-shape change (`login()` at `api.ts:231` already establishes the
       non-throwing-with-discriminated-result style — follow it, don't invent a new one).
-- [ ] 3.15 RED (SD-5): `apps/studio/src/features/erd/__tests__/ERDDesignerPage.test.tsx` — mocked
+- [x] 3.15 RED (SD-5): `apps/studio/src/features/erd/__tests__/ERDDesignerPage.test.tsx` — mocked
       `saveSchemaSource` → `{ok:false,status:409}`; assert the conflict banner renders and the
       editor's `value` prop is byte-identical to the pre-save buffer. Fails today: no save path
       exists.
-- [ ] 3.16 GREEN: wire `ERDDesignerPage`'s `savedSource`/`version`/`dirty` state
+- [x] 3.16 GREEN: wire `ERDDesignerPage`'s `savedSource`/`version`/`dirty` state
       (`dirty = dslCode !== savedSource`, a comparison, not a flag — decision 16, so an undo back to
       the saved text correctly re-disables Save), the save handler, and the 409 banner. Make 3.15
       green.
-- [ ] 3.17 RED (SD-6): extend `ERDDesignerPage.test.tsx` — click Reload (mocked `GET` returns
+- [x] 3.17 RED (SD-6): extend `ERDDesignerPage.test.tsx` — click Reload (mocked `GET` returns
       different text); assert the editor value is the disk text and the version updated; click
       Undo reload; assert the original buffer is restored.
-- [ ] 3.18 GREEN: implement Reload (replaces buffer + version token, stashes the pre-reload buffer
+- [x] 3.18 GREEN: implement Reload (replaces buffer + version token, stashes the pre-reload buffer
       in component state) and Undo reload (decision 14). Confirm **no** save-anyway/force-overwrite
       control is rendered anywhere in the 409 banner — this resolves proposal question 2 as no
       escape hatch. Make 3.17 green.
-- [ ] 3.19 RED (SD-7): extend `ERDDesignerPage.test.tsx` — mocked `saveSchemaSource` →
+- [x] 3.19 RED (SD-7): extend `ERDDesignerPage.test.tsx` — mocked `saveSchemaSource` →
       `{ok:false,status:422}`; assert zero success toasts, the diagnostics panel has one entry, and
       `dirty` is still `true`. Guards this repo's recurring "silent no-op that looks green" failure
       mode.
-- [ ] 3.20 GREEN: wire the `422` path through the same diagnostics state as 3.2/3.6; no toast is
+- [x] 3.20 GREEN: wire the `422` path through the same diagnostics state as 3.2/3.6; no toast is
       shown on any non-2xx branch. Make 3.19 green.
-- [ ] 3.21 RED (studio-schema-write: "a successful save shows a toast and clears the dirty flag" —
+- [x] 3.21 RED (studio-schema-write: "a successful save shows a toast and clears the dirty flag" —
       not itemized as its own row in the design's Testing Strategy table; do not let SD-5/6/7's
       negative-path coverage imply this positive path is tested): extend `ERDDesignerPage.test.tsx`
       — mocked `saveSchemaSource` → `{ok:true, version:"v2"}`; assert a success toast, `dirty`
       clears, and the new `version` is adopted for the next save cycle.
-- [ ] 3.22 GREEN: wire the `200` branch of the save handler — toast, `savedSource := dslCode`,
+- [x] 3.22 GREEN: wire the `200` branch of the save handler — toast, `savedSource := dslCode`,
       `version := response.version`. Make 3.21 green.
-- [ ] 3.23 Create `apps/studio/src/features/erd/components/DiagnosticsPanel.tsx` — labelled
+- [x] 3.23 Create `apps/studio/src/features/erd/components/DiagnosticsPanel.tsx` — labelled
       entries; explicit "no source location" wording for validation-class diagnostics. Confirm
       3.6/3.20's panel-entry assertions render through this component rather than asserting on raw
       diagnostics state alone.
-- [ ] 3.24 studio-editor-diagnostics: "a parse failure is visible on screen, not only in the
+- [x] 3.24 studio-editor-diagnostics: "a parse failure is visible on screen, not only in the
       console" (integration check, not itemized separately in the design table): extend
       `ERDDesignerPage.test.tsx` (or `useERDParser.test.tsx` if it renders through the panel) to
       assert the diagnostics panel and/or markers are visible for a parse failure, checked without
       inspecting console output — ties 3.2's hook-level diagnostics to the rendered panel from
       3.23.
-- [ ] 3.25 Run `pnpm --filter @indigodb/studio test` (vitest) — confirm 3.1–3.24 all green.
+- [x] 3.25 Run `pnpm --filter @indigodb/studio test` (vitest) — confirm 3.1–3.24 all green.
       `markers.test.ts` (3.9/3.10) is a compile-time guard only, verified by 3.26, not counted in
       this run's pass count.
-- [ ] 3.26 Run `pnpm --filter @indigodb/studio lint` — **`tsc -b --noEmit`, not plain
+- [x] 3.26 Run `pnpm --filter @indigodb/studio lint` — **`tsc -b --noEmit`, not plain
       `tsc --noEmit`**, which typechecks zero files in this package. This is what actually gates
       SD-3.
-- [ ] 3.27 Run `pnpm --filter @indigodb/studio build` — confirm the app still builds with the
+- [x] 3.27 Run `pnpm --filter @indigodb/studio build` — confirm the app still builds with the
       breaking `fetchSchemaSource` shape change fully threaded through every call site. Rollback
       boundary: reverts to today's read-only editor with no server-side change.
 
 ## Phase 4: Cross-package verification
 
-- [ ] 4.1 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from the repo root.
+- [x] 4.1 Run `pnpm clean && pnpm build --force && pnpm lint && pnpm test` from the repo root.
       `--force` is mandatory: Turbo restores a cached `dist/` wholesale on a cache hit, and a bare
       `pnpm clean && pnpm build` has previously resurrected dead files from deleted packages in
       this repo.
-- [ ] 4.2 Confirm every regression guard named above stayed untouched and green on the final tree:
+- [x] 4.2 Confirm every regression guard named above stayed untouched and green on the final tree:
       1.11 (`studio-server.mjs`), 2.24 (`studio-readonly.mjs`), 2.37 (existing audit suite), and
       3.14's call-site updates are the only edits to pre-existing `fetchSchemaSource` consumers.
-- [ ] 4.3 Update `openspec/changes/studio-schema-write-back/proposal.md` Success Criteria
+- [x] 4.3 Update `openspec/changes/studio-schema-write-back/proposal.md` Success Criteria
       checkboxes to checked, referencing this `tasks.md` as evidence.
-- [ ] 4.4 Record explicitly-out-of-scope items (not silently dropped):
+- [x] 4.4 Record explicitly-out-of-scope items (not silently dropped):
       - Residual TOCTOU between the staleness re-read and the `rename`: two writers within
         milliseconds can both pass the staleness check; `rename` still guarantees the file is never
         a blend of the two. A real fix needs advisory locking, which has no precedent in this CLI;
