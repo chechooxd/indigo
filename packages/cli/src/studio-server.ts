@@ -23,7 +23,7 @@ import { join, extname, normalize } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import type { ResolvedColumn, ResolvedSchema, ResolvedTable } from "@indigodb/core";
 import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
@@ -40,6 +40,17 @@ export interface StudioOptions {
   resolved: ResolvedSchema;
   /** Raw `.indigo` source text, served for the editor. */
   source: string;
+  /**
+   * Absolute path to the schema file on disk. When present, `GET
+   * /api/schema/source` re-reads and re-redacts this file on every request
+   * (rather than serving the `source` string snapshotted at startup) and
+   * publishes an `X-Indigo-Schema-Version` header derived from the file's
+   * current bytes. `undefined` (the default) falls back to serving
+   * `redactSource(source)` with no version header — see decision 13 in
+   * design.md. Every existing call site (embedders, tests) omits this and
+   * keeps working unchanged.
+   */
+  schemaPath?: string;
   connectionString: string;
   port: number;
   /**
@@ -324,36 +335,70 @@ function redactSchema(resolved: ResolvedSchema): ResolvedSchema {
 }
 
 /**
- * Strips the raw `datasource { ... }` block from `.indigo` source text
- * before it is served over `/api/schema/source`, replacing it with a short
- * placeholder comment. A connection string (literal or `env()`) can only
- * ever appear inside this block, and the block can span multiple lines and
- * nest braces (e.g. a future `env(...)` call with its own parens/braces), so
- * this is a brace-depth line scan rather than a regex — a regex cannot
- * reliably match a nested, multi-line block.
- *
- * Forward-looking constraint: this redaction is safe only because no
- * save-back/schema-editor-write endpoint exists yet in this server. If one
- * is ever added (Studio schema write-back is on the roadmap), it MUST NOT
- * round-trip this redacted text back into the real schema file — it must
- * read the original, unredacted source instead.
+ * The literal placeholder line `splitDatasource`/`redactSource` substitute
+ * for a `datasource { ... }` block. Hoisted to a named export so the write
+ * path (`reattachDatasource`, PR #1b) and the read path share the exact same
+ * literal instead of two copies drifting apart.
  */
-export function redactSource(source: string): string {
+export const DATASOURCE_SENTINEL = "// datasource redacted by Studio";
+
+/**
+ * The result of scanning `.indigo` source for its `datasource { ... }`
+ * block: `redacted` is the source with that block replaced by exactly one
+ * `DATASOURCE_SENTINEL` line (or the source unchanged when there is no
+ * block); `block` is the original block text — including the `datasource`
+ * header line and its closing brace, `"\n"`-joined — or `null` when no
+ * block was found.
+ *
+ * The reconstruction property this shape guarantees: splicing `block` back
+ * in place of the single sentinel line in `redacted` reproduces the
+ * original source byte-for-byte, because splitting/joining on `"\n"` is
+ * lossless and every line outside the block is carried through unchanged.
+ */
+export interface DatasourceSplit {
+  redacted: string;
+  block: string | null;
+}
+
+/**
+ * Splits `.indigo` source text into its datasource-redacted form and the
+ * original datasource block text, in a single brace-depth line scan. A
+ * connection string (literal or `env()`) can only ever appear inside this
+ * block, and the block can span multiple lines and nest braces (e.g. a
+ * future `env(...)` call with its own parens/braces), so this is a
+ * brace-depth scan rather than a regex — a regex cannot reliably match a
+ * nested, multi-line block.
+ *
+ * One scanner producing both halves (rather than two scans kept in lockstep
+ * by discipline) is what makes the reconstruction property a compile-time
+ * invariant instead of a review-time one — see `DatasourceSplit`'s doc
+ * comment and the `studio-schema-source.mjs` property test (SW-17).
+ *
+ * Forward-looking constraint carried over from the pre-refactor
+ * `redactSource`: `redacted` must never be round-tripped back into the real
+ * schema file — the write path reattaches the original `block` instead (see
+ * `reattachDatasource`, PR #1b).
+ */
+export function splitDatasource(source: string): DatasourceSplit {
   const lines = source.split("\n");
   const out: string[] = [];
+  const blockLines: string[] = [];
   let depth = 0;
   let inBlock = false;
+  let sawBlock = false;
 
   for (const line of lines) {
     if (!inBlock) {
       if (/^\s*datasource\b/.test(line)) {
         inBlock = true;
+        sawBlock = true;
         depth = 0;
         for (const ch of line) {
           if (ch === "{") depth++;
           else if (ch === "}") depth--;
         }
-        out.push("// datasource redacted by Studio");
+        blockLines.push(line);
+        out.push(DATASOURCE_SENTINEL);
         if (depth <= 0) inBlock = false;
         continue;
       }
@@ -361,15 +406,26 @@ export function redactSource(source: string): string {
       continue;
     }
 
+    blockLines.push(line);
     for (const ch of line) {
       if (ch === "{") depth++;
       else if (ch === "}") depth--;
     }
     if (depth <= 0) inBlock = false;
-    // Lines inside the datasource block are dropped entirely.
+    // Lines inside the datasource block are dropped entirely from `out`.
   }
 
-  return out.join("\n");
+  return { redacted: out.join("\n"), block: sawBlock ? blockLines.join("\n") : null };
+}
+
+/**
+ * Strips the raw `datasource { ... }` block from `.indigo` source text
+ * before it is served over `/api/schema/source`, replacing it with a short
+ * placeholder comment. A one-line wrapper over `splitDatasource` — this
+ * exported signature is unchanged from before the refactor.
+ */
+export function redactSource(source: string): string {
+  return splitDatasource(source).redacted;
 }
 
 /**
@@ -757,7 +813,7 @@ function statementTimeoutMessage(queryTimeoutMs: number): string {
 export async function startStudio(
   options: StudioOptions,
 ): Promise<{ port: number; host: string; close(): Promise<void> }> {
-  const { resolved, source, connectionString, port, open = true } = options;
+  const { resolved, source, schemaPath, connectionString, port, open = true } = options;
   const host = options.host ?? "127.0.0.1";
   // Mirrors `resolveQueryTimeoutMs`/`resolveQueryRowCap`'s own built-in
   // defaults (util.ts) so a caller of `startStudio` that skips the CLI's
@@ -768,7 +824,6 @@ export async function startStudio(
   const db = options.db ?? createPgDb(connectionString, queryTimeoutMs);
   const distDir = resolveStudioDist();
   const publicSchema = redactSchema(resolved);
-  const publicSource = redactSource(source);
 
   // Resolved ONCE at startup, never per-request: with no password configured
   // this is `null` and every request path below short-circuits on `if
@@ -939,9 +994,32 @@ export async function startStudio(
         return;
       }
 
-      if (path === "/api/schema/source") {
+      if (path === "/api/schema/source" && req.method === "GET") {
+        // Per-request read + redact when `schemaPath` is set, so an
+        // external edit to the file is visible on the very next GET — no
+        // startup snapshot is ever served here (design.md decision 5 / SW-2).
+        // Falls back to the startup `source` string with no version header
+        // when `schemaPath` is absent (decision 13), keeping every existing
+        // `startStudio` call site that omits it working unchanged.
+        if (schemaPath) {
+          let fileBytes: Buffer;
+          try {
+            fileBytes = await readFile(schemaPath);
+          } catch {
+            sendJson(res, 404, { error: "Schema file not found" });
+            return;
+          }
+          const { redacted } = splitDatasource(fileBytes.toString("utf-8"));
+          const version = createHash("sha256").update(fileBytes).digest("hex").slice(0, 16);
+          res.writeHead(200, {
+            "content-type": "text/plain; charset=utf-8",
+            "X-Indigo-Schema-Version": version,
+          });
+          res.end(redacted);
+          return;
+        }
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-        res.end(publicSource);
+        res.end(redactSource(source));
         return;
       }
 
