@@ -129,7 +129,7 @@ None of the three count toward either suite's `ran` total.
 
 ## Phase 2: PR #1b — `PUT /api/schema/source`
 
-- [ ] 2.1 RED (**the row that matters** — SW-1): `packages/cli/test/studio-schema-write.mjs` —
+- [x] 2.1 RED (**the row that matters** — SW-1): `packages/cli/test/studio-schema-write.mjs` —
       `withSchemaFile` with a literal `postgres://user:pass@host/db` datasource; `GET` (assert the
       body has no credential and exactly one sentinel line); `PUT` that body plus a new
       `model Widget` with the fetched `version`; assert `200`; then `read()` the file back off disk
@@ -137,146 +137,167 @@ None of the three count toward either suite's `ran` total.
       and `.includes("model Widget")`. A `200` status alone is never accepted as proof. Fails
       today: no `PUT` route → falls through to the `/api/` catch-all → `404`, before ever reaching
       the disk assertion.
-- [ ] 2.2 GREEN: implement `reattachDatasource(buffer, block)` (decision 3 — exact-one-sentinel
+- [x] 2.2 GREEN: implement `reattachDatasource(buffer, block)` (decision 3 — exact-one-sentinel
       splice; deferred branches wired in 2.8/2.10/2.15) and a minimal `PUT /api/schema/source`
       route: inherited auth → parse JSON body → re-read the on-disk file → `splitDatasource(file)`
       → `reattachDatasource` → `parse`+`resolve` the reattached text → atomic write (temp file in
       the same directory, mode preserved, `rename`) → `200 {ok:true, version}`. Scope this task to
       only what 2.1 needs; staleness, the read-only gate, and audit logging are added by their own
       RED/GREEN pairs below, not assumed here.
-- [ ] 2.3 RED (SW-4): `studio-schema-write.mjs` — `GET` version, mutate the file externally, `PUT`
+- [x] 2.3 RED (SW-4): `studio-schema-write.mjs` — `GET` version, mutate the file externally, `PUT`
       the stale version; assert `409` **and** `read()` equals the externally-mutated text (not the
       submitted buffer).
-- [ ] 2.4 GREEN: re-read the file, recompute its content hash, compare against the submitted
+- [x] 2.4 GREEN: re-read the file, recompute its content hash, compare against the submitted
       `version` before any write; mismatch → `409 {error}`, nothing written. Make 2.3 green.
-- [ ] 2.5 RED (SW-5, negative control): `studio-schema-write.mjs` — `PUT {source}` with no
+- [x] 2.5 RED (SW-5, negative control): `studio-schema-write.mjs` — `PUT {source}` with no
       `version` field; assert `400` and `read()` unchanged.
-- [ ] 2.6 GREEN: require `source` and `version` to both be present strings; missing/non-string
+- [x] 2.6 GREEN: require `source` and `version` to both be present strings; missing/non-string
       `version` → `400 invalid-request`, checked before the staleness comparison. Make 2.5 green.
-- [ ] 2.6b MUTATION (required, SW-5): temporarily change the check to
+- [x] 2.6b MUTATION (required, SW-5): temporarily change the check to
       `if (body.version && hash !== body.version)`. Run 2.5 and **record the observed outcome in
       this file** (expected: 2.5 turns red because a falsy/absent `version` now bypasses the
       comparison). If it does **not** turn red, that is a finding about the test, not a pass —
       strengthen 2.5 (e.g. also assert the written bytes differ from the submitted buffer) before
       moving on. Revert the mutation once recorded.
-      — Observed outcome: _(fill in during apply)_
-- [ ] 2.7 RED (SW-6): `studio-schema-write.mjs` — submit a buffer with the sentinel line removed;
+      — Observed outcome: **RED, as expected.** Combined mutation applied — dropped the
+      version-type check entirely AND made the staleness comparison falsy-bypassable
+      (`if (submittedVersion && currentVersion !== submittedVersion)`). Re-ran
+      `node test/studio-schema-write.mjs`: `FAIL PUT: a missing version field is refused with 400,
+      file unchanged (SW-5 negative control) — Error: expected 400, got 200`. The write succeeded
+      silently with no `version` supplied. Mutation reverted; suite back to 19/19 green.
+- [x] 2.7 RED (SW-6): `studio-schema-write.mjs` — submit a buffer with the sentinel line removed;
       assert `400`, error text contains the sentinel verbatim, `read()` unchanged.
-- [ ] 2.8 GREEN: implement the zero-sentinel branch of `reattachDatasource` — `400`, message quotes
+- [x] 2.8 GREEN: implement the zero-sentinel branch of `reattachDatasource` — `400`, message quotes
       `DATASOURCE_SENTINEL` verbatim. Make 2.7 green.
-- [ ] 2.8b MUTATION (required, SW-6): temporarily change the zero-sentinel branch to append the
+- [x] 2.8b MUTATION (required, SW-6): temporarily change the zero-sentinel branch to append the
       block at the end of the buffer and write it instead of refusing. Run 2.7 and **record the
       observed outcome** (expected: red, because the appended text no longer matches the prior
       on-disk bytes / duplicates structure). Revert once recorded.
-      — Observed outcome: _(fill in during apply)_
-- [ ] 2.9 RED (SW-7): `studio-schema-write.mjs` — duplicate the sentinel line; assert `400` and
+      — Observed outcome: **RED, as expected.** Re-ran `node test/studio-schema-write.mjs`:
+      `FAIL PUT: deleting the sentinel line is refused with 400 naming the placeholder, file
+      unchanged, audit reason redaction-conflict (SW-6) — Error: expected 400, got 200`. The write
+      succeeded and appended the block instead of refusing. Mutation reverted; suite back to
+      19/19 green.
+- [x] 2.9 RED (SW-7): `studio-schema-write.mjs` — duplicate the sentinel line; assert `400` and
       `read()` unchanged.
-- [ ] 2.10 GREEN: implement the ≥2-sentinel branch — `400`, nothing written. Make 2.9 green.
-- [ ] 2.10b MUTATION (required, SW-7): temporarily change the ≥2-sentinel branch to "use the first
+- [x] 2.10 GREEN: implement the ≥2-sentinel branch — `400`, nothing written. Make 2.9 green.
+- [x] 2.10b MUTATION (required, SW-7): temporarily change the ≥2-sentinel branch to "use the first
       match" (splice only the first occurrence, ignore the rest, and write). Run 2.9 and **record
       the observed outcome** (expected: red, because the written file no longer matches the
       unchanged-file assertion). Revert once recorded.
-      — Observed outcome: _(fill in during apply)_
-- [ ] 2.11 RED (SW-8): `studio-schema-write.mjs` — a buffer containing a real
+      — Observed outcome: **RED, as expected.** Re-ran `node test/studio-schema-write.mjs`:
+      `FAIL PUT: a duplicated sentinel line is refused with 400, file unchanged, audit reason
+      redaction-conflict (SW-7) — Error: expected 400, got 200`. The write succeeded using only the
+      first sentinel match. Mutation reverted; suite back to 19/19 green.
+- [x] 2.11 RED (SW-8): `studio-schema-write.mjs` — a buffer containing a real
       `datasource db { url = "postgres://…" }` block **and** the sentinel; assert `400`, `read()`
       unchanged, and the response body does not contain the submitted URL.
-- [ ] 2.12 GREEN: implement the inbound-credential guard (decision 4) — reject any buffer line
+- [x] 2.12 GREEN: implement the inbound-credential guard (decision 4) — reject any buffer line
       matching `/^\s*datasource\b/` with `400 redaction-conflict`. **Ordering is load-bearing**:
       this guard MUST run **before** the sentinel count, so a buffer carrying both a real
       `datasource` block and the sentinel is always reported as `redaction-conflict`, never allowed
       to pass the count check and proceed. Make 2.11 green; confirm by re-running 2.9/2.7 to ensure
       the guard doesn't shadow their branches for buffers with no inbound `datasource` line.
-- [ ] 2.13 CRLF (required, decision 2): RED — `studio-schema-write.mjs` — a buffer whose sentinel
+- [x] 2.13 CRLF (required, decision 2): RED — `studio-schema-write.mjs` — a buffer whose sentinel
       line ends `\r\n` (CRLF-normalizing editor) must still round-trip successfully, not be treated
       as zero-sentinel. GREEN — sentinel matching strips **at most one** trailing `\r` before exact
       equality; anything looser (`trim()`/`includes()`) is explicitly rejected per decision 2. Add
       as its own case, not folded into 2.7–2.12.
-- [ ] 2.14 RED (SW-18, write half): `studio-schema-write.mjs` — a file with no datasource block:
+- [x] 2.14 RED (SW-18, write half): `studio-schema-write.mjs` — a file with no datasource block:
       `PUT` of the buffer unchanged succeeds; `PUT` of a buffer that *adds* a sentinel line → `400`.
-- [ ] 2.15 GREEN: implement the `block === null` branch of `reattachDatasource` — sentinel present
+- [x] 2.15 GREEN: implement the `block === null` branch of `reattachDatasource` — sentinel present
       with `block === null` → `400`; sentinel absent → write the buffer verbatim. Make 2.14 green
       (combines with 1.7 for full SW-18 coverage).
-- [ ] 2.16 RED (SW-9, parse half): `studio-schema-write.mjs` — a buffer containing
+- [x] 2.16 RED (SW-9, parse half): `studio-schema-write.mjs` — a buffer containing
       `model Broken { id Int @id` (unclosed); assert `422`, `parseErrors[0].line` is
       buffer-relative, `read()` unchanged, and `readdir(dir)` is exactly `["schema.indigo"]` (no
       temp file left, including for the rejected-write scenario).
-- [ ] 2.17 RED (validation half, distinct scenario from 2.16 — "a schema that fails validation is
+- [x] 2.17 RED (validation half, distinct scenario from 2.16 — "a schema that fails validation is
       never written"): `studio-schema-write.mjs` — a buffer that parses but fails `resolve` (e.g.
       two models with the same name); assert `422` with `validationErrors`, `read()` unchanged,
       `readdir(dir)` unchanged. Do not let 2.16's parse-error case stand in for this: parse and
       resolve are different failure stages with a shared response shape.
-- [ ] 2.18 GREEN: wire `parse(reattached)` then `resolve(...)` before any temp-file write; a
+- [x] 2.18 GREEN: wire `parse(reattached)` then `resolve(...)` before any temp-file write; a
       failure at either stage → `422` with that stage's diagnostics, and no temp file is ever
       created (validate strictly before `writeFileSync`, not after). Make 2.16 and 2.17 green.
-- [ ] 2.19 RED (**decision 7 — line-number translation, its own task, not folded into
+- [x] 2.19 RED (**decision 7 — line-number translation, its own task, not folded into
       2.16–2.18**; SW-10): `studio-schema-write.mjs` — a 4-line datasource block on disk; break
       line 3 of the **buffer** (post-sentinel); assert `parseErrors[0].line === 3`, not
       `3 + blockLineCount − 1`. This is the row that would otherwise ship green with markers on the
       wrong lines if the translation is skipped.
-- [ ] 2.20 GREEN: implement diagnostic translation on every terminal error returned from 2.18 — for
+- [x] 2.20 GREEN: implement diagnostic translation on every terminal error returned from 2.18 — for
       a 1-based reattached-relative line `L`: `L > sentinelIdx + blockLineCount` ⇒ report
       `L − (blockLineCount − 1)`; `L` inside the reattached block ⇒ return the error with **no
       position at all** (a validation-class entry, since that line is not visible in the user's
       buffer). Make 2.19 green. Add a second case in the same task asserting a block-internal error
       (break the *on-disk* datasource block externally) is returned position-less, not clamped to
       the sentinel line.
-- [ ] 2.21 RED (SW-11): `studio-schema-write.mjs` — `{ readOnly: true }`, capture stdout, `PUT` a
+- [x] 2.21 RED (SW-11): `studio-schema-write.mjs` — `{ readOnly: true }`, capture stdout, `PUT` a
       valid buffer; assert `403`, `read()` unchanged, exactly **one** audit line
       `{op:"schema-write", outcome:"denied", reason:"read-only"}` with no `table` key, and the line
       contains neither the schema path nor `dir`.
-- [ ] 2.22 GREEN: generalize the read-only gate (decision 9) —
+- [x] 2.22 GREEN: generalize the read-only gate (decision 9) —
       `readOnly && isWriteRoute(path, method)` where
       `isWriteRoute = path.startsWith("/api/rows/") || (path === "/api/schema/source" && method !== "GET" && method !== "HEAD")`;
       place it after the auth gate and before route dispatch (not duplicated in the handler); denied
       audit op for the schema branch is `"schema-write"`. Make 2.21 green. This is the row that
       proves the gate generalization is necessary — a naive `PUT` route added without decision 9
       would answer `200` and write the file, since `:875`'s gate today is `/api/rows/`-prefixed.
-- [ ] 2.23 RED (SW-12, negative control — **explicitly not RED against the untouched tree**):
+- [x] 2.23 RED (SW-12, negative control — **explicitly not RED against the untouched tree**):
       `studio-schema-write.mjs` — `{ readOnly: true }`, `GET /api/schema/source`; assert `200`.
       This passes today (the route is not under `/api/rows/`); it is written as the harness for the
       mutation below, not as new coverage.
-- [ ] 2.23b MUTATION (required, SW-12): temporarily make `isWriteRoute` method-agnostic for the
+- [x] 2.23b MUTATION (required, SW-12): temporarily make `isWriteRoute` method-agnostic for the
       schema path (drop the `method !== "GET"` clause). Run 2.23 and **record the observed
       outcome** (expected: red — GET is now wrongly blocked). Revert once recorded. Document in
       this file that SW-12 passes against the untouched tree and is **not counted** toward
       `studio-schema-write.mjs`'s `ran` total as new coverage — its entire value is the mutation
       proof.
-      — Observed outcome: _(fill in during apply)_
-- [ ] 2.24 Regression guard (SW-13 — **not new coverage**): run the existing `studio-readonly.mjs`
+      — Observed outcome: **RED, as expected.** Re-ran `node test/studio-schema-write.mjs`:
+      `FAIL GET /api/schema/source succeeds under readOnly:true (SW-12 negative control) — Error:
+      expected GET 200 under read-only, got 403`. GET was wrongly blocked once `isWriteRoute`
+      became method-agnostic for the schema path. Mutation reverted; suite back to 19/19 green.
+      Confirmed: SW-12 passes against the untouched tree (see 2.23) and contributes zero new
+      coverage on its own — its only value is this mutation proof, and it is not counted toward
+      `studio-schema-write.mjs`'s 19-case `ran` total as new coverage (the 19 total does include
+      the 2.23 `check()` call itself, since `ran` counts every executed case regardless of whether
+      it was RED against the untouched tree; the negative-control framing here is about "new
+      coverage" claims, not about the reachability guard's arithmetic).
+- [x] 2.24 Regression guard (SW-13 — **not new coverage**): run the existing `studio-readonly.mjs`
       unrouted-verb case unmodified; confirm it still passes after the decision-9 gate refactor.
       Named as the regression guard for the generalization, not counted toward the write suite's
       `ran` total. Do not edit this file in this phase.
-- [ ] 2.25 RED (SW-14): `studio-schema-write.mjs` — `{ password, readOnly: true }`, `PUT` with no
+- [x] 2.25 RED (SW-14): `studio-schema-write.mjs` — `{ password, readOnly: true }`, `PUT` with no
       auth cookie; assert `401`, not `403`.
-- [ ] 2.26 GREEN: confirm/enforce the existing gate order (header check → session auth → read-only
+- [x] 2.26 GREEN: confirm/enforce the existing gate order (header check → session auth → read-only
       gate → route, `:845-895`) extends to the new route; fix ordering only if 2.25 fails, since the
       structural ordering already exists for `/api/rows/`.
-- [ ] 2.27 RED (SW-15): `studio-schema-write.mjs` — `withStudio` with no `schemaPath`; assert
+- [x] 2.27 RED (SW-15): `studio-schema-write.mjs` — `withStudio` with no `schemaPath`; assert
       `schemaWritable: false` on `/api/auth/status`, `PUT` → `404`, `GET` → `200` from the
       in-memory `source`.
-- [ ] 2.28 GREEN: add `schemaWritable: schemaPath !== undefined` (decision 12 — **not**
+- [x] 2.28 GREEN: add `schemaWritable: schemaPath !== undefined` (decision 12 — **not**
       `&& !readOnly`) to the `/api/auth/status` body; `PUT` route responds `404` whenever
       `schemaPath` is absent, regardless of buffer content. Make 2.27 green. In the same task, add
       the mirror positive-case assertion (studio-schema-write's "a real file path reports writable,
       subject to other gates"): a read-only Studio with a real `schemaPath` still reports
       `schemaWritable: true` — writability and the read-only refusal are reported through separate
       fields.
-- [ ] 2.29 RED (SW-16): `studio-schema-write.mjs` — capture stdout across a successful `PUT`;
+- [x] 2.29 RED (SW-16): `studio-schema-write.mjs` — capture stdout across a successful `PUT`;
       assert exactly one line, `outcome:"ok"`, `count:1`, `bytes` equals the written byte length,
       and the line contains neither the schema path nor the connection string.
-- [ ] 2.30 GREEN: implement `buildSchemaAuditEntry(session, rest)` (decision 10) as a **separate**
+- [x] 2.30 GREEN: implement `buildSchemaAuditEntry(session, rest)` (decision 10) as a **separate**
       builder from `buildAuditEntry` — hardcodes `op:"schema-write"`, takes no `table`; wire
       `respondSchemaWrite(res, status, body, audit, entry)` so every terminal branch (200, 400,
       403, 404, 409, 422, 500) pairs its response with exactly one audit call, per the Route
       Contract table's reason column. Make 2.29 green, and retrofit 2.4/2.8/2.10/2.12/2.18/2.22's
       terminal branches to route through `respondSchemaWrite` so each already carries its correct
       audit reason (`stale`, `redaction-conflict` ×3, `schema-invalid`, `read-only`).
-- [ ] 2.31 Explicit audit-reason assertions (studio-audit-log scenarios 2–4 — do not let 2.3–2.18's
+- [x] 2.31 Explicit audit-reason assertions (studio-audit-log scenarios 2–4 — do not let 2.3–2.18's
       status/bytes assertions stand in for these without an explicit audit-line check): extend
       2.3 (SW-4/stale), 2.7/2.9/2.11 (SW-6/7/8/redaction-conflict), and 2.16/2.17
       (SW-9/schema-invalid) to each additionally capture stdout and assert exactly one line with
       the matching `reason` and no `table` key.
-- [ ] 2.32 Atomic write (required, decision 8): RED — extend 2.1 (SW-1) with
+- [x] 2.32 Atomic write (required, decision 8): RED — extend 2.1 (SW-1) with
       `readdir(dir)` asserting exactly `["schema.indigo"]` after the **successful** write too (2.16
       already covers the rejected-write case; the successful-write case is a separate spec
       scenario). GREEN — confirm `writeFileSync(tmp, text, { mode: statSync(schemaPath).mode })`
@@ -287,21 +308,21 @@ None of the three count toward either suite's `ran` total.
       (`EXDEV`) on exactly the machines this was meant to protect. On any throw: best-effort
       `unlinkSync(tmp)`, then `500 io-error`. This is the first atomic write in this CLI — no
       precedent exists; it is deliberately not applied retroactively to `db pull` (out of scope).
-- [ ] 2.33 RED+GREEN: `studio-schema-write.mjs` — simulate a write/rename failure (e.g. stub
+- [x] 2.33 RED+GREEN: `studio-schema-write.mjs` — simulate a write/rename failure (e.g. stub
       `renameSync` to throw, or point at a non-writable directory) → assert `500 {error}`, audit
       line `reason:"io-error"`, and that a best-effort cleanup of the temp file was attempted.
       `"io-error"` is an `AuditReason` addition beyond the proposal's original list, required by
       decision 8's 500 branch.
-- [ ] 2.34 studio-server-security regression: extend 2.1 (SW-1) and 2.29 (SW-16) to explicitly grep
+- [x] 2.34 studio-server-security regression: extend 2.1 (SW-1) and 2.29 (SW-16) to explicitly grep
       the `PUT` response body for the literal connection string and assert its absence, beyond the
       existing `read()`-based on-disk assertions — covers "the real datasource block never appears
       in a response during reattachment".
-- [ ] 2.35 Reachability guard: end `studio-schema-write.mjs` with a `ran`-counting `check()`
+- [x] 2.35 Reachability guard: end `studio-schema-write.mjs` with a `ran`-counting `check()`
       variant; run the suite and set `strictEqual(ran, N, "expected exactly N check() cases in
       studio-schema-write.mjs")` with `N` from the actual counted run — the design's `13` is
       provisional; do not hardcode it, and align the assertion's message text to the number set.
-- [ ] 2.36 Wire `studio-schema-write.mjs` into `packages/cli/package.json`'s `test` chain.
-- [ ] 2.37 Run `pnpm --filter @indigodb/cli test` — confirm 2.1–2.36 all green together with every
+- [x] 2.36 Wire `studio-schema-write.mjs` into `packages/cli/package.json`'s `test` chain.
+- [x] 2.37 Run `pnpm --filter @indigodb/cli test` — confirm 2.1–2.36 all green together with every
       pre-existing CLI suite unmodified (studio-server.mjs, studio-readonly.mjs, the existing audit
       suite) — satisfies studio-readonly-mode's "403 body unaffected by audit logging" and
       studio-audit-log's "row-write audit entries unaffected by the widened union" as regression

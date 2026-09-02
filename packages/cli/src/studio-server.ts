@@ -19,13 +19,16 @@
 
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { join, extname, normalize } from "node:path";
+import { writeFileSync, renameSync, unlinkSync, statSync } from "node:fs";
+import { join, extname, normalize, dirname, basename } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import type { ResolvedColumn, ResolvedSchema, ResolvedTable } from "@indigodb/core";
+import { parse, validate, IndigoParseError } from "@indigodb/core";
+import type { ParseErrorDetail } from "@indigodb/parser";
 import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
 import { createStudioAuth, parseCookie, SESSION_COOKIE, SESSION_TTL_SECONDS, type StudioAuth } from "./studio-auth.js";
 import {
@@ -429,6 +432,137 @@ export function redactSource(source: string): string {
 }
 
 /**
+ * Strips at most one trailing `\r` from a line before comparing it against
+ * `DATASOURCE_SENTINEL` — decision 2. A CRLF-normalizing editor turns the
+ * sentinel line's ending into `\r\n`, which `String.split("\n")` leaves as a
+ * trailing `\r` on that one line; matching after stripping it keeps the
+ * round-trip working without loosening the match to `trim()`/`includes()`,
+ * either of which would accept a subtly mutated placeholder line.
+ */
+function stripTrailingCR(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+/**
+ * Outcome of `reattachDatasource` on a submitted write buffer. `reason` is
+ * always one of these three closed values regardless of which specific
+ * mismatch triggered it (zero sentinels, an unrelated `block === null`
+ * mismatch, or too many sentinels all map to `"no-sentinel"` /
+ * `"multiple-sentinels"`) — every `ok:false` result maps to the same `400
+ * redaction-conflict` audit reason at the call site, so the distinction only
+ * matters for the human-readable message, not for control flow.
+ */
+export type ReattachResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: "inbound-datasource" | "no-sentinel" | "multiple-sentinels" };
+
+/**
+ * Splices the real on-disk `block` back into a submitted write `buffer` in
+ * place of its single `DATASOURCE_SENTINEL` line — decision 3. No second
+ * brace-depth scan of the buffer exists here: the buffer's own `datasource`
+ * region (if any) is never parsed, only refused (decision 4). Ordering is
+ * load-bearing (non-negotiable #5 / decision 4): the inbound-credential
+ * guard runs BEFORE the sentinel count, so a buffer carrying both a real
+ * `datasource` block and the sentinel is always reported as
+ * `"inbound-datasource"`, never allowed to pass the count check.
+ */
+export function reattachDatasource(buffer: string, block: string | null): ReattachResult {
+  const lines = buffer.split("\n");
+
+  if (lines.some((line) => /^\s*datasource\b/.test(line))) {
+    return { ok: false, reason: "inbound-datasource" };
+  }
+
+  const sentinelIndexes: number[] = [];
+  lines.forEach((line, i) => {
+    if (stripTrailingCR(line) === DATASOURCE_SENTINEL) sentinelIndexes.push(i);
+  });
+
+  if (block === null) {
+    // Correction 2 (design.md): unreachable via a running `indigodb studio`
+    // (resolveConnectionString exits first), reachable only for embedders
+    // and tests. A sentinel with nothing to reattach is still refused, never
+    // silently dropped.
+    if (sentinelIndexes.length > 0) {
+      return { ok: false, reason: "no-sentinel" };
+    }
+    return { ok: true, text: buffer };
+  }
+
+  if (sentinelIndexes.length === 0) {
+    return { ok: false, reason: "no-sentinel" };
+  }
+  if (sentinelIndexes.length >= 2) {
+    return { ok: false, reason: "multiple-sentinels" };
+  }
+
+  const idx = sentinelIndexes[0];
+  const blockLines = block.split("\n");
+  const spliced = [...lines.slice(0, idx), ...blockLines, ...lines.slice(idx + 1)];
+  return { ok: true, text: spliced.join("\n") };
+}
+
+/** Human-readable `400` message for a `reattachDatasource` refusal. Always
+ * names the exact placeholder line (verbatim) so the user can restore it. */
+function reattachErrorMessage(reason: "inbound-datasource" | "no-sentinel" | "multiple-sentinels"): string {
+  switch (reason) {
+    case "inbound-datasource":
+      return (
+        "The submitted schema contains a literal `datasource` block. Studio manages the " +
+        "datasource block separately for you — remove it from your edit and keep the " +
+        `placeholder line "${DATASOURCE_SENTINEL}" in its place.`
+      );
+    case "no-sentinel":
+      return (
+        `Expected exactly one placeholder line ("${DATASOURCE_SENTINEL}") marking the ` +
+        "datasource block, but none was found. Reload the schema from the server to restore it."
+      );
+    case "multiple-sentinels":
+      return (
+        `Expected exactly one placeholder line ("${DATASOURCE_SENTINEL}") marking the ` +
+        "datasource block, but found more than one. Reload the schema from the server to restore it."
+      );
+  }
+}
+
+/**
+ * Translates a 1-based line number from the *reattached* text (what was
+ * actually parsed/validated) back to the submitted buffer's own coordinates
+ * — decision 7. `sentinelIdx` is the 0-based index of the sentinel line in
+ * the ORIGINAL buffer; `blockLineCount` is the on-disk block's line count.
+ * Returns `undefined` when `line` falls inside the reattached block itself
+ * (not visible in the user's buffer at all) — an honest "no position",
+ * never a position clamped to the sentinel line.
+ */
+function translateLine(
+  line: number | undefined,
+  sentinelIdx: number,
+  blockLineCount: number,
+): number | undefined {
+  if (line === undefined) return undefined;
+  if (line <= sentinelIdx) return line; // before the block: unaffected
+  if (line <= sentinelIdx + blockLineCount) return undefined; // inside the block: no position
+  return line - (blockLineCount - 1); // after the block: shift back
+}
+
+/** Applies `translateLine` to one parser diagnostic's `line`/`endLine`. A
+ * diagnostic that translates to no position is stripped of every positional
+ * field — a validation-class entry, since that line is not visible in the
+ * user's buffer. */
+function translateParseError(
+  error: ParseErrorDetail,
+  sentinelIdx: number,
+  blockLineCount: number,
+): ParseErrorDetail {
+  const line = translateLine(error.line, sentinelIdx, blockLineCount);
+  if (line === undefined) {
+    return { message: error.message };
+  }
+  const endLine = translateLine(error.endLine, sentinelIdx, blockLineCount) ?? line;
+  return { message: error.message, line, column: error.column, endLine, endColumn: error.endColumn };
+}
+
+/**
  * Thrown by `resolveWriteTarget` on any identifier or shape problem with a
  * write request. Every route that calls it maps this to HTTP 400 and runs
  * no SQL — see the individual checks below.
@@ -728,6 +862,19 @@ function validateHeaders(
   return { ok: true };
 }
 
+/**
+ * Generalized read-only-gate predicate (design.md decision 9): every
+ * `/api/rows/` request stays method-agnostic exactly as before (narrowing it
+ * would regress a shipped scenario), and `/api/schema/source` is
+ * method-scoped — `GET`/`HEAD` on that same path must remain readable in
+ * read-only mode, only a mutating verb on it is a write. A future write
+ * route inherits this gate by being added HERE, not by adding a second gate
+ * check next to its own handler.
+ */
+function isWriteRoute(path: string, method: string): boolean {
+  return path.startsWith("/api/rows/") || (path === "/api/schema/source" && method !== "GET" && method !== "HEAD");
+}
+
 function sendJson(res: import("node:http").ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -775,6 +922,37 @@ function buildAuditEntry(
   rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">,
 ): StudioAuditEntry {
   return { ts: new Date().toISOString(), kind: "studio.audit.write", op, table, session, ...rest };
+}
+
+/**
+ * `buildAuditEntry`'s SEPARATE sibling for `PUT /api/schema/source`
+ * (design.md decision 10) — hardcodes `op:"schema-write"` and never takes a
+ * `table`. Kept apart from `buildAuditEntry` (rather than making its
+ * `table` parameter optional) so a row write can never typecheck while
+ * silently forgetting its table.
+ */
+function buildSchemaAuditEntry(
+  session: string | undefined,
+  rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">,
+): StudioAuditEntry {
+  return { ts: new Date().toISOString(), kind: "studio.audit.write", op: "schema-write", session, ...rest };
+}
+
+/**
+ * `respondWrite`'s sibling for the schema-write route — same coupling of
+ * response and audit line, so a terminal branch cannot physically respond
+ * without logging. Delegates to `respondWrite` directly since the two are
+ * mechanically identical; the distinct name documents intent at each call
+ * site (design.md decision 10).
+ */
+function respondSchemaWrite(
+  res: import("node:http").ServerResponse,
+  status: number,
+  body: unknown,
+  audit: AuditContext,
+  entry: StudioAuditEntry,
+): void {
+  respondWrite(res, status, body, audit, entry);
 }
 
 /**
@@ -921,29 +1099,45 @@ export async function startStudio(
     }
 
     // ─── Read-only gate ─────────────────────────────────────────────────
-    // Method-agnostic: refuses every request under `/api/rows/` regardless
-    // of verb, so a future write route added under this prefix inherits the
-    // gate automatically instead of needing its own check. Runs strictly
-    // after the auth gate above (design.md: an unauthenticated write must
-    // answer 401, never 403 — the write route must not become an oracle for
-    // server posture). No DB connection or validation work happens here.
-    if (readOnly && path.startsWith("/api/rows/")) {
-      const deniedOp: AuditOp | null =
-        req.method === "POST" ? "insert" : req.method === "PATCH" ? "update" : req.method === "DELETE" ? "delete" : null;
-      // Non-write verbs (e.g. GET) hit this same method-agnostic gate and
-      // still get refused 403, but emit NOTHING — a GET is not an attempted
-      // mutation (design.md "denial line" decision).
-      if (auditLog && deniedOp) {
-        const table = decodeURIComponent(path.slice("/api/rows/".length));
-        console.log(
-          formatAuditLine(
-            buildAuditEntry(deniedOp, table, auditSessionFor(req), {
-              count: 0,
-              outcome: "denied",
-              reason: "read-only",
-            }),
-          ),
-        );
+    // Generalized predicate (design.md decision 9, `isWriteRoute` above):
+    // `/api/rows/` stays method-agnostic exactly as before; the schema route
+    // is method-scoped so `GET`/`HEAD` on it remain readable in read-only
+    // mode. Runs strictly after the auth gate above (design.md: an
+    // unauthenticated write must answer 401, never 403 — the write route
+    // must not become an oracle for server posture). No DB connection or
+    // validation work happens here.
+    if (readOnly && isWriteRoute(path, req.method ?? "")) {
+      if (path === "/api/schema/source") {
+        // Every mutating verb reaching this branch is an attempted schema
+        // write (GET/HEAD are excluded by `isWriteRoute` itself), so — unlike
+        // `/api/rows/`'s deniedOp-null GET case below — this always emits a
+        // denial line (studio-readonly-mode: "a denied write emits an audit
+        // line marked as denied").
+        if (auditLog) {
+          console.log(
+            formatAuditLine(
+              buildSchemaAuditEntry(auditSessionFor(req), { count: 0, outcome: "denied", reason: "read-only" }),
+            ),
+          );
+        }
+      } else {
+        const deniedOp: AuditOp | null =
+          req.method === "POST" ? "insert" : req.method === "PATCH" ? "update" : req.method === "DELETE" ? "delete" : null;
+        // Non-write verbs (e.g. GET) hit this same method-agnostic gate and
+        // still get refused 403, but emit NOTHING — a GET is not an attempted
+        // mutation (design.md "denial line" decision).
+        if (auditLog && deniedOp) {
+          const table = decodeURIComponent(path.slice("/api/rows/".length));
+          console.log(
+            formatAuditLine(
+              buildAuditEntry(deniedOp, table, auditSessionFor(req), {
+                count: 0,
+                outcome: "denied",
+                reason: "read-only",
+              }),
+            ),
+          );
+        }
       }
       sendJson(res, 403, { error: "Studio is running in read-only mode" });
       return;
@@ -954,7 +1148,19 @@ export async function startStudio(
       if (path === "/api/auth/status" && req.method === "GET") {
         const authRequired = auth !== null;
         const authenticated = auth !== null && auth.verify(req.headers.cookie);
-        sendJson(res, 200, { authRequired, authenticated, readOnly, queryTimeoutMs, queryRowCap, environment });
+        sendJson(res, 200, {
+          authRequired,
+          authenticated,
+          readOnly,
+          queryTimeoutMs,
+          queryRowCap,
+          environment,
+          // Independent of readOnly (design.md decision 12): a read-only
+          // Studio with a real schemaPath still reports true — writability
+          // and the read-only refusal are two orthogonal, separately
+          // user-visible reasons.
+          schemaWritable: schemaPath !== undefined,
+        });
         return;
       }
 
@@ -1020,6 +1226,12 @@ export async function startStudio(
         }
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
         res.end(redactSource(source));
+        return;
+      }
+
+      if (path === "/api/schema/source" && req.method === "PUT") {
+        const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
+        await handleWriteSchemaSource(schemaPath, req, res, audit);
         return;
       }
 
@@ -1277,6 +1489,200 @@ async function serveStatic(
     res.writeHead(404);
     res.end("Not found");
   }
+}
+
+/**
+ * `PUT /api/schema/source` — writes a validated `.indigo` schema buffer back
+ * to disk, reattaching the real datasource block in place of the buffer's
+ * sentinel line. See design.md's route contract table for the full
+ * status/reason mapping; this function is the single implementation of
+ * every branch in that table, always terminating through
+ * `respondSchemaWrite` so a response and its audit line can never separate.
+ *
+ * `schemaPath === undefined` (no CLI-supplied file, e.g. an embedder or test
+ * harness constructed from a bare `source` string) is checked FIRST and
+ * answers `404` regardless of buffer content (design.md decision 13 / SW-15)
+ * — every other branch below assumes a real file.
+ */
+async function handleWriteSchemaSource(
+  schemaPath: string | undefined,
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  audit: AuditContext,
+): Promise<void> {
+  if (schemaPath === undefined) {
+    respondSchemaWrite(
+      res,
+      404,
+      { error: "No schema file is configured for this Studio session." },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "not-found" }),
+    );
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    respondSchemaWrite(
+      res,
+      400,
+      { error: "Invalid JSON body" },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "invalid-request" }),
+    );
+    return;
+  }
+
+  const submitted = (typeof body === "object" && body !== null ? body : {}) as {
+    source?: unknown;
+    version?: unknown;
+  };
+  // A missing or non-string `version` is 400, checked BEFORE the staleness
+  // comparison below — never a bypass of it (design.md decision 5 / SW-5).
+  if (typeof submitted.source !== "string" || typeof submitted.version !== "string") {
+    respondSchemaWrite(
+      res,
+      400,
+      { error: "Request body must be { source: string, version: string }" },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "invalid-request" }),
+    );
+    return;
+  }
+  const submittedSource = submitted.source;
+  const submittedVersion = submitted.version;
+
+  let fileBytes: Buffer;
+  try {
+    fileBytes = await readFile(schemaPath);
+  } catch {
+    // Also the ENOENT-at-PUT case per design.md's route contract table: the
+    // file the client thought it was editing is gone, which is a staleness
+    // condition, not a 404 — the route itself is still valid.
+    respondSchemaWrite(
+      res,
+      409,
+      { error: "The schema file no longer exists on disk." },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "stale" }),
+    );
+    return;
+  }
+
+  const currentVersion = createHash("sha256").update(fileBytes).digest("hex").slice(0, 16);
+  if (currentVersion !== submittedVersion) {
+    respondSchemaWrite(
+      res,
+      409,
+      { error: "The schema file changed on disk since this buffer was fetched." },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "stale" }),
+    );
+    return;
+  }
+
+  const fileText = fileBytes.toString("utf-8");
+  const { block } = splitDatasource(fileText);
+
+  const reattached = reattachDatasource(submittedSource, block);
+  if (!reattached.ok) {
+    respondSchemaWrite(
+      res,
+      400,
+      { error: reattachErrorMessage(reattached.reason) },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "redaction-conflict" }),
+    );
+    return;
+  }
+
+  // Diagnostic line translation (design.md decision 7 / SW-10) only applies
+  // when a splice actually happened — `block === null` means `reattached.text
+  // === submittedSource` verbatim, so reattached-relative and buffer-relative
+  // coordinates are already identical.
+  let sentinelIdx: number | null = null;
+  let blockLineCount = 0;
+  if (block !== null) {
+    const bufferLines = submittedSource.split("\n");
+    const found = bufferLines.findIndex((line) => stripTrailingCR(line) === DATASOURCE_SENTINEL);
+    if (found !== -1) {
+      sentinelIdx = found;
+      blockLineCount = block.split("\n").length;
+    }
+  }
+
+  let ast;
+  try {
+    ast = parse(reattached.text);
+  } catch (error) {
+    if (error instanceof IndigoParseError) {
+      const parseErrors =
+        sentinelIdx !== null
+          ? error.errors.map((e) => translateParseError(e, sentinelIdx as number, blockLineCount))
+          : error.errors;
+      respondSchemaWrite(
+        res,
+        422,
+        { error: "The submitted schema failed to parse.", parseErrors },
+        audit,
+        buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "schema-invalid" }),
+      );
+      return;
+    }
+    throw error;
+  }
+
+  const validationErrors = validate(ast);
+  if (validationErrors.length > 0) {
+    respondSchemaWrite(
+      res,
+      422,
+      { error: "The submitted schema failed validation.", validationErrors },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "schema-invalid" }),
+    );
+    return;
+  }
+
+  // Atomic write via temp file + rename, same directory as the target
+  // (design.md decision 8 — this is the first atomic write in this CLI).
+  // `rename(2)` is atomic only within one filesystem; `os.tmpdir()`
+  // routinely crosses devices (EXDEV) on exactly the machines this is meant
+  // to protect. `mode` is copied so a restrictively-permissioned schema file
+  // is never widened to the process umask default.
+  const dir = dirname(schemaPath);
+  const tmpPath = join(dir, `.${basename(schemaPath)}.studio-${process.pid}-${randomBytes(3).toString("hex")}.tmp`);
+  try {
+    const mode = statSync(schemaPath).mode;
+    writeFileSync(tmpPath, reattached.text, { mode });
+    renameSync(tmpPath, schemaPath);
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* best-effort cleanup only */
+    }
+    respondSchemaWrite(
+      res,
+      500,
+      { error: (error as Error).message },
+      audit,
+      buildSchemaAuditEntry(audit.session, { count: 0, outcome: "error", reason: "io-error" }),
+    );
+    return;
+  }
+
+  const writtenBytes = Buffer.byteLength(reattached.text, "utf-8");
+  const newVersion = createHash("sha256").update(Buffer.from(reattached.text, "utf-8")).digest("hex").slice(0, 16);
+  respondSchemaWrite(
+    res,
+    200,
+    { ok: true, version: newVersion },
+    audit,
+    buildSchemaAuditEntry(audit.session, { count: 1, outcome: "ok", bytes: writtenBytes }),
+  );
 }
 
 /**
