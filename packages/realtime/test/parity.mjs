@@ -107,9 +107,24 @@ await check("parity: insert/update/delete emit deep-equal events (masking ts/txi
     const notifySource = new PgNotifySource(url, schema);
     const walSource = new WalSource(url, schema, { slot });
 
+    // RSC-3: PgNotifySource satisfies the seam's resolve-timing requirement
+    // — start() must settle once LISTEN succeeds, not wait for any event.
+    // No event has been produced yet at this point in the test (the INSERT/
+    // UPDATE/DELETE script runs further below), so start()'s resolution
+    // here is inherently "before any event arrives" — asserted explicitly
+    // rather than left implicit in the script's ordering.
+    let notifyEventArrivedBeforeStartSettled = false;
     await notifySource.start(
-      (e) => notifyEvents.push(e),
+      (e) => {
+        if (notifyEvents.length === 0) notifyEventArrivedBeforeStartSettled = true;
+        notifyEvents.push(e);
+      },
       (e) => console.error("notify onError", e),
+    );
+    strictEqual(
+      notifyEventArrivedBeforeStartSettled,
+      false,
+      "PgNotifySource.start() must resolve once LISTEN succeeds, not wait for any event to arrive",
     );
     await walSource.start(
       (e) => walEvents.push(e),

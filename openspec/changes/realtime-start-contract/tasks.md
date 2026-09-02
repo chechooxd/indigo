@@ -26,16 +26,16 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Contract Foundation (PR 1)
 
-- [ ] 1.1 RED: `wal-source.mjs` — resolve-timing + first-attempt-rejection cases fail against unmodified source (RSC-1,2,4,5,7,8a,8b,9,10; RWS-1..9), via `Promise.race` sentinel not timeout.
-- [ ] 1.2 GREEN: `wal-source.ts` — add `private ready: {resolve;reject}|null`, `settleReady(outcome, err?)` that settles then nulls; rewrite `start()` per design (detached `connect()`, `attempt.then(...)` backstop, `attempt.catch(()=>{})` attached AFTER `.then`).
-- [ ] 1.3 GREEN: `wal-source.ts` — resolve in existing `service.on("start")` handler; reject in `connect()`'s catch immediately after `onError`.
-- [ ] 1.4 GREEN: `wal-source.ts` — delete dead `else throw err;` (`:319`); rewrite the false fail-fast doc comment (`:178-180`) to state the real contract.
-- [ ] 1.5 GREEN: `wal-source.ts` — add private `createService()`/`createWriter()` test seams (no interface change).
-- [ ] 1.6 Verify 1.1's tests now pass; confirm `wal-source.mjs:648` existing A4 backoff suite (RSC-10/RWS-9) is untouched and still green.
-- [ ] 1.7 RED then GREEN: `protocol.ts` — add normative `start()`/`stop()` doc comment only; add `rg` guard (RSC-11b) asserting the `RealtimeSource` interface body diff is comment-only.
-- [ ] 1.8 RED then GREEN: `source-contract.mjs` (new) — RSC-6 (`PgNotifySource` first-attempt ECONNREFUSED rejection, no DB), RSC-11a (`prototype.start.length === 2` + frozen method-name list for both classes).
-- [ ] 1.9 GREEN: `tsc --noEmit` passes, proving no structural widening (RSC-11c).
-- [ ] 1.10 RED then GREEN: `parity.mjs` — DB-gated resolve-timing assertion on `notifySource.start()` (RSC-3).
+- [x] 1.1 RED: `wal-source.mjs` — resolve-timing + first-attempt-rejection cases fail against unmodified source (RSC-1,2,4,5,7,8a,8b,9,10; RWS-1..9), via `Promise.race` sentinel not timeout.
+- [x] 1.2 GREEN: `wal-source.ts` — add `private ready: {resolve;reject}|null`, `settleReady(outcome, err?)` that settles then nulls; rewrite `start()` per design (detached `connect()`, `attempt.then(...)` backstop, `attempt.catch(()=>{})` attached AFTER `.then`).
+- [x] 1.3 GREEN: `wal-source.ts` — resolve in existing `service.on("start")` handler; reject in `connect()`'s catch immediately after `onError`.
+- [x] 1.4 GREEN: `wal-source.ts` — delete dead `else throw err;` (`:319`); rewrite the false fail-fast doc comment (`:178-180`) to state the real contract.
+- [x] 1.5 GREEN: `wal-source.ts` — add private `createService()`/`createWriter()` test seams (no interface change).
+- [x] 1.6 Verify 1.1's tests now pass; confirm `wal-source.mjs:648` existing A4 backoff suite (RSC-10/RWS-9) is untouched and still green.
+- [x] 1.7 RED then GREEN: `protocol.ts` — add normative `start()`/`stop()` doc comment only; add `rg` guard (RSC-11b) asserting the `RealtimeSource` interface body diff is comment-only.
+- [x] 1.8 RED then GREEN: `source-contract.mjs` (new) — RSC-6 (`PgNotifySource` first-attempt ECONNREFUSED rejection, no DB), RSC-11a (`prototype.start.length === 2` + frozen method-name list for both classes).
+- [x] 1.9 GREEN: `tsc --noEmit` passes, proving no structural widening (RSC-11c).
+- [x] 1.10 RED then GREEN: `parity.mjs` — DB-gated resolve-timing assertion on `notifySource.start()` (RSC-3).
 
 ## Phase 2: Engine/CLI/Studio Wiring (PR 2)
 
