@@ -98,16 +98,16 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Patch engine + add table (PR 3, depends on: Phase 1)
 
-- [ ] 3.1 GREEN: create `apps/studio/src/features/erd/lib/patch.ts` — `applyEdits(source, edits)` sorts descending by `start`, splices right-to-left
-- [ ] 3.2 RED (vitest): `applyEdits` with overlapping ranges throws (mutation: remove overlap check)
-- [ ] 3.3 GREEN: implement overlap-detection throw
-- [ ] 3.4 GREEN: create combined fixture (`@@allow` + `@@realtime(columns:)` + `TableGroup` + comments + irregular whitespace) — no existing fixture covers this combination
+- [x] 3.1 GREEN: create `apps/studio/src/features/erd/lib/patch.ts` — `applyEdits(source, edits)` sorts descending by `start`, splices right-to-left
+- [x] 3.2 RED (vitest): `applyEdits` with overlapping ranges throws (mutation: remove overlap check)
+- [x] 3.3 GREEN: implement overlap-detection throw
+- [x] 3.4 GREEN: create combined fixture (`@@allow` + `@@realtime(columns:)` + `TableGroup` + comments + irregular whitespace) — no existing fixture covers this combination
 - [ ] 3.5 RED: byte-diff after `addTable` against the combined fixture — diff confined to edited span, `@@allow`/`@@realtime`/`TableGroup`/comments untouched (mutation: off-by-one into adjacent construct)
-- [ ] 3.6 GREEN: implement `applyErdEdit(currentText, edit)` — calls `parseWithSpans(currentText)` internally, locates anchor
+- [x] 3.6 GREEN: implement `applyErdEdit(currentText, edit)` — calls `parseWithSpans(currentText)` internally, locates anchor
 - [ ] 3.7 GREEN: implement `addTable` edit constructor
-- [ ] 3.8 RED (vitest): module export-surface test — only `applyErdEdit` applies edits; no export returns a `SpanIndex`/span (D3 enforceability guard; mutation: re-export `parseWithSpans` from `patch.ts`)
-- [ ] 3.9 RED: fresh-parse failure → `{ok:false, reason:'parse-failed'}`, buffer untouched (mutation: swallow parse error and apply anyway)
-- [ ] 3.10 RED: target anchor absent from fresh parse → `{ok:false, reason:'anchor-missing'}` (mutation: fall back to a cached position)
+- [x] 3.8 RED (vitest): module export-surface test — only `applyErdEdit` applies edits; no export returns a `SpanIndex`/span (D3 enforceability guard; mutation: re-export `parseWithSpans` from `patch.ts`)
+- [x] 3.9 RED: fresh-parse failure → `{ok:false, reason:'parse-failed'}`, buffer untouched (mutation: swallow parse error and apply anyway)
+- [x] 3.10 RED: target anchor absent from fresh parse → `{ok:false, reason:'anchor-missing'}` (mutation: fall back to a cached position)
 - [ ] 3.11 RED: unchanged buffer applies `addTable` normally (positive control)
 - [ ] 3.12 GREEN: wire add-table affordance on `ERDCanvas.tsx` to `applyErdEdit`
 - [ ] 3.13 Verify: `pnpm --filter @indigodb/studio build` then `vitest run` for `patch.ts` suite against rebuilt `dist`

@@ -1,0 +1,30 @@
+// Combined-construct fixture (studio-erd-editing patch engine, PR3a).
+// No existing fixture combines `@@allow`, `@@realtime(columns:)`,
+// `TableGroup`, comments AND irregular whitespace in one buffer. Renaming
+// `Widget` — a table unrelated to any of these constructs — must leave
+// every byte of this fixture outside `Widget`'s name token unchanged.
+
+Table   Widget {
+    id        Int     @id
+	label String
+}
+
+// A table carrying a row-level access rule.
+Table Post {
+  id      String @id
+  ownerId Int
+  @@allow(read, auth.userId == this.ownerId)
+}
+
+// A table carrying a realtime column projection.
+Table ProjectedUser {
+  id    String @id
+  email String @map("email_address")
+  @@realtime(columns: [id, email])
+}
+
+TableGroup "Billing" {
+  color = "#ff00aa"
+  Post
+  ProjectedUser
+}
