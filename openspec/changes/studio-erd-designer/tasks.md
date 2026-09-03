@@ -8,6 +8,8 @@
 | 400-line budget risk | High (per-slice: Medium/Medium/Medium/Low/Medium/Medium) |
 | Chained PRs recommended | Yes |
 | Suggested split | PR1 ast-source-spans → PR2 studio-layout-persistence (parallel) → PR3 patch engine+addTable → PR4 rename/delete → PR5 field CRUD → PR6 relation drawing |
+| Delivery strategy | auto-chain |
+| Chain strategy | stacked-to-main |
 
 ### Recalibration after PR1 and PR2 (maintainer decision, 2026-09-03)
 
@@ -36,8 +38,12 @@ Revised forecast (≈2× the original, with tests):
 
 The 800-line cap is deliberately left unchanged. A cap raised to match whatever the work
 happens to cost stops being a constraint on reviewer burden and becomes paperwork.
-| Delivery strategy | auto-chain |
-| Chain strategy | stacked-to-main |
+
+**Correction after PR3a landed:** PR3a came in at **339 lines** (116 implementation + 223
+test), not the ~600 the split implied — so the ~950 estimate for the whole of Phase 3 was
+itself too pessimistic and the engine/consumer split was probably unnecessary. The revised
+numbers for PR4–PR6 are therefore an upper bound, not a prediction: reassess each against
+the previous slice's actuals rather than treating this table as settled.
 
 Decision needed before apply: No
 Chained PRs recommended: Yes
