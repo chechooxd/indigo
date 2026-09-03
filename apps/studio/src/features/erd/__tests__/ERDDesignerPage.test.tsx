@@ -52,8 +52,21 @@ vi.mock('@monaco-editor/react', () => ({
 }));
 
 // The ERD canvas and sidebar pull in @xyflow/react's full rendering stack —
-// irrelevant to the save/diagnostics wiring under test here.
-vi.mock('../ERDCanvas', () => ({ __esModule: true, default: () => <div data-testid="erd-canvas" /> }));
+// irrelevant to the save/diagnostics wiring under test here. The stub
+// exposes a single button wired to the real `onDslChange` prop, so a test
+// can simulate an ERD-authored edit (e.g. `applyErdEdit`'s result already
+// forwarded by `ERDCanvas`, covered on its own in `ERDCanvas.test.tsx`)
+// reaching this page's shared dirty-buffer state, exactly like a manual
+// Monaco edit does.
+vi.mock('../ERDCanvas', () => ({
+  __esModule: true,
+  default: ({ onDslChange }: { onDslChange: (next: string) => void }) => (
+    <div data-testid="erd-canvas">
+      <button onClick={() => onDslChange('ERD_EDIT_1')}>simulate ERD edit 1</button>
+      <button onClick={() => onDslChange('ERD_EDIT_2')}>simulate ERD edit 2</button>
+    </div>
+  ),
+}));
 vi.mock('../components/ERDSidebar', () => ({
   __esModule: true,
   default: () => <div data-testid="erd-sidebar" />,
@@ -219,5 +232,112 @@ describe('ERDDesignerPage — save flow', () => {
     await editBuffer('model Broken {');
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/unexpected token/i));
+  });
+});
+
+/**
+ * `ERDCanvas` is stubbed (see the mock above) to a button wired to the real
+ * `onDslChange` prop — simulating a patch `applyErdEdit` already produced
+ * (covered on its own in `ERDCanvas.test.tsx`) reaching this page's shared
+ * dirty buffer exactly like a manual Monaco edit does (Phase 4, tasks
+ * 4.10–4.14).
+ */
+describe('ERDDesignerPage — ERD-authored edits share the dirty buffer with Save', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: false });
+    vi.mocked(fetchSchemaSource).mockReset();
+    vi.mocked(saveSchemaSource).mockReset();
+    vi.mocked(saveLayout).mockReset();
+    // A prior describe block's parse-failure test leaves `parse` mocked to
+    // throw — reset back to the default success return so this block's
+    // diagnostics panel starts empty (no leftover `role="alert"` node).
+    vi.mocked(parse).mockReset();
+    vi.mocked(parse).mockReturnValue({} as never);
+  });
+
+  it('multiple ERD edits before Save accumulate into exactly one PUT /api/schema/source, and none before Save', async () => {
+    await renderReady();
+    vi.mocked(saveSchemaSource).mockResolvedValue({ ok: true, version: 'v2' });
+
+    await act(async () => {
+      screen.getByText('simulate ERD edit 1').click();
+    });
+    expect(saveSchemaSource).not.toHaveBeenCalled();
+
+    await act(async () => {
+      screen.getByText('simulate ERD edit 2').click();
+    });
+    expect(saveSchemaSource).not.toHaveBeenCalled();
+    expect((screen.getByTestId('dsl-editor') as HTMLTextAreaElement).value).toBe('ERD_EDIT_2');
+
+    await act(async () => {
+      screen.getByRole('button', { name: /save/i }).click();
+    });
+
+    await waitFor(() => expect(screen.getByText(/schema saved/i)).toBeInTheDocument());
+    expect(saveSchemaSource).toHaveBeenCalledTimes(1);
+    expect(saveSchemaSource).toHaveBeenCalledWith('ERD_EDIT_2', 'v1');
+  });
+
+  it('reload (a fresh mount) without Save discards the accumulated ERD edit — on-disk file reflects none', async () => {
+    vi.mocked(fetchSchemaSource).mockResolvedValue({ source: ORIGINAL_SOURCE, version: 'v1' });
+    const first = render(<ERDDesignerPage />);
+    await waitFor(() =>
+      expect((screen.getByTestId('dsl-editor') as HTMLTextAreaElement).value).toBe(ORIGINAL_SOURCE),
+    );
+
+    await act(async () => {
+      screen.getByText('simulate ERD edit 1').click();
+    });
+    expect((screen.getByTestId('dsl-editor') as HTMLTextAreaElement).value).toBe('ERD_EDIT_1');
+
+    first.unmount();
+    render(<ERDDesignerPage />);
+
+    await waitFor(() =>
+      expect((screen.getByTestId('dsl-editor') as HTMLTextAreaElement).value).toBe(ORIGINAL_SOURCE),
+    );
+    // The only path from buffer to disk is `saveSchemaSource` — it was
+    // never called, so the on-disk file was never touched by the discarded
+    // edit.
+    expect(saveSchemaSource).not.toHaveBeenCalled();
+  });
+
+  it('a 422 after an ERD-authored patch keeps the buffer, shows diagnostics, and shows no success toast', async () => {
+    await renderReady();
+    vi.mocked(saveSchemaSource).mockResolvedValue({
+      ok: false,
+      status: 422,
+      error: 'invalid',
+      parseErrors: [{ message: 'Unexpected token', line: 1, column: 1, endLine: 1, endColumn: 2 }],
+    });
+
+    await act(async () => {
+      screen.getByText('simulate ERD edit 1').click();
+    });
+
+    await act(async () => {
+      screen.getByRole('button', { name: /save/i }).click();
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.queryByText(/schema saved/i)).not.toBeInTheDocument();
+    expect((screen.getByTestId('dsl-editor') as HTMLTextAreaElement).value).toBe('ERD_EDIT_1');
+  });
+
+  it('a read-only session refuses Save with a banner and never calls saveSchemaSource — no PUT is sent', async () => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    await renderReady();
+
+    await act(async () => {
+      screen.getByText('simulate ERD edit 1').click();
+    });
+
+    await act(async () => {
+      screen.getByRole('button', { name: /save/i }).click();
+    });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/read-only/i));
+    expect(saveSchemaSource).not.toHaveBeenCalled();
   });
 });

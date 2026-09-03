@@ -120,20 +120,20 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Rename + delete table (PR 4, depends on: Phase 3)
 
-- [ ] 4.1 GREEN: implement `renameTable` — rewrites only the declaration name (non-goal: relation propagation)
-- [ ] 4.2 RED (vitest): renaming a referenced table leaves the referencing table's `@relation(...)` byte-unchanged (mutation: also rewrite relation attrs)
-- [ ] 4.3 GREEN: implement `deleteTable`, refusal computed from `resolve(schema).foreignKeys` filtered by `referencedTable === target` (D5)
-- [ ] 4.4 RED: delete table referenced by one table → refused, message names table+field, buffer unchanged (mutation: drop field name from message)
-- [ ] 4.5 RED: delete table referenced by multiple tables → message names every referencing table/field pair (mutation: report only the first match)
-- [ ] 4.6 RED: delete unreferenced table → succeeds, block removed, no refusal
-- [ ] 4.7 RED: stale span × delete refusal — target table removed between the UI's last render and the `applyErdEdit` call → `anchor-missing`; refusal is computed from `resolve()` over the fresh parse, never a cached scan (mutation: reuse cached referencing-table list)
-- [ ] 4.8 GREEN: wire rename/delete affordances on `TableNode.tsx`/`ERDCanvas.tsx`
-- [ ] 4.9 RED: `schemaWritable:false` × edit affordance disabled with stated reason, no request issued (mutation: enable regardless of `schemaWritable`)
-- [ ] 4.10 RED: read-only × ERD edit action → refusal surfaced, no PUT sent (extends `ERDDesignerPage.test.tsx`)
-- [ ] 4.11 GREEN: implement shared dirty-buffer accumulation — ERD edits and manual Monaco edits compose, no auto-persist
-- [ ] 4.12 RED: add table + rename field + delete unreferenced table, no Save between → one `PUT /api/schema/source` on Save containing all three; no request before it
-- [ ] 4.13 RED: reload without Save discards accumulated edits — on-disk file reflects none
-- [ ] 4.14 RED: schema `PUT` → 422 after an ERD-authored patch → buffer kept, diagnostics shown, no success toast (extends `ERDDesignerPage.test.tsx`)
+- [x] 4.1 GREEN: implement `renameTable` — rewrites only the declaration name (non-goal: relation propagation)
+- [x] 4.2 RED (vitest): renaming a referenced table leaves the referencing table's `@relation(...)` byte-unchanged (mutation: also rewrite relation attrs)
+- [x] 4.3 GREEN: implement `deleteTable`, refusal computed from `resolve(schema).foreignKeys` filtered by `referencedTable === target` (D5)
+- [x] 4.4 RED: delete table referenced by one table → refused, message names table+field, buffer unchanged (mutation: drop field name from message)
+- [x] 4.5 RED: delete table referenced by multiple tables → message names every referencing table/field pair (mutation: report only the first match)
+- [x] 4.6 RED: delete unreferenced table → succeeds, block removed, no refusal
+- [x] 4.7 RED: stale span × delete refusal — target table removed between the UI's last render and the `applyErdEdit` call → `anchor-missing`; refusal is computed from `resolve()` over the fresh parse, never a cached scan (mutation: reuse cached referencing-table list)
+- [x] 4.8 GREEN: wire rename/delete affordances on `TableNode.tsx`/`ERDCanvas.tsx`
+- [x] 4.9 RED: `schemaWritable:false` × edit affordance disabled with stated reason, no request issued (mutation: enable regardless of `schemaWritable`)
+- [x] 4.10 RED: read-only × ERD edit action → refusal surfaced, no PUT sent (extends `ERDDesignerPage.test.tsx`)
+- [x] 4.11 GREEN: implement shared dirty-buffer accumulation — ERD edits and manual Monaco edits compose, no auto-persist
+- [x] 4.12 RED: add table + rename field + delete unreferenced table, no Save between → one `PUT /api/schema/source` on Save containing all three; no request before it
+- [x] 4.13 RED: reload without Save discards accumulated edits — on-disk file reflects none
+- [x] 4.14 RED: schema `PUT` → 422 after an ERD-authored patch → buffer kept, diagnostics shown, no success toast (extends `ERDDesignerPage.test.tsx`)
 
 ## Phase 5: Field CRUD (PR 5, depends on: Phase 3)
 

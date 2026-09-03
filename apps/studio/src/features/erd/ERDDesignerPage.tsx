@@ -39,6 +39,7 @@ export default function ERDDesignerPage() {
   const [preReloadBuffer, setPreReloadBuffer] = useState<string | null>(null);
 
   const schemaWritable = useAuthStore((s) => s.schemaWritable);
+  const readOnly = useAuthStore((s) => s.readOnly);
   const dirty = dslCode !== savedSource;
 
   // Under `indigodb studio`, load the project's real schema.indigo source.
@@ -84,6 +85,15 @@ export default function ERDDesignerPage() {
 
   const handleSave = useCallback(async () => {
     if (version === null) return;
+    // Refused client-side, before any request: whether an edit originated
+    // from the ERD or from Monaco, a globally read-only Studio session must
+    // never issue `PUT /api/schema/source` at all — `schemaWritable` alone
+    // does not imply writable, since a read-only server with a real
+    // `schemaPath` still reports `schemaWritable:true` (see `AuthStatus`).
+    if (readOnly) {
+      setSaveBanner({ kind: 'error', message: 'Studio is in read-only mode; changes cannot be saved.' });
+      return;
+    }
     setSaving(true);
     const result = await saveSchemaSource(dslCode, version);
     setSaving(false);
@@ -122,7 +132,7 @@ export default function ERDDesignerPage() {
     }
 
     setSaveBanner({ kind: 'error', message: result.error });
-  }, [dslCode, version]);
+  }, [dslCode, version, readOnly]);
 
   const handleReload = useCallback(async () => {
     const result = await fetchSchemaSource();

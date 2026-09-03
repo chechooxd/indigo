@@ -27,15 +27,14 @@ vi.mock('@indigodb/core', () => {
   }
   return {
     parseWithSpans: vi.fn(),
+    resolve: vi.fn(),
     IndigoParseError,
   };
 });
 
-import { parseWithSpans, IndigoParseError } from '@indigodb/core';
+import { parseWithSpans, resolve, IndigoParseError } from '@indigodb/core';
 import { applyEdits, applyErdEdit } from '../patch';
 import type { ErdEdit } from '../patch';
-
-const dummySpan = { start: 0, end: 0, line: 1, column: 1, endLine: 1, endColumn: 1 };
 
 /** Returns the exclusive end offset of the `{` opened at `openIndex`, by counting brace depth. */
 function findMatchingBraceEnd(source: string, openIndex: number): number {
@@ -53,15 +52,16 @@ function findMatchingBraceEnd(source: string, openIndex: number): number {
 /**
  * Builds a minimal `SpanIndex` from real string offsets in `source`, one
  * `ModelSpan` per `Table <name>` declaration found. `nameToken` (read by
- * `renameTable`) and `bodyOpen`/`bodyClose` (`bodyClose.end` read by
- * `addTable`'s anchor) carry real offsets computed from `source` itself,
- * not hand-typed magic numbers; `decl`/`fields`/`attributes` stay unused
- * by both edit kinds under test, so they stay stubbed.
+ * `renameTable`), `bodyOpen`/`bodyClose` (`bodyClose.end` read by
+ * `addTable`'s anchor) and `decl` (the whole `Table <name> { ... }` block,
+ * read by `deleteTable`) all carry real offsets computed from `source`
+ * itself, not hand-typed magic numbers; `fields`/`attributes` stay unused
+ * by every edit kind under test, so they stay stubbed.
  */
 function buildSpanIndex(source: string) {
   const models: Array<{
     name: string;
-    decl: typeof dummySpan;
+    decl: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
     nameToken: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
     bodyOpen: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
     bodyClose: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
@@ -79,7 +79,14 @@ function buildSpanIndex(source: string) {
     const bodyCloseEnd = findMatchingBraceEnd(source, bodyOpenStart);
     models.push({
       name,
-      decl: dummySpan,
+      decl: {
+        start: match.index,
+        end: bodyCloseEnd,
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 1,
+      },
       nameToken: { start: nameStart, end: nameEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
       bodyOpen: { start: bodyOpenStart, end: bodyOpenEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
       bodyClose: {
@@ -109,8 +116,35 @@ function mockRealParse(source: string): void {
   });
 }
 
+/**
+ * Minimal `ResolvedTable`-shaped fixture for `deleteTable`'s IR-sourced
+ * refusal (design D5). Only `name`/`dbName`/`foreignKeys` are read by the
+ * production code under test; every other field is stubbed to satisfy the
+ * type without asserting on it.
+ */
+function resolvedTable(name: string, foreignKeys: { columns: string[]; refTable: string }[] = []) {
+  return {
+    name,
+    dbName: name,
+    columns: [],
+    primaryKey: [],
+    foreignKeys,
+    indexes: [],
+    relations: [],
+  };
+}
+
+function mockResolvedSchema(tables: ReturnType<typeof resolvedTable>[]): void {
+  vi.mocked(resolve).mockReturnValue({
+    tables,
+    enums: [],
+    tableGroups: [],
+  } as never);
+}
+
 beforeEach(() => {
   vi.mocked(parseWithSpans).mockReset();
+  vi.mocked(resolve).mockReset();
 });
 
 describe('applyEdits', () => {
@@ -214,6 +248,110 @@ describe('applyErdEdit — untouched-by-construction (D4)', () => {
     // of the buffer (e.g. offset 0) would break this prefix relation.
     expect(result.text.startsWith(currentText)).toBe(true);
     expect(result.text).toContain('// no tables declared yet\nTableGroup "Billing" {');
+  });
+
+  it('renaming a referenced table leaves the referencing table\'s @relation(...) byte-unchanged (non-goal: relation propagation)', () => {
+    // `Post.author` carries `@relation(fields: [authorId], references: [id])`
+    // pointing at `User`. `renameTable` rewrites only `User`'s own name
+    // token — task 4.2's mutation target is a rename that ALSO rewrites
+    // `Post`'s `@relation(...)` attribute, which this fixture would catch:
+    // that attribute text names `User`/`id` and must stay byte-identical.
+    const source =
+      'Table User {\n  id Int @id\n}\n\n' +
+      'Table Post {\n  id Int @id\n  authorId Int\n  author User @relation(fields: [authorId], references: [id])\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'renameTable', from: 'User', to: 'Author' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    expect(result.text).toContain('Table Author {\n  id Int @id\n}');
+    // The exact, byte-unchanged relation attribute — still naming the
+    // pre-rename identifier `User`, as this requirement's stated non-goal
+    // demands.
+    expect(result.text).toContain(
+      'author User @relation(fields: [authorId], references: [id])',
+    );
+    expect(result.text).not.toContain('Table User {');
+  });
+});
+
+describe('applyErdEdit — deleteTable (D5)', () => {
+  it('deleting a table referenced by one other table is refused, naming the table and field', () => {
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n}\n';
+    mockRealParse(source);
+    mockResolvedSchema([
+      resolvedTable('User'),
+      resolvedTable('Post', [{ columns: ['authorId'], refTable: 'User' }]),
+    ]);
+
+    const result = applyErdEdit(source, { kind: 'deleteTable', name: 'User' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('referenced');
+    expect(result.message).toContain('Post');
+    expect(result.message).toContain('authorId');
+    // Buffer unchanged — no patch was applied when refused.
+    expect('text' in result).toBe(false);
+  });
+
+  it('deleting a table referenced by multiple tables names all of them', () => {
+    const source =
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n}\n\n' +
+      'Table Comment {\n  id Int @id\n  userId Int\n}\n';
+    mockRealParse(source);
+    mockResolvedSchema([
+      resolvedTable('User'),
+      resolvedTable('Post', [{ columns: ['authorId'], refTable: 'User' }]),
+      resolvedTable('Comment', [{ columns: ['userId'], refTable: 'User' }]),
+    ]);
+
+    const result = applyErdEdit(source, { kind: 'deleteTable', name: 'User' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('referenced');
+    expect(result.message).toContain('Post');
+    expect(result.message).toContain('authorId');
+    expect(result.message).toContain('Comment');
+    expect(result.message).toContain('userId');
+  });
+
+  it('deleting an unreferenced table succeeds and removes the block', () => {
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Tag {\n  id Int @id\n}\n';
+    mockRealParse(source);
+    mockResolvedSchema([resolvedTable('User'), resolvedTable('Tag')]);
+
+    const result = applyErdEdit(source, { kind: 'deleteTable', name: 'Tag' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    // Exact string, not a substring check: the `Tag` declaration — from
+    // `Table` through its closing `}` — is removed with no residue (e.g. an
+    // off-by-one that leaves a stray trailing `}` behind).
+    expect(result.text).toBe('Table User {\n  id Int @id\n}\n\n\n');
+    expect(result.text).not.toContain('Table Tag {');
+    expect(result.text).not.toContain('}\n}');
+  });
+
+  it('a target table absent from the fresh parse refuses as anchor-missing without consulting the IR (mutation: reuse a cached referencing-table list)', () => {
+    // The target was removed by an intervening edit before this call, so
+    // it is absent from the fresh `SpanIndex` — there is no cached scan to
+    // fall back to (design D3), and the refusal is computed before ever
+    // calling `resolve()`.
+    const source = 'Table Post {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'deleteTable', name: 'User' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Table "User" was not found in the current buffer.',
+    });
+    expect(resolve).not.toHaveBeenCalled();
   });
 });
 

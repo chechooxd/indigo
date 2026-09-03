@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { TableProperties } from 'lucide-react';
+import { TableProperties, Pencil, Trash2 } from 'lucide-react';
 import { NODE_WIDTH, type TableRFNode } from '../lib/build-graph';
 
 const rowHandleStyle: React.CSSProperties = {
@@ -24,6 +24,23 @@ const rowHandleStyle: React.CSSProperties = {
 
 export default function TableNode({ data, selected }: NodeProps<TableRFNode>) {
   const fields = data.fields ?? [];
+  // Absent unless `ERDCanvas` wired an edit context via `toTableNode` — a
+  // node built without one (e.g. read-only view) renders no affordance at
+  // all, not a disabled one.
+  const editable = Boolean(data.onRename || data.onDelete);
+  const disabled = Boolean(data.editDisabled);
+  const disabledReason = data.editDisabledReason;
+
+  const handleRename = () => {
+    if (disabled) return;
+    const next = window.prompt(`Rename table "${data.name}" to:`, data.name);
+    if (next && next !== data.name) data.onRename?.(next);
+  };
+
+  const handleDelete = () => {
+    if (disabled) return;
+    data.onDelete?.(data.name);
+  };
 
   return (
     <div
@@ -41,6 +58,28 @@ export default function TableNode({ data, selected }: NodeProps<TableRFNode>) {
           <TableProperties size={16} className="text-zinc-900" />
           <span className="font-bold text-zinc-900">{data.name}</span>
         </div>
+        {editable && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title={disabled ? disabledReason : `Rename table "${data.name}"`}
+              disabled={disabled}
+              onClick={handleRename}
+              className="p-0.5 rounded text-zinc-900/70 hover:text-zinc-900 hover:bg-black/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              title={disabled ? disabledReason : `Delete table "${data.name}"`}
+              disabled={disabled}
+              onClick={handleDelete}
+              className="p-0.5 rounded text-zinc-900/70 hover:text-zinc-900 hover:bg-black/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Fields */}

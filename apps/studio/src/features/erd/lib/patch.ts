@@ -23,7 +23,7 @@
  * span or a parse result — it has no way to go stale on its own.
  */
 
-import { parseWithSpans, IndigoParseError } from '@indigodb/core';
+import { parseWithSpans, resolve, IndigoParseError } from '@indigodb/core';
 import type { ModelSpan } from '@indigodb/core';
 
 /** A resolved, already-anchored text replacement. */
@@ -62,21 +62,21 @@ export function applyEdits(source: string, edits: TextEdit[]): string {
 
 /**
  * The edit vocabulary an ERD action can express. PR3a (the patch engine
- * slice) implemented only `renameTable`. PR3b (this slice) adds `addTable`,
- * an insertion rather than a replace — it has no existing anchor to locate,
- * so it never refuses with `anchor-missing`; only a fresh-parse failure can
- * refuse it. `deleteTable`'s referenced-table refusal and `renameTable`'s
- * relation-preservation guarantee (Phase 4), field CRUD (Phase 5), and
- * `addRelation` (Phase 6) widen this union as those slices land — see
+ * slice) implemented only `renameTable`. PR3b added `addTable`, an
+ * insertion rather than a replace — it has no existing anchor to locate, so
+ * it never refuses with `anchor-missing`; only a fresh-parse failure can
+ * refuse it. Phase 4 (this slice) adds `deleteTable`. Field CRUD (Phase 5)
+ * and `addRelation` (Phase 6) widen this union as those slices land — see
  * `openspec/changes/studio-erd-designer/tasks.md`.
  */
 export type ErdEdit =
   | { kind: 'renameTable'; from: string; to: string }
-  | { kind: 'addTable'; name: string };
+  | { kind: 'addTable'; name: string }
+  | { kind: 'deleteTable'; name: string };
 
 export type ErdEditResult =
   | { ok: true; text: string }
-  | { ok: false; reason: 'parse-failed' | 'anchor-missing'; message: string };
+  | { ok: false; reason: 'parse-failed' | 'anchor-missing' | 'referenced'; message: string };
 
 function findModel(models: ModelSpan[], name: string): ModelSpan | undefined {
   return models.find((model) => model.name === name);
@@ -90,9 +90,10 @@ function findModel(models: ModelSpan[], name: string): ModelSpan | undefined {
  * there is no fallback to a cached position (design D3).
  */
 export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult {
+  let schema;
   let spans;
   try {
-    ({ spans } = parseWithSpans(currentText));
+    ({ schema, spans } = parseWithSpans(currentText));
   } catch (error) {
     if (error instanceof IndigoParseError) {
       return { ok: false, reason: 'parse-failed', message: error.message };
@@ -131,6 +132,46 @@ export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult 
           : currentText.length;
       const insertion = `\n\nTable ${edit.name} {\n  id Int @id\n}`;
       const text = applyEdits(currentText, [{ start: anchor, end: anchor, text: insertion }]);
+      return { ok: true, text };
+    }
+    case 'deleteTable': {
+      const model = findModel(spans.models, edit.name);
+      if (!model) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.name}" was not found in the current buffer.`,
+        };
+      }
+      // Refusal is IR-sourced, not span-sourced (design D5): every
+      // referencing table/field pair is computed from a fresh
+      // `resolve(schema)` over THIS call's fresh parse, never from a
+      // caller-held scan or span. The target table's physical name may
+      // differ from its declared name only via `@@map`, which the ERD does
+      // not yet author — resolving through `resolved.tables` keeps the
+      // lookup correct either way instead of assuming `dbName === name`.
+      const resolved = resolve(schema);
+      const targetDbName = resolved.tables.find((table) => table.name === edit.name)?.dbName ?? edit.name;
+      const referencing = resolved.tables
+        .filter((table) => table.name !== edit.name)
+        .map((table) => ({
+          table: table.name,
+          fields: table.foreignKeys
+            .filter((fk) => fk.refTable === targetDbName)
+            .flatMap((fk) => fk.columns),
+        }))
+        .filter((entry) => entry.fields.length > 0);
+
+      if (referencing.length > 0) {
+        const message = `Cannot delete "${edit.name}": referenced by ${referencing
+          .map((entry) => `${entry.table}.${entry.fields.join(', ')}`)
+          .join('; ')}.`;
+        return { ok: false, reason: 'referenced', message };
+      }
+
+      const text = applyEdits(currentText, [
+        { start: model.decl.start, end: model.decl.end, text: '' },
+      ]);
       return { ok: true, text };
     }
   }

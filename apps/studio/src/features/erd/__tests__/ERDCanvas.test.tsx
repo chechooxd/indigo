@@ -22,19 +22,28 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react';
-import type { NodeChange } from '@xyflow/react';
+import type { Node, NodeChange } from '@xyflow/react';
 import type { ReactNode } from 'react';
+import type { TableNodeData } from '../lib/build-graph';
 
 const { capturedRef } = vi.hoisted(() => ({
-  capturedRef: { onNodesChange: undefined as ((changes: NodeChange[]) => void) | undefined },
+  capturedRef: {
+    onNodesChange: undefined as ((changes: NodeChange[]) => void) | undefined,
+    nodes: undefined as Node[] | undefined,
+  },
 }));
 
 vi.mock('@xyflow/react', async () => {
   const actual = await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react');
   return {
     ...actual,
-    ReactFlow: (props: { onNodesChange?: (changes: NodeChange[]) => void; children?: ReactNode }) => {
+    ReactFlow: (props: {
+      onNodesChange?: (changes: NodeChange[]) => void;
+      nodes?: Node[];
+      children?: ReactNode;
+    }) => {
       capturedRef.onNodesChange = props.onNodesChange;
+      capturedRef.nodes = props.nodes;
       // Renders `children` (unlike PR2's original bare-div stub) so
       // `<Panel>`'s toolbar buttons — including "Agregar tabla" — mount and
       // are clickable from this test.
@@ -68,6 +77,7 @@ vi.mock('../lib/patch', () => ({
 
 import { fetchLayout, saveLayout } from '../../../lib/api';
 import { applyErdEdit } from '../lib/patch';
+import { useAuthStore } from '../../../store/useAuthStore';
 import { ReactFlowProvider } from '@xyflow/react';
 import ERDCanvas from '../ERDCanvas';
 import type { CanvasNode } from '../../../types/erd.types';
@@ -215,5 +225,120 @@ describe('ERDCanvas — add-table affordance wiring', () => {
       kind: 'addTable',
       name: 'NewTable1',
     });
+  });
+});
+
+/**
+ * `<ReactFlow>` is stubbed to a bare `children`-passthrough (see the header
+ * comment), so `nodeTypes`/`TableNode` never actually mounts here —
+ * `capturedRef.nodes` captures the exact `nodes` prop `ERDCanvas` computed
+ * and would have handed to `TableNode` via `data`, so these tests exercise
+ * `ERDCanvas`'s OWN `toTableNode`/`buildEditAffordances` wiring: does the
+ * per-node `data.onRename`/`data.onDelete` closure call `applyErdEdit` with
+ * the right edit, and does `data.editDisabled` reflect `schemaWritable`/
+ * `readOnly` — without a separate `TableNode`-mounting harness.
+ */
+describe('ERDCanvas — rename/delete affordance wiring', () => {
+  function findTableNodeData(id: string): TableNodeData {
+    const node = capturedRef.nodes?.find(n => n.id === id);
+    if (!node) throw new Error(`table node "${id}" not found in captured nodes`);
+    return node.data as TableNodeData;
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchLayout).mockReset();
+    vi.mocked(applyErdEdit).mockReset();
+    capturedRef.onNodesChange = undefined;
+    capturedRef.nodes = undefined;
+    useAuthStore.setState({ schemaWritable: true, readOnly: false });
+  });
+
+  it('renaming a table calls applyErdEdit with renameTable and forwards an ok result', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+    const currentText = 'Table User {\n  id Int @id\n}\n';
+
+    await renderCanvas({ dslCode: currentText, onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onRename?.('Account');
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledWith(currentText, {
+      kind: 'renameTable',
+      from: 'User',
+      to: 'Account',
+    });
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('deleting a referenced table surfaces the refusal message and does NOT call onDslChange', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({
+      ok: false,
+      reason: 'referenced',
+      message: 'Cannot delete "User": referenced by Post.authorId.',
+    });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onDelete?.('User');
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'deleteTable',
+      name: 'User',
+    });
+    expect(onDslChange).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Cannot delete "User": referenced by Post.authorId.',
+      ),
+    );
+  });
+
+  it('deleting an unreferenced table forwards the ok result to onDslChange', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onDelete?.('User');
+    });
+
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('the edit affordances render disabled, with a stated reason, when schemaWritable is false — no applyErdEdit call is possible', async () => {
+    useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    const data = findTableNodeData('User');
+    expect(data.editDisabled).toBe(true);
+    expect(data.editDisabledReason).toMatch(/not writable/i);
+  });
+
+  it('the edit affordances render disabled, with a stated reason, when the server is read-only (mutation: enable regardless of schemaWritable/readOnly)', async () => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    const data = findTableNodeData('User');
+    expect(data.editDisabled).toBe(true);
+    expect(data.editDisabledReason).toMatch(/read-only/i);
+  });
+
+  it('the edit affordances render enabled when schemaWritable is true and the server is not read-only', async () => {
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    const data = findTableNodeData('User');
+    expect(data.editDisabled).toBe(false);
   });
 });

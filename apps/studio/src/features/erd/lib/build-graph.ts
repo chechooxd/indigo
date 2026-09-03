@@ -20,6 +20,17 @@ export interface TableNodeData extends Record<string, unknown> {
   name: string;
   color?: string;
   fields: Field[];
+  /**
+   * Rename/delete affordances (Phase 4). Absent (not just `undefined`-typed)
+   * on any node built without an edit context — `TableNode` renders no
+   * affordance at all in that case, which is also its state in read-only
+   * view contexts that never call `toTableNode` with one.
+   */
+  onRename?: (name: string) => void;
+  onDelete?: (name: string) => void;
+  /** `true` when the affordances above must render disabled, with `editDisabledReason` as their title. */
+  editDisabled?: boolean;
+  editDisabledReason?: string;
 }
 
 export interface GroupNodeData extends Record<string, unknown> {
@@ -47,14 +58,34 @@ function targetFieldIndex(node: CanvasNode, link: ERDLink): number {
   return Math.max(0, idx);
 }
 
+/** Optional rename/delete wiring, passed through to the node's `data` untouched. */
+export interface TableEditAffordances {
+  onRename: (name: string) => void;
+  onDelete: (name: string) => void;
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
 /** Builds a table node keeping React Flow as the owner of live position. */
-export function toTableNode(node: CanvasNode, hidden: boolean): TableRFNode {
+export function toTableNode(
+  node: CanvasNode,
+  hidden: boolean,
+  edit?: TableEditAffordances,
+): TableRFNode {
   return {
     id: node.id,
     type: 'table',
     position: { x: node.x, y: node.y },
     hidden,
-    data: { name: node.name, color: node.color, fields: node.fields ?? [] },
+    data: {
+      name: node.name,
+      color: node.color,
+      fields: node.fields ?? [],
+      onRename: edit?.onRename,
+      onDelete: edit?.onDelete,
+      editDisabled: edit?.disabled,
+      editDisabledReason: edit?.disabledReason,
+    },
   };
 }
 

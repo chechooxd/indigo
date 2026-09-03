@@ -26,12 +26,14 @@ import { Grid3x3, Network, Snowflake, LayoutGrid, Search, Plus } from 'lucide-re
 
 import type { CanvasNode, ERDLink, ERDTableGroup } from '../../types/erd.types';
 import { applyLayout, type LayoutType } from '../../shared/lib/layout-engine';
+import { useAuthStore } from '../../store/useAuthStore';
 import TableNode from './components/TableNode';
 import GroupNode from './components/GroupNode';
 import {
   buildEdges,
   buildGroupNodes,
   toTableNode,
+  type TableEditAffordances,
   type TableRFNode,
 } from './lib/build-graph';
 import { useLayoutStore, resolvePositions } from './lib/layout-store';
@@ -69,6 +71,60 @@ export default function ERDCanvas({
   const { fitView } = useReactFlow();
   const { layout, loaded: layoutLoaded, updatePosition } = useLayoutStore();
 
+  // Node CRUD affordances (Phase 4) are disabled — with a stated reason —
+  // whenever the schema cannot ultimately be saved, so the user is never
+  // led into edits that could not be persisted: no `schemaPath` configured
+  // (`schemaWritable:false`) or the server is globally read-only.
+  const schemaWritable = useAuthStore(s => s.schemaWritable);
+  const readOnly = useAuthStore(s => s.readOnly);
+  const editDisabled = !schemaWritable || readOnly;
+  const editDisabledReason = readOnly
+    ? 'Studio is in read-only mode.'
+    : !schemaWritable
+      ? 'This schema is not writable in the current Studio session.'
+      : undefined;
+
+  // Refusal banner for a rename/delete `applyErdEdit` call (e.g. `deleteTable`
+  // refused as `referenced`) — surfaced here rather than silently dropped,
+  // per `studio-erd-editing`'s delete-refusal requirement.
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const handleRenameTable = useCallback(
+    (from: string, to: string) => {
+      const result = applyErdEdit(dslCode, { kind: 'renameTable', from, to });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [dslCode, onDslChange],
+  );
+
+  const handleDeleteTable = useCallback(
+    (name: string) => {
+      const result = applyErdEdit(dslCode, { kind: 'deleteTable', name });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [dslCode, onDslChange],
+  );
+
+  const buildEditAffordances = useCallback(
+    (name: string): TableEditAffordances => ({
+      onRename: next => handleRenameTable(name, next),
+      onDelete: () => handleDeleteTable(name),
+      disabled: editDisabled,
+      disabledReason: editDisabledReason,
+    }),
+    [handleRenameTable, handleDeleteTable, editDisabled, editDisabledReason],
+  );
+
   // Reconcile parsed schema → table nodes, preserving dragged positions.
   // Waits for the persisted layout to load first (`layoutLoaded`) so a
   // node's FIRST position always comes from the sidecar file when one
@@ -82,7 +138,7 @@ export default function ERDCanvas({
       const prevById = new Map(prev.map(n => [n.id, n]));
       const resolved = resolvePositions(parsedNodes.map(pn => pn.name), layout);
       return parsedNodes.map(pn => {
-        const base = toTableNode(pn, hiddenTables.has(pn.name));
+        const base = toTableNode(pn, hiddenTables.has(pn.name), buildEditAffordances(pn.name));
         const existing = prevById.get(pn.id);
         if (existing) {
           return { ...base, position: existing.position, selected: existing.selected };
@@ -91,7 +147,7 @@ export default function ERDCanvas({
         return persisted ? { ...base, position: persisted } : base;
       });
     });
-  }, [parsedNodes, hiddenTables, setTableNodes, layout, layoutLoaded]);
+  }, [parsedNodes, hiddenTables, setTableNodes, layout, layoutLoaded, buildEditAffordances]);
 
   const groupNodes = useMemo(
     () => buildGroupNodes(tableNodes, tableGroups),
@@ -176,6 +232,16 @@ export default function ERDCanvas({
       }}
     >
       {showGrid && <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#27272a" />}
+      {editError && (
+        <Panel position="top-center" className="max-w-lg">
+          <div
+            role="alert"
+            className="px-3 py-2 rounded-lg bg-red-950/80 border border-red-800 text-red-300 text-xs font-mono shadow-xl"
+          >
+            {editError}
+          </div>
+        </Panel>
+      )}
       <Controls showInteractive={false} />
       <MiniMap
         pannable
