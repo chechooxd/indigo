@@ -13,7 +13,7 @@
  */
 
 import { readdirSync, readFileSync } from "node:fs";
-import { deepStrictEqual, strictEqual, throws } from "node:assert";
+import { deepStrictEqual, ok, strictEqual, throws } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { parse, resolve, printSchema, IndigoPrintError } from "../dist/index.js";
@@ -818,10 +818,22 @@ check("IndigoPrintError is a real Error subclass", () => {
  *
  * A dedicated test below pins each fixture's exact throw.
  */
-const UNPRINTABLE_FIXTURES = new Set([
-  "05-relations.indigo",
-  "19-rejected-allow.indigo",
-  "21-rejected-realtime-columns.indigo",
+// Each entry maps to the EXACT substring its printSchema failure must contain.
+// A class-only `throws(fn, IndigoPrintError)` would pass if the printer ever
+// started throwing for an unrelated reason — including a reason that masks a
+// regression in the construct the fixture exists to exercise. Pinning the
+// message is what makes the exclusion falsifiable rather than merely asserted.
+const UNPRINTABLE_FIXTURES = new Map([
+  // Duplicate model name leaves a dangling `@relation` field reference, so the
+  // relation printer cannot resolve the local column. Pre-existing exclusion;
+  // the throw moved from printFkComment into printRelationField.
+  ["05-relations.indigo", 'physical name "missingLocal" has no matching field'],
+  // `@@allow(read, auth.userId == this.owner)` resolves with the unknown name
+  // recorded verbatim, so printing the rule cannot map it to a field.
+  ["19-rejected-allow.indigo", 'physical name "owner" has no matching field'],
+  // `@@realtime(columns: [id, ghostField])` likewise records `ghostField`
+  // verbatim, so printing the allowlist cannot map it to a field.
+  ["21-rejected-realtime-columns.indigo", 'physical name "ghostField" has no matching field'],
 ]);
 
 /**
@@ -883,10 +895,20 @@ for (const file of roundTripFixtures) {
 // "rejected" fixtures in general are NOT excluded merely because their name
 // says "rejected" — only these three, because they resolve successfully but
 // printSchema throws.
-for (const file of UNPRINTABLE_FIXTURES) {
-  check(`${file} resolves but printSchema throws (confirms exclusion reason)`, () => {
+for (const [file, expectedMessage] of UNPRINTABLE_FIXTURES) {
+  check(`${file} resolves but printSchema throws for its documented reason`, () => {
     const resolved = resolve(parse(readFileSync(join(fixturesDir, file), "utf8")));
-    throws(() => printSchema(resolved), IndigoPrintError);
+    throws(
+      () => printSchema(resolved),
+      (err) => {
+        ok(err instanceof IndigoPrintError, `expected IndigoPrintError, got ${err?.constructor?.name}`);
+        ok(
+          err.message.includes(expectedMessage),
+          `expected the throw to name its documented cause (${expectedMessage}), got: ${err.message}`,
+        );
+        return true;
+      },
+    );
   });
 }
 
