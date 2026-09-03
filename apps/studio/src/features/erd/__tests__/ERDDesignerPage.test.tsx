@@ -61,10 +61,15 @@ vi.mock('../components/ERDSidebar', () => ({
 
 vi.mock('../../../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../../../lib/api')>('../../../lib/api');
-  return { ...actual, fetchSchemaSource: vi.fn(), saveSchemaSource: vi.fn() };
+  return {
+    ...actual,
+    fetchSchemaSource: vi.fn(),
+    saveSchemaSource: vi.fn(),
+    saveLayout: vi.fn(),
+  };
 });
 
-import { fetchSchemaSource, saveSchemaSource } from '../../../lib/api';
+import { fetchSchemaSource, saveSchemaSource, saveLayout } from '../../../lib/api';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { parse, IndigoParseError } from '@indigodb/core';
 import ERDDesignerPage from '../ERDDesignerPage';
@@ -91,6 +96,7 @@ describe('ERDDesignerPage — save flow', () => {
     useAuthStore.setState({ schemaWritable: true });
     vi.mocked(fetchSchemaSource).mockReset();
     vi.mocked(saveSchemaSource).mockReset();
+    vi.mocked(saveLayout).mockReset();
   });
 
   it('SD-5: a 409 preserves the buffer and shows the conflict banner', async () => {
@@ -175,6 +181,30 @@ describe('ERDDesignerPage — save flow', () => {
 
     await waitFor(() => expect(screen.getByText(/schema saved/i)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+  });
+
+  it('a schema Save does not implicitly write layout (saveLayout / PUT /api/schema/layout untouched)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await renderReady();
+    vi.mocked(saveSchemaSource).mockResolvedValue({ ok: true, version: 'v2' });
+
+    await editBuffer(ORIGINAL_SOURCE + '\nmodel Bar {}');
+
+    await act(async () => {
+      screen.getByRole('button', { name: /save/i }).click();
+    });
+
+    await waitFor(() => expect(screen.getByText(/schema saved/i)).toBeInTheDocument());
+
+    expect(saveLayout).not.toHaveBeenCalled();
+    expect(
+      fetchSpy.mock.calls.some(([input, init]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        return url.includes('/api/schema/layout') && (init?.method ?? '').toUpperCase() === 'PUT';
+      }),
+    ).toBe(false);
+
+    fetchSpy.mockRestore();
   });
 
   it('a parse failure is visible on screen via the diagnostics panel, not only console', async () => {

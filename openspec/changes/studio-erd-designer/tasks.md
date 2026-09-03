@@ -65,6 +65,8 @@ Chain strategy: stacked-to-main
 - [x] 2.17 GREEN: wire `ERDCanvas.tsx` to seed from `layout-store`, persist debounced on drag
 - [x] 2.18 RED (vitest): debounced autosave flushes on unmount, no dropped final write (mutation: remove flush-on-unmount)
 - [x] 2.19 GREEN: implement flush-on-unmount in `layout-store.ts`
+- [x] 2.20 RED (vitest, `ERDDesignerPage.test.tsx`): a schema Save does not call `saveLayout` / issue `PUT /api/schema/layout` (mutation: call `saveLayout` from `handleSave`'s success branch — confirmed FAIL, reverted)
+- [x] 2.21 RED (vitest + fake timers, `ERDCanvas.test.tsx`): drag-end (`dragging:false`) position change reaches the debounced `saveLayout` via `ERDCanvas`'s own `onNodesChange` → `updatePosition` wiring; an in-flight (`dragging:true`) change does not (mutation: sever `updatePosition(change.id, change.position)` in `onNodesChange` — confirmed FAIL, reverted)
 
 ## Phase 3: Patch engine + add table (PR 3, depends on: Phase 1)
 
