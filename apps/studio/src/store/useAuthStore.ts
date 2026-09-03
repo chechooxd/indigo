@@ -36,6 +36,12 @@ interface AuthState {
    * no backend and the write route could not work regardless.
    */
   schemaWritable: boolean;
+  /**
+   * Whether the server has a real `schemaPath` and can accept
+   * `PUT /api/schema/layout` (the sidecar path is derived from it). Same
+   * default-to-`false`-until-confirmed posture as `schemaWritable` above.
+   */
+  layoutWritable: boolean;
   loginError: string | null;
   /**
    * `true` while the initial `GET /api/auth/status` probe is in flight.
@@ -83,6 +89,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   queryRowCap: DEFAULT_QUERY_ROW_CAP,
   environment: null,
   schemaWritable: false,
+  layoutWritable: false,
   loginError: null,
   statusChecking: true,
 
@@ -97,6 +104,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         queryRowCap: status.queryRowCap,
         environment: status.environment,
         schemaWritable: status.schemaWritable,
+        layoutWritable: status.layoutWritable,
       });
     }
     set({ statusChecking: false });

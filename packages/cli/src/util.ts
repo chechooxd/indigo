@@ -382,14 +382,16 @@ export function resolveStudioAuditLog(option: boolean | undefined, env: string |
 /**
  * Op/outcome/reason closed sets for `StudioAuditEntry` — see below.
  *
- * `"schema-write"` (added for `PUT /api/schema/source`, PR #1b) is the one
- * `AuditOp` value never paired with a `table` — see `StudioAuditEntry.table`
- * below and `buildSchemaAuditEntry` in `studio-server.ts`, which is a
- * SEPARATE builder from `buildAuditEntry` for exactly that reason: making
- * `table` optional on the shared row-write builder would let a row write
- * silently forget its table and still typecheck.
+ * `"schema-write"` (added for `PUT /api/schema/source`, PR #1b) and
+ * `"layout-write"` (added for `PUT /api/schema/layout`, studio-layout-
+ * persistence) are the two `AuditOp` values never paired with a `table` —
+ * see `StudioAuditEntry.table` below and `buildSchemaAuditEntry`/
+ * `buildLayoutAuditEntry` in `studio-server.ts`, which are SEPARATE builders
+ * from `buildAuditEntry` for exactly that reason: making `table` optional on
+ * the shared row-write builder would let a row write silently forget its
+ * table and still typecheck.
  */
-export type AuditOp = "insert" | "update" | "delete" | "schema-write";
+export type AuditOp = "insert" | "update" | "delete" | "schema-write" | "layout-write";
 export type AuditOutcome = "ok" | "denied" | "error";
 /**
  * `"stale"`, `"redaction-conflict"`, `"schema-invalid"`, and `"io-error"` are
@@ -426,11 +428,13 @@ export interface StudioAuditEntry {
   kind: "studio.audit.write";
   op: AuditOp;
   /**
-   * Optional (PR #1b): a schema-write entry (`op:"schema-write"`) never
-   * carries a `table` — there is no table involved, and the schema file
-   * PATH is deliberately never logged either (see `bytes` below). Every
-   * row-write entry (`insert`/`update`/`delete`) still always supplies one;
-   * only `buildSchemaAuditEntry`'s call sites omit it.
+   * Optional (PR #1b, extended for layout persistence): a schema-write
+   * entry (`op:"schema-write"`) or a layout-write entry
+   * (`op:"layout-write"`) never carries a `table` — there is no table
+   * involved, and the schema/sidecar file PATH is deliberately never logged
+   * either (see `bytes` below). Every row-write entry
+   * (`insert`/`update`/`delete`) still always supplies one; only
+   * `buildSchemaAuditEntry`/`buildLayoutAuditEntry`'s call sites omit it.
    */
   table?: string;
   /** Primary-key value(s), stringified column-by-column. Never other columns. */

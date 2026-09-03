@@ -45,6 +45,7 @@ describe('useAuthStore', () => {
       queryRowCap: 1000,
       environment: null,
       schemaWritable: true,
+      layoutWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -62,6 +63,7 @@ describe('useAuthStore', () => {
       queryRowCap: 1000,
       environment: null,
       schemaWritable: true,
+      layoutWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -78,6 +80,7 @@ describe('useAuthStore', () => {
       queryRowCap: 250,
       environment: null,
       schemaWritable: true,
+      layoutWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -117,6 +120,7 @@ describe('useAuthStore', () => {
       queryRowCap: 1000,
       environment: 'production',
       schemaWritable: true,
+      layoutWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();
@@ -146,6 +150,7 @@ describe('useAuthStore', () => {
       queryRowCap: 1000,
       environment: null,
       schemaWritable: true,
+      layoutWritable: true,
     });
 
     await useAuthStore.getState().checkStatus();

@@ -34,6 +34,7 @@ import {
   toTableNode,
   type TableRFNode,
 } from './lib/build-graph';
+import { useLayoutStore, resolvePositions } from './lib/layout-store';
 
 const nodeTypes: NodeTypes = { table: TableNode, group: GroupNode };
 
@@ -57,20 +58,31 @@ export default function ERDCanvas({
   const [tableNodes, setTableNodes] = useNodesState<TableRFNode>([]);
   const [showGrid, setShowGrid] = useState(true);
   const { fitView } = useReactFlow();
+  const { layout, loaded: layoutLoaded, updatePosition } = useLayoutStore();
 
   // Reconcile parsed schema → table nodes, preserving dragged positions.
+  // Waits for the persisted layout to load first (`layoutLoaded`) so a
+  // node's FIRST position always comes from the sidecar file when one
+  // exists — starting from the parser's own seed formula and only
+  // overwriting it once the layout arrives would flash the seed position
+  // and then never re-apply the persisted one, since an already-reconciled
+  // node's position is deliberately preserved below on every later run.
   useEffect(() => {
+    if (!layoutLoaded) return;
     setTableNodes(prev => {
       const prevById = new Map(prev.map(n => [n.id, n]));
+      const resolved = resolvePositions(parsedNodes.map(pn => pn.name), layout);
       return parsedNodes.map(pn => {
         const base = toTableNode(pn, hiddenTables.has(pn.name));
         const existing = prevById.get(pn.id);
-        return existing
-          ? { ...base, position: existing.position, selected: existing.selected }
-          : base;
+        if (existing) {
+          return { ...base, position: existing.position, selected: existing.selected };
+        }
+        const persisted = resolved[pn.name];
+        return persisted ? { ...base, position: persisted } : base;
       });
     });
-  }, [parsedNodes, hiddenTables, setTableNodes]);
+  }, [parsedNodes, hiddenTables, setTableNodes, layout, layoutLoaded]);
 
   const groupNodes = useMemo(
     () => buildGroupNodes(tableNodes, tableGroups),
@@ -90,8 +102,18 @@ export default function ERDCanvas({
         c => !('id' in c) || !String((c as { id: string }).id).startsWith('group-'),
       );
       setTableNodes(nds => applyNodeChanges(tableChanges, nds) as TableRFNode[]);
+
+      // Persist a table's position via the debounced layout autosave once a
+      // drag ENDS (`dragging: false`) — a drag fires many intermediate
+      // position changes with `dragging: true`, and each one would otherwise
+      // restart its own debounce cycle.
+      for (const change of tableChanges) {
+        if (change.type === 'position' && change.dragging === false && change.position) {
+          updatePosition(change.id, change.position);
+        }
+      }
     },
-    [setTableNodes],
+    [setTableNodes, updatePosition],
   );
 
   const runLayout = useCallback(

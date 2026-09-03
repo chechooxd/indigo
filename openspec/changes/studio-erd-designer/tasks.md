@@ -46,25 +46,25 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: `studio-layout-persistence` + read-only gate extension (PR 2, depends on: none, parallel to PR 1)
 
-- [ ] 2.1 GREEN: extract `atomicWriteFile(target, text)` from `handleWriteSchemaSource` in `packages/cli/src/studio-server.ts`, reused by both write routes
-- [ ] 2.2 RED (`node:http` harness): missing `schemaPath` → GET/PUT `/api/schema/layout` both 404 (mutation: drop `schemaPath` check)
-- [ ] 2.3 GREEN: implement GET/PUT `/api/schema/layout`, sidecar path derived server-side from `schemaPath` only
-- [ ] 2.4 RED: absent sidecar → GET `{positions:{}, version:null}`; PUT `version:null` on absent → creates; PUT `version:null` on existing → 409 (mutation: skip null-sentinel branch)
-- [ ] 2.5 GREEN: implement version/staleness contract (D6)
-- [ ] 2.6 RED: table-driven malformed payload (`x:"1"`, `NaN`, >5000 entries) → 400, nothing written (mutation: drop finite-value check)
-- [ ] 2.7 GREEN: payload validation, verbatim key storage, no server/client pruning
-- [ ] 2.8 RED: directory-listing — no leftover temp file after 200 and after 400/409 (mutation: skip cleanup on error path)
-- [ ] 2.9 GREEN: `GET /api/auth/status` reports `layoutWritable`, gated only on `schemaPath` presence
-- [ ] 2.10 RED: `readOnly:true` × PUT `/api/schema/layout` → 403, audit line `op:"layout-write"`/`denied`/`read-only`, sidecar unchanged (mutation: omit layout route from `isWriteRoute` set)
-- [ ] 2.11 GREEN: add `PUT /api/schema/layout` to `isWriteRoute`'s explicit set; implement `buildLayoutAuditEntry` sibling of `buildSchemaAuditEntry`
-- [ ] 2.12 RED: `readOnly:true` × GET `/api/schema/layout` → 200, reads unaffected (mutation: gate GET too)
-- [ ] 2.13 RED: `readOnly:true` + `schemaPath` absent → 403 from read-only gate, not 404 (mutation: reorder checks so `schemaPath` check runs first)
-- [ ] 2.14 GREEN: `apps/studio/src/lib/api.ts` add `fetchLayout`/`saveLayout`
-- [ ] 2.15 GREEN: create `apps/studio/src/features/erd/lib/layout-store.ts` — fetch on load, 500ms debounced save
-- [ ] 2.16 RED (vitest): unknown table key in layout file ignored, no crash; missing key falls back to seed formula `40+(idx%3)*320` (mutation: remove fallback branch)
-- [ ] 2.17 GREEN: wire `ERDCanvas.tsx` to seed from `layout-store`, persist debounced on drag
-- [ ] 2.18 RED (vitest): debounced autosave flushes on unmount, no dropped final write (mutation: remove flush-on-unmount)
-- [ ] 2.19 GREEN: implement flush-on-unmount in `layout-store.ts`
+- [x] 2.1 GREEN: extract `atomicWriteFile(target, text)` from `handleWriteSchemaSource` in `packages/cli/src/studio-server.ts`, reused by both write routes
+- [x] 2.2 RED (`node:http` harness): missing `schemaPath` → GET/PUT `/api/schema/layout` both 404 (mutation: drop `schemaPath` check)
+- [x] 2.3 GREEN: implement GET/PUT `/api/schema/layout`, sidecar path derived server-side from `schemaPath` only
+- [x] 2.4 RED: absent sidecar → GET `{positions:{}, version:null}`; PUT `version:null` on absent → creates; PUT `version:null` on existing → 409 (mutation: skip null-sentinel branch)
+- [x] 2.5 GREEN: implement version/staleness contract (D6)
+- [x] 2.6 RED: table-driven malformed payload (`x:"1"`, `NaN`, >5000 entries) → 400, nothing written (mutation: drop finite-value check)
+- [x] 2.7 GREEN: payload validation, verbatim key storage, no server/client pruning
+- [x] 2.8 RED: directory-listing — no leftover temp file after 200 and after 400/409 (mutation: skip cleanup on error path)
+- [x] 2.9 GREEN: `GET /api/auth/status` reports `layoutWritable`, gated only on `schemaPath` presence
+- [x] 2.10 RED: `readOnly:true` × PUT `/api/schema/layout` → 403, audit line `op:"layout-write"`/`denied`/`read-only`, sidecar unchanged (mutation: omit layout route from `isWriteRoute` set)
+- [x] 2.11 GREEN: add `PUT /api/schema/layout` to `isWriteRoute`'s explicit set; implement `buildLayoutAuditEntry` sibling of `buildSchemaAuditEntry`
+- [x] 2.12 RED: `readOnly:true` × GET `/api/schema/layout` → 200, reads unaffected (mutation: gate GET too)
+- [x] 2.13 RED: `readOnly:true` + `schemaPath` absent → 403 from read-only gate, not 404 (mutation: reorder checks so `schemaPath` check runs first)
+- [x] 2.14 GREEN: `apps/studio/src/lib/api.ts` add `fetchLayout`/`saveLayout`
+- [x] 2.15 GREEN: create `apps/studio/src/features/erd/lib/layout-store.ts` — fetch on load, 500ms debounced save
+- [x] 2.16 RED (vitest): unknown table key in layout file ignored, no crash; missing key falls back to seed formula `40+(idx%3)*320` (mutation: remove fallback branch)
+- [x] 2.17 GREEN: wire `ERDCanvas.tsx` to seed from `layout-store`, persist debounced on drag
+- [x] 2.18 RED (vitest): debounced autosave flushes on unmount, no dropped final write (mutation: remove flush-on-unmount)
+- [x] 2.19 GREEN: implement flush-on-unmount in `layout-store.ts`
 
 ## Phase 3: Patch engine + add table (PR 3, depends on: Phase 1)
 

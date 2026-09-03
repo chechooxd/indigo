@@ -865,14 +865,22 @@ function validateHeaders(
 /**
  * Generalized read-only-gate predicate (design.md decision 9): every
  * `/api/rows/` request stays method-agnostic exactly as before (narrowing it
- * would regress a shipped scenario), and `/api/schema/source` is
- * method-scoped — `GET`/`HEAD` on that same path must remain readable in
- * read-only mode, only a mutating verb on it is a write. A future write
- * route inherits this gate by being added HERE, not by adding a second gate
- * check next to its own handler.
+ * would regress a shipped scenario), and `/api/schema/source` /
+ * `/api/schema/layout` are method-scoped — `GET`/`HEAD` on either path must
+ * remain readable in read-only mode, only a mutating verb on them is a
+ * write. This is the EXPLICIT write-route set the studio-readonly-mode delta
+ * requires: `/api/schema/layout` does not share the `/api/rows/` prefix, so
+ * it is listed here by name rather than inferred from a shared prefix. A
+ * future write route inherits this gate by being added HERE, not by adding
+ * a second gate check next to its own handler.
  */
 function isWriteRoute(path: string, method: string): boolean {
-  return path.startsWith("/api/rows/") || (path === "/api/schema/source" && method !== "GET" && method !== "HEAD");
+  const isMutatingVerb = method !== "GET" && method !== "HEAD";
+  return (
+    path.startsWith("/api/rows/") ||
+    (path === "/api/schema/source" && isMutatingVerb) ||
+    (path === "/api/schema/layout" && isMutatingVerb)
+  );
 }
 
 function sendJson(res: import("node:http").ServerResponse, status: number, body: unknown): void {
@@ -939,6 +947,19 @@ function buildSchemaAuditEntry(
 }
 
 /**
+ * `buildSchemaAuditEntry`'s sibling for `PUT /api/schema/layout`
+ * (studio-layout-persistence design.md D6) — hardcodes `op:"layout-write"`
+ * and never takes a `table`, for the same reason `buildSchemaAuditEntry` is
+ * kept separate from `buildAuditEntry`.
+ */
+function buildLayoutAuditEntry(
+  session: string | undefined,
+  rest: Omit<StudioAuditEntry, "ts" | "kind" | "op" | "table" | "session">,
+): StudioAuditEntry {
+  return { ts: new Date().toISOString(), kind: "studio.audit.write", op: "layout-write", session, ...rest };
+}
+
+/**
  * `respondWrite`'s sibling for the schema-write route — same coupling of
  * response and audit line, so a terminal branch cannot physically respond
  * without logging. Delegates to `respondWrite` directly since the two are
@@ -946,6 +967,20 @@ function buildSchemaAuditEntry(
  * site (design.md decision 10).
  */
 function respondSchemaWrite(
+  res: import("node:http").ServerResponse,
+  status: number,
+  body: unknown,
+  audit: AuditContext,
+  entry: StudioAuditEntry,
+): void {
+  respondWrite(res, status, body, audit, entry);
+}
+
+/**
+ * `respondSchemaWrite`'s sibling for the layout-write route — same coupling
+ * of response and audit line.
+ */
+function respondLayoutWrite(
   res: import("node:http").ServerResponse,
   status: number,
   body: unknown,
@@ -1120,6 +1155,20 @@ export async function startStudio(
             ),
           );
         }
+      } else if (path === "/api/schema/layout") {
+        // Sibling of the schema-write branch above — every mutating verb
+        // reaching this branch is an attempted layout write, so it always
+        // emits a denial line. Runs BEFORE this route's own `schemaPath`
+        // presence check, so a missing `schemaPath` under read-only mode
+        // still answers 403 here, never 404 (studio-layout-persistence
+        // "Read-only mode combined with a missing schemaPath" scenario).
+        if (auditLog) {
+          console.log(
+            formatAuditLine(
+              buildLayoutAuditEntry(auditSessionFor(req), { count: 0, outcome: "denied", reason: "read-only" }),
+            ),
+          );
+        }
       } else {
         const deniedOp: AuditOp | null =
           req.method === "POST" ? "insert" : req.method === "PATCH" ? "update" : req.method === "DELETE" ? "delete" : null;
@@ -1160,6 +1209,10 @@ export async function startStudio(
           // and the read-only refusal are two orthogonal, separately
           // user-visible reasons.
           schemaWritable: schemaPath !== undefined,
+          // Layout's writability probe (studio-layout-persistence): true
+          // only when `schemaPath` is present, since the sidecar path is
+          // derived from it — same independence from `readOnly` as above.
+          layoutWritable: schemaPath !== undefined,
         });
         return;
       }
@@ -1232,6 +1285,17 @@ export async function startStudio(
       if (path === "/api/schema/source" && req.method === "PUT") {
         const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
         await handleWriteSchemaSource(schemaPath, req, res, audit);
+        return;
+      }
+
+      if (path === "/api/schema/layout" && req.method === "GET") {
+        await handleReadSchemaLayout(schemaPath, res);
+        return;
+      }
+
+      if (path === "/api/schema/layout" && req.method === "PUT") {
+        const audit: AuditContext = { enabled: auditLog, session: auditSessionFor(req) };
+        await handleWriteSchemaLayout(schemaPath, req, res, audit);
         return;
       }
 
@@ -1492,6 +1556,48 @@ async function serveStatic(
 }
 
 /**
+ * Atomic write: temp file + `rename(2)` in the SAME directory as `target`
+ * (design.md decision 8 for schema writes; extracted for
+ * studio-layout-persistence's D6 so both `PUT /api/schema/source` and
+ * `PUT /api/schema/layout` share exactly one implementation — the same
+ * "exactly one implementation" discipline as `splitDatasource`).
+ * `rename(2)` is atomic only within one filesystem; `os.tmpdir()` routinely
+ * crosses devices (EXDEV) on exactly the machines this is meant to protect,
+ * so the temp file is created alongside `target` instead.
+ *
+ * `target`'s existing file mode is copied onto the temp file when a file
+ * already exists at `target` (a restrictively-permissioned file must never
+ * be widened to the process umask default); when no file exists yet at
+ * `target` (the layout sidecar's create path), the temp file is written
+ * with the process's default mode instead — there is nothing to copy from.
+ *
+ * On any failure, the temp file is best-effort unlinked before the error is
+ * rethrown to the caller, which maps it to its own route's `500`/`io-error`
+ * response.
+ */
+function atomicWriteFile(target: string, text: string): void {
+  const dir = dirname(target);
+  const tmpPath = join(dir, `.${basename(target)}.studio-${process.pid}-${randomBytes(3).toString("hex")}.tmp`);
+  let mode: number | undefined;
+  try {
+    mode = statSync(target).mode;
+  } catch {
+    mode = undefined;
+  }
+  try {
+    writeFileSync(tmpPath, text, mode !== undefined ? { mode } : undefined);
+    renameSync(tmpPath, target);
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* best-effort cleanup only */
+    }
+    throw error;
+  }
+}
+
+/**
  * `PUT /api/schema/source` — writes a validated `.indigo` schema buffer back
  * to disk, reattaching the real datasource block in place of the buffer's
  * sentinel line. See design.md's route contract table for the full
@@ -1646,24 +1752,11 @@ async function handleWriteSchemaSource(
     return;
   }
 
-  // Atomic write via temp file + rename, same directory as the target
-  // (design.md decision 8 — this is the first atomic write in this CLI).
-  // `rename(2)` is atomic only within one filesystem; `os.tmpdir()`
-  // routinely crosses devices (EXDEV) on exactly the machines this is meant
-  // to protect. `mode` is copied so a restrictively-permissioned schema file
-  // is never widened to the process umask default.
-  const dir = dirname(schemaPath);
-  const tmpPath = join(dir, `.${basename(schemaPath)}.studio-${process.pid}-${randomBytes(3).toString("hex")}.tmp`);
+  // Atomic write via the shared `atomicWriteFile` helper (design.md decision
+  // 8, extracted for D6 — see that function's doc comment).
   try {
-    const mode = statSync(schemaPath).mode;
-    writeFileSync(tmpPath, reattached.text, { mode });
-    renameSync(tmpPath, schemaPath);
+    atomicWriteFile(schemaPath, reattached.text);
   } catch (error) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      /* best-effort cleanup only */
-    }
     respondSchemaWrite(
       res,
       500,
@@ -1682,6 +1775,201 @@ async function handleWriteSchemaSource(
     { ok: true, version: newVersion },
     audit,
     buildSchemaAuditEntry(audit.session, { count: 1, outcome: "ok", bytes: writtenBytes }),
+  );
+}
+
+/**
+ * One dragged table's persisted position — a plain `{x, y}` pair, kept
+ * deliberately minimal (no rotation/scale/etc.) since this is view layout,
+ * not schema semantics (design.md D6).
+ */
+interface LayoutPosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * Entry-count cap for a layout payload — generous enough for any realistic
+ * schema, small enough to bound a single JSON parse/validate pass.
+ */
+const MAX_LAYOUT_ENTRIES = 5000;
+
+/**
+ * Derives the layout sidecar's path from `schemaPath`, SERVER-SIDE only —
+ * design.md D6's no-traversal-surface guarantee: the path is never built
+ * from request data. Always `schema.layout.json` in the schema file's own
+ * directory, regardless of the schema file's own basename.
+ */
+function layoutSidecarPath(schemaPath: string): string {
+  return join(dirname(schemaPath), "schema.layout.json");
+}
+
+/**
+ * Validates a submitted `positions` payload: a plain object (not an array,
+ * not `null`) whose values are each `{x, y}` with finite numbers, capped at
+ * `MAX_LAYOUT_ENTRIES` entries. Used both to accept a `PUT` body and to
+ * (defensively) accept whatever is currently on disk before serving a `GET`
+ * — corrupt sidecar bytes degrade to `positions: {}` rather than a 500 (see
+ * design.md's "corrupt sidecar degrades to formula-seeded positions" note).
+ */
+function isValidLayoutPositions(value: unknown): value is Record<string, LayoutPosition> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > MAX_LAYOUT_ENTRIES) return false;
+  for (const [, pos] of entries) {
+    if (typeof pos !== "object" || pos === null || Array.isArray(pos)) return false;
+    const { x, y } = pos as { x?: unknown; y?: unknown };
+    if (typeof x !== "number" || !Number.isFinite(x)) return false;
+    if (typeof y !== "number" || !Number.isFinite(y)) return false;
+  }
+  return true;
+}
+
+/**
+ * `GET /api/schema/layout` — serves the current sidecar contents plus an
+ * opaque `version` (content hash of the sidecar's bytes), or the D6
+ * null-sentinel shape `{positions:{}, version:null}` when no sidecar exists
+ * yet. `schemaPath === undefined` answers `404` first — there is no sidecar
+ * location to read from (mirrors `handleWriteSchemaSource`'s same check).
+ *
+ * Never gated by read-only mode: `isWriteRoute` excludes `GET`/`HEAD` on
+ * this path, so this function is reached directly from the dispatcher, with
+ * no audit line — reads are not attempted writes.
+ */
+async function handleReadSchemaLayout(
+  schemaPath: string | undefined,
+  res: import("node:http").ServerResponse,
+): Promise<void> {
+  if (schemaPath === undefined) {
+    sendJson(res, 404, { error: "No schema file is configured for this Studio session." });
+    return;
+  }
+
+  const sidecarPath = layoutSidecarPath(schemaPath);
+  let fileBytes: Buffer;
+  try {
+    fileBytes = await readFile(sidecarPath);
+  } catch {
+    sendJson(res, 200, { positions: {}, version: null });
+    return;
+  }
+
+  let positions: Record<string, LayoutPosition> = {};
+  try {
+    const parsed: unknown = JSON.parse(fileBytes.toString("utf-8"));
+    if (isValidLayoutPositions(parsed)) positions = parsed;
+  } catch {
+    /* corrupt sidecar: serve an empty layout rather than a 500 */
+  }
+
+  const version = createHash("sha256").update(fileBytes).digest("hex").slice(0, 16);
+  sendJson(res, 200, { positions, version });
+}
+
+/**
+ * `PUT /api/schema/layout` — writes the submitted `{positions, version}`
+ * atomically to the sidecar file, mirroring `handleWriteSchemaSource`'s
+ * version/staleness contract (design.md D6), but WITHOUT any parse/validate
+ * step — layout is opaque view data, not `.indigo` source.
+ *
+ * `schemaPath === undefined` is checked FIRST, same as the schema-write
+ * route: every other branch below assumes a real sidecar location. Payload
+ * shape is validated BEFORE the version comparison (a malformed body is
+ * always `400`, never a bypass of staleness checking). `version: null`
+ * matches only the "sidecar does not exist yet" sentinel — an EXISTING
+ * sidecar always rejects `version: null` with `409`, per D6.
+ */
+async function handleWriteSchemaLayout(
+  schemaPath: string | undefined,
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  audit: AuditContext,
+): Promise<void> {
+  if (schemaPath === undefined) {
+    respondLayoutWrite(
+      res,
+      404,
+      { error: "No schema file is configured for this Studio session." },
+      audit,
+      buildLayoutAuditEntry(audit.session, { count: 0, outcome: "error", reason: "not-found" }),
+    );
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    respondLayoutWrite(
+      res,
+      400,
+      { error: "Invalid JSON body" },
+      audit,
+      buildLayoutAuditEntry(audit.session, { count: 0, outcome: "error", reason: "invalid-request" }),
+    );
+    return;
+  }
+
+  const submitted = (typeof body === "object" && body !== null ? body : {}) as {
+    positions?: unknown;
+    version?: unknown;
+  };
+  const versionIsValid = submitted.version === null || typeof submitted.version === "string";
+  if (!isValidLayoutPositions(submitted.positions) || !versionIsValid) {
+    respondLayoutWrite(
+      res,
+      400,
+      { error: "Request body must be { positions: Record<string, {x:number, y:number}>, version: string | null }" },
+      audit,
+      buildLayoutAuditEntry(audit.session, { count: 0, outcome: "error", reason: "invalid-request" }),
+    );
+    return;
+  }
+  const positions = submitted.positions;
+  const submittedVersion = submitted.version as string | null;
+
+  const sidecarPath = layoutSidecarPath(schemaPath);
+  let currentVersion: string | null = null;
+  try {
+    const fileBytes = await readFile(sidecarPath);
+    currentVersion = createHash("sha256").update(fileBytes).digest("hex").slice(0, 16);
+  } catch {
+    // No sidecar on disk yet: the only version that matches is the `null`
+    // sentinel (D6) — currentVersion stays `null`.
+  }
+
+  if (currentVersion !== submittedVersion) {
+    respondLayoutWrite(
+      res,
+      409,
+      { error: "The layout file changed on disk since this buffer was fetched." },
+      audit,
+      buildLayoutAuditEntry(audit.session, { count: 0, outcome: "error", reason: "stale" }),
+    );
+    return;
+  }
+
+  const text = JSON.stringify(positions);
+  try {
+    atomicWriteFile(sidecarPath, text);
+  } catch (error) {
+    respondLayoutWrite(
+      res,
+      500,
+      { error: (error as Error).message },
+      audit,
+      buildLayoutAuditEntry(audit.session, { count: 0, outcome: "error", reason: "io-error" }),
+    );
+    return;
+  }
+
+  const newVersion = createHash("sha256").update(Buffer.from(text, "utf-8")).digest("hex").slice(0, 16);
+  respondLayoutWrite(
+    res,
+    200,
+    { version: newVersion },
+    audit,
+    buildLayoutAuditEntry(audit.session, { count: 1, outcome: "ok" }),
   );
 }
 

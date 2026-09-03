@@ -612,15 +612,16 @@ await check("GET /api/auth/status is byte-identical across --audit-log/--no-audi
         `expected byte-identical probe responses, got ${JSON.stringify(onBody)} vs ${JSON.stringify(offBody)}`,
       );
       const keys = Object.keys(onBody).sort();
-      // `schemaWritable` (PR #1b, studio-schema-write) added a seventh key to
-      // this probe — updated here deliberately, not a silent drift: the
-      // byte-identical assertion above is what actually matters for this
-      // suite's own scope (audit-log on/off must not change the probe body),
-      // and still holds.
+      // `schemaWritable` (PR #1b, studio-schema-write) added a seventh key,
+      // and `layoutWritable` (studio-layout-persistence) an eighth — updated
+      // here deliberately, not a silent drift: the byte-identical assertion
+      // above is what actually matters for this suite's own scope
+      // (audit-log on/off must not change the probe body), and still holds.
       const expected = [
         "authRequired",
         "authenticated",
         "environment",
+        "layoutWritable",
         "queryRowCap",
         "queryTimeoutMs",
         "readOnly",
@@ -628,7 +629,7 @@ await check("GET /api/auth/status is byte-identical across --audit-log/--no-audi
       ].sort();
       assert(
         JSON.stringify(keys) === JSON.stringify(expected),
-        `expected exactly the seven probe keys, got ${JSON.stringify(keys)}`,
+        `expected exactly the eight probe keys, got ${JSON.stringify(keys)}`,
       );
     });
   });

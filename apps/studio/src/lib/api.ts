@@ -58,6 +58,12 @@ export interface AuthStatus {
    * read-only gate is what ultimately answers `403` on the write route.
    */
   schemaWritable: boolean;
+  /**
+   * `true` only when `schemaPath` is present (the layout sidecar path is
+   * derived from it) — same independence from `readOnly` as `schemaWritable`
+   * above. See `studio-layout-persistence`'s spec.
+   */
+  layoutWritable: boolean;
 }
 
 /** Mirrors @indigodb/parser's `ParseErrorDetail` shape without a direct
@@ -171,6 +177,67 @@ export async function saveSchemaSource(source: string, version: string): Promise
       parseErrors: body?.parseErrors,
       validationErrors: body?.validationErrors,
     };
+  } catch {
+    return { ok: false, status: 0, error: 'Network error' };
+  }
+}
+
+/** One dragged table's persisted `{x, y}` position (see @indigodb/cli's
+ * `studio-server.ts`, `LayoutPosition`). */
+export interface LayoutPosition {
+  x: number;
+  y: number;
+}
+
+export interface FetchedLayout {
+  positions: Record<string, LayoutPosition>;
+  /** Content-hash version token, echoed back on `PUT`. `null` when no
+   * sidecar file exists yet (D6's null-sentinel shape). */
+  version: string | null;
+}
+
+export type SaveLayoutResult =
+  | { ok: true; version: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Fetches the current node-position layout (`GET /api/schema/layout`).
+ * Fails soft to `null`, matching `fetchSchema`/`fetchSchemaSource` — a
+ * standalone dev server with no backend, or any other transient failure,
+ * degrades to the canvas's own formula-seeded positions rather than an
+ * error.
+ */
+export async function fetchLayout(): Promise<FetchedLayout | null> {
+  try {
+    const res = await fetch('/api/schema/layout');
+    notifyIfUnauthorized(res);
+    if (!res.ok || !hasContentType(res, 'application/json')) throw new Error();
+    return (await res.json()) as FetchedLayout;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persists the debounced layout autosave (`PUT /api/schema/layout`). Never
+ * throws — mirrors `saveSchemaSource`'s discriminated-result style, since a
+ * refused layout write (403/404/409) needs its own distinguishable outcome
+ * rather than a flattened thrown string.
+ */
+export async function saveLayout(
+  positions: Record<string, LayoutPosition>,
+  version: string | null,
+): Promise<SaveLayoutResult> {
+  try {
+    const res = await fetch('/api/schema/layout', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ positions, version }),
+    });
+    notifyIfUnauthorized(res);
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) return { ok: true, version: body.version as string };
+    return { ok: false, status: res.status, error: body?.error ?? 'Layout save failed' };
   } catch {
     return { ok: false, status: 0, error: 'Network error' };
   }
