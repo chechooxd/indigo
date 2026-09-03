@@ -1,5 +1,237 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:d347a7fd9c981b9e45367e3a04b4d577491f9895b7bee70b02487e6ff53bec39
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 2/2
+scenarios: 6/6
+test_command: pnpm test
+test_exit_code: 0
+test_output_hash: sha256:71f694d3b0d4fbbce986e9acb8c4f432a84acbbfe968593cd6b6bdc83badd87a
+build_command: pnpm build
+build_exit_code: 0
+build_output_hash: sha256:13855f4951826744b775f196d15c1d0e54610731ba6fb3f775776934f223783f
+```
+
+## Verification Report — Phase 3
+
+**Change**: studio-erd-designer — Phase 3 (`patch engine + add table`, tasks 3.1–3.13)
+**Version**: N/A
+**Mode**: Strict TDD
+**Scope**: diff `feat/erd-layout-persistence..feat/erd-add-table` (HEAD `98c1b17`), three commits:
+`ea333ab` (PR3a, patch engine, `renameTable` only, tasks 3.1–3.4/3.6/3.8–3.10), `6cf5b57`
+(docs-only forecast repair), `98c1b17` (PR3b, `addTable` + canvas wiring, tasks 3.5/3.7/3.11–3.13).
+Phases 1–2 already verified PASS, not re-audited. Phases 4–6 deliberately unimplemented, not scored.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 3) | 13 |
+| Tasks complete | 13 |
+| Tasks incomplete | 0 |
+
+All 13 checkboxes (`3.1`–`3.13`) in `openspec/changes/studio-erd-designer/tasks.md` are `[x]`,
+independently confirmed against `git show --stat` for `ea333ab` and `98c1b17` and by reading the
+resulting `apps/studio/src/features/erd/lib/patch.ts`, `patch.test.ts`, `ERDCanvas.tsx`, and
+`ERDCanvas.test.tsx` directly rather than trusting the checkbox alone.
+
+| Task | Commit | Evidence |
+|---|---|---|
+| 3.1 `applyEdits` | `ea333ab` | `patch.ts` — sorts descending, splices right-to-left |
+| 3.2/3.3 overlap RED/GREEN | `ea333ab` | `patch.test.ts` "throws on overlapping edit ranges" |
+| 3.4 combined fixture | `ea333ab` | `__tests__/fixtures/combined.indigo` |
+| 3.5 addTable byte-diff RED | `98c1b17` | `patch.test.ts` "adding a table inserts after the last model..." |
+| 3.6 `applyErdEdit` | `ea333ab` | `patch.ts` — internal `parseWithSpans` call every invocation |
+| 3.7 `addTable` constructor | `98c1b17` | `patch.ts` `case 'addTable'` |
+| 3.8 export-surface RED | `ea333ab` | `patch.test.ts` "exposes exactly applyEdits and applyErdEdit" |
+| 3.9 parse-failed RED | `ea333ab` | `patch.test.ts` "a fresh-parse failure refuses...parse-failed" |
+| 3.10 anchor-missing RED | `ea333ab` | `patch.test.ts` "a missing anchor...refuses the patch as anchor-missing" |
+| 3.11 positive control RED | `98c1b17` | `patch.test.ts` "an unchanged buffer applies addTable normally" |
+| 3.12 canvas wiring | `98c1b17` | `ERDCanvas.tsx` `handleAddTable`, "Agregar tabla" toolbar button |
+| 3.13 Verify | `98c1b17` | apply-progress-reported and independently re-run (see below) |
+
+### Build & Tests Execution (re-run in this pass, not trusted from apply-progress)
+**Build**: PASS (`pnpm build`, exit 0, 10/10 Turbo tasks)
+
+**Lint**: PASS (`pnpm lint`, exit 0, 19/19 Turbo tasks, `apps/studio` via `tsc -b --noEmit`)
+
+**Tests**: PASS (`pnpm test`, exit 0, 18/18 Turbo tasks)
+```text
+apps/studio vitest (standalone, `pnpm --filter @indigodb/studio exec vitest run`):
+  27 files passed (27), 186 tests passed (186)
+patch.test.ts: 10/10
+ERDCanvas.test.tsx: 6/6
+```
+
+**Coverage**: Not available — no coverage tool configured in this repo (informational only).
+
+### Mutation proofs — independently reproduced in this pass, not taken on the apply agent's word
+
+**Mutation 1 — addTable off-by-one anchor** (`spans.models[...].bodyClose.end` → `bodyClose.end + 1`
+in `patch.ts`'s `addTable` case):
+```
+FAIL patch.test.ts > applyErdEdit — untouched-by-construction (D4) >
+  adding a table inserts after the last model...
+FAIL patch.test.ts > applyErdEdit — staleness gate (D3) >
+  an unchanged buffer applies addTable normally (positive control)
+Test Files  1 failed (1)
+     Tests  2 failed | 8 passed (10)
+```
+Exactly the two tests apply-progress claimed — the byte-diff-confinement test (3.5) and the
+positive control (3.11) — failed, with the exact off-by-one diffs described (extra byte consumed
+from the blank line before `TableGroup`). Reverted; `git diff --stat` on `patch.ts` confirmed a
+byte-identical restore, and the full 10/10 `patch.test.ts` suite was re-run green.
+
+**Mutation 2 — removed `if (result.ok)` gate** in `ERDCanvas.tsx`'s `handleAddTable` (forwarded
+`result.text` unconditionally):
+```
+FAIL ERDCanvas.test.tsx > ERDCanvas — add-table affordance wiring >
+  a refused (not ok) result is NOT forwarded to onDslChange — the buffer stays untouched
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+  1st spy call: Array [ undefined ]
+Test Files  1 failed (1)
+     Tests  1 failed | 5 passed (6)
+```
+Exactly the target test failed, called once with `undefined` — matching the claim precisely.
+Reverted; `git diff --stat` on `ERDCanvas.tsx` confirmed a byte-identical restore, and both
+`patch.test.ts` and `ERDCanvas.test.tsx` were re-run together, 16/16 green.
+
+### D3 enforceability — export-surface guard confirmed against real code
+`rg -n "^export" apps/studio/src/features/erd/lib/patch.ts` returns exactly `TextEdit`,
+`applyEdits`, `ErdEdit`, `ErdEditResult`, `applyErdEdit` — the only value-level exports are
+`applyEdits` and `applyErdEdit`; no export returns a `SpanIndex`/span, matching the module's own
+header claim and the `patch.test.ts` export-surface test's assertion. `pnpm build` (real `tsc`,
+not just the test) confirms this compiles as claimed.
+
+### Test helper fidelity — `buildSpanIndex` fake parser vs real Rust/WASM
+`patch.test.ts`'s `buildSpanIndex` is a regex + brace-matching locator that computes
+`nameToken`/`bodyOpen`/`bodyClose` offsets directly from the fixture string, not via the real
+compiler. This is a genuine divergence risk in principle — but Phase 1 (already verified PASS)
+shipped `crates/indigo-compiler/tests/span_agreement.rs` (task 1.11), which cross-checks the real
+Rust parser's `name_token` and `body_close` offsets against the exact values the WASM boundary
+returns, over a literal recorded fixture. Both `nameToken` and `bodyClose.end` — the only two
+`ModelSpan` fields Phase 3's `addTable`/`renameTable` code paths actually read — are the fields
+that test cross-verifies. The remaining divergence surface (whether the *fake* locator's
+brace-counting always agrees with the *real* parser's brace-counting on inputs the fixture corpus
+does not cover) is real but narrow, and does not undermine the specific mutation proofs above,
+which assert against independently-computed expected strings, not against `buildSpanIndex`'s own
+output. Rated SUGGESTION, not a blocking finding.
+
+### Orphan/tautological test assessment
+`ERDCanvas.test.tsx` mocks `../lib/patch` entirely (real module pulls WASM, unavailable in jsdom)
+and widens the `ReactFlow`/`Panel` stubs to render `children`. Assessed the four new
+add-table-affordance tests individually:
+- "calls applyErdEdit with the current buffer and a name that does not collide" — asserts real
+  call arguments (`currentText`, `{kind:'addTable', name:'NewTable'}`) against the real
+  `ERDCanvas` component's real `handleAddTable`, not the mock's own behavior. Real wiring.
+- "an ok result is forwarded to onDslChange" / "a refused result is NOT forwarded" — asserts
+  `ERDCanvas`'s own conditional forwarding logic, proven non-tautological by Mutation 2 above
+  (removing the `if (result.ok)` gate flips the "NOT forwarded" test to fail). Real wiring.
+- "picks NewTable1 when NewTable already exists" — asserts `ERDCanvas`'s own collision-avoidance
+  loop over `parsedNodes`, a real prop, not a mock artifact. Real wiring.
+
+None of the four assert anything about the mock's return value in isolation (e.g. no test merely
+checks that `applyErdEdit` "was called", full stop) — every assertion is either on the exact call
+arguments `ERDCanvas` computed, or on what `ERDCanvas` did with a mocked return value. Verdict:
+these tests exercise real component wiring, not assertions about the mock. No orphan/tautological
+test found in this batch.
+
+### Spec Compliance Matrix
+
+`studio-erd-editing/spec.md` has 5 requirements / 13 scenarios total; Phase 3 implements only
+`renameTable` (carried over from PR3a, already covered by Phase-2-adjacent prior work) and
+`addTable`. Scenarios requiring `deleteTable`, field CRUD, relation drawing, or Save-wiring
+(Phases 4–6) are out of scope per this launch's explicit instruction and are not scored below.
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Every edit is a minimal span-anchored patch | A construct the ERD does not model survives an unrelated edit untouched | `patch.test.ts` "renaming an unrelated table leaves...byte-identical" + "adding a table inserts after the last model...byte-identical" | ✅ COMPLIANT |
+| A stale span is unrepresentable (D3) | The patch module's export surface excludes any span-returning function | `patch.test.ts` "exposes exactly applyEdits and applyErdEdit" | ✅ COMPLIANT |
+| A stale span is unrepresentable (D3) | A missing anchor after an intervening edit refuses the patch | `patch.test.ts` "a missing anchor...refuses...anchor-missing" | ✅ COMPLIANT |
+| A stale span is unrepresentable (D3) | An unchanged buffer applies the patch normally | `patch.test.ts` "an unchanged buffer applies the patch normally" + "...applies addTable normally (positive control)" | ✅ COMPLIANT |
+| A stale span is unrepresentable (D3) | A manual Monaco edit above a node invalidates a pending ERD edit (shifted line numbers, fresh parse re-locates) | `patch.test.ts` "an unchanged buffer applies the patch normally" + "a missing anchor...refuses...anchor-missing" (mechanism-equivalent: fresh parse locates strictly by name, never by cached position, so a shift is transparent by construction and a removed anchor is caught) | ✅ COMPLIANT (mechanism-proven, no literal shifted-line fixture) |
+
+**Compliance summary**: 6/6 in-scope scenarios COMPLIANT (1 proven by mechanism-equivalent tests
+rather than a literal shifted-line fixture — flagged as SUGGESTION below, non-blocking).
+
+**`addTable` — no dedicated spec scenario (known, pre-disclosed gap)**: `studio-erd-editing/
+spec.md`'s Purpose paragraph lists table creation as an ERD capability ("create/rename/delete
+tables..."), but no Requirement or Scenario in the spec body names `addTable` specifically — only
+field-add and rename/delete are scenario'd. Confirmed by direct read: zero occurrences of
+"addTable" in any `specs/*.md` file. apply-progress disclosed this gap itself and stated the
+byte-diff-confinement and positive-control tests were authored directly from `design.md`'s D3/D4
+language and the task list's own mutation description instead. Assessed: the tests genuinely
+prove `addTable` upholds D3 (fresh-parse-only) and D4 (untouched-by-construction) — the same two
+properties Requirement 1 and Requirement 3 state generically for "every ERD edit" — so the
+capability is not spec-*violating*, only spec-*silent*. Rated WARNING, not CRITICAL: a future
+reader auditing `studio-erd-editing/spec.md` in isolation cannot discover that `addTable` exists
+or what it is supposed to do — the spec document does not name the capability at all.
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|---|---|---|
+| `applyEdits` overlap-detection throw | ✅ Implemented | `patch.ts:49-53` |
+| `applyErdEdit` fresh-parse-every-call | ✅ Implemented | `patch.ts:92-95`, calls `parseWithSpans` inside the function body |
+| `addTable` zero-width insertion anchor | ✅ Implemented | `patch.ts:128-131`, `bodyClose.end` or `currentText.length` fallback |
+| Canvas wiring forwards only `ok` results | ✅ Implemented | `ERDCanvas.tsx` `handleAddTable`, mutation-proven above |
+| Collision-free table naming | ✅ Implemented | `ERDCanvas.tsx` `handleAddTable`, `NewTable`/`NewTable1`/... loop over `parsedNodes` |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|---|---|---|
+| D3 — fresh parse every call, no cached span | ✅ Yes | `applyErdEdit` calls `parseWithSpans` internally on every invocation; no span-returning export exists (confirmed above) |
+| D4 — untouched-by-construction | ✅ Yes | Zero-width insertion for `addTable`; overlap-throwing splice for `applyEdits`; both proven via byte-diff against the combined fixture with recorded mutation proofs |
+| Design's stated non-goal ("no typecheck enforces D3") | ✅ Honestly stated | Module header and design.md both explicitly disclaim type-level enforcement; the export-surface test is named as the sole automated guard, matching reality |
+
+### Known context — not scored as a finding
+The "Agregar tabla" toolbar button (`ERDCanvas.tsx:187`) uses a hardcoded Spanish string. The
+surrounding toolbar already uses hardcoded Spanish elsewhere in the same file. This matches
+existing file convention rather than introducing a new deviation; `react-i18next` is wired
+elsewhere in the app but not used in this file at all, before or after this change.
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `studio-erd-editing/spec.md` has no dedicated Requirement/Scenario for `addTable`, despite the
+   Purpose section listing table creation as an in-scope capability and the capability being
+   fully implemented and tested. Tests were derived from `design.md`'s D3/D4 language instead of a
+   spec scenario. Recommend adding a scenario under Requirement 1 (or a new Requirement) before
+   Phase 4/5/6 compound the same pattern for `deleteTable`/field CRUD/`addRelation`, which DO have
+   their own scenarios already written — `addTable` is the one capability the spec is silent on.
+
+**SUGGESTION**:
+1. The "manual Monaco edit above a node invalidates a pending ERD edit" scenario (Req 3) has no
+   literal covering test with a shifted-line-number buffer; the underlying mechanism (fresh parse
+   locates by name, not position) is proven by the adjacent "unchanged buffer" and "anchor-missing"
+   tests, so this is non-blocking, but a dedicated test would make the scenario's literal wording
+   independently verifiable rather than inferred.
+2. `buildSpanIndex` (test helper, `patch.test.ts`) is a fake regex/brace-matching span locator,
+   not the real parser. The two `ModelSpan` fields it computes that Phase 3 code paths read
+   (`nameToken`, `bodyClose`) are cross-verified against the real Rust/WASM parser by Phase 1's
+   `span_agreement.rs` (task 1.11), which meaningfully narrows the divergence risk — but no
+   automated check ties the fake helper itself to the real parser's brace-counting on inputs
+   outside the recorded fixture corpus.
+3. Hardcoded Spanish `title="Agregar tabla"` matches the existing file's convention (already
+   Spanish-hardcoded elsewhere); worth a future pass to route through `react-i18next` alongside
+   the rest of the toolbar, not a regression introduced by this change.
+
+### Verdict
+**PASS WITH WARNINGS** — all 13 Phase 3 tasks complete and traced to their commits; build/lint/
+test all green and independently re-run (10/10, 19/19, 18/18 Turbo tasks; 27/27 files, 186/186
+tests in standalone Studio vitest); both claimed mutation proofs independently reproduced with
+exact matching failures, then reverted with a confirmed clean diff; D3's export-surface guard
+confirmed against real exports; no orphan/tautological test found in the add-table wiring batch.
+One WARNING (addTable lacks a dedicated spec scenario — spec-silent, not spec-violating) should be
+closed before Phase 4/5/6 repeat the same authoring gap for their own edit kinds; not a blocker
+for archiving Phase 3 itself.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:824a8467353b6e8986491c3ee60b5f62f1055693e2aea3538ef44e5d059d2065
 verdict: pass
 blockers: 0
