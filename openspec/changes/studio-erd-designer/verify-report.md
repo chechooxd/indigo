@@ -1,5 +1,368 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:578eda5d0f11a285abe7db6b6d8a4efb2c258fbd632df219d869ddd9e429e790
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 1/1
+test_command: pnpm --filter @indigodb/studio exec vitest run
+test_exit_code: 0
+test_output_hash: sha256:adbb308c21b244bac832ede45f3c937ea6459b476b9509fd4e656ba7cb98310d
+build_command: pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:ccaeb3e33419e976fe781a45d6aeb7fe7890910e7b9df05167f616ee7d5026a6
+```
+
+## Verification Report — Phase 5
+
+**Change**: studio-erd-designer — Phase 5 (`field CRUD: add/edit/delete`, tasks 5.1–5.8)
+**Version**: N/A
+**Mode**: Strict TDD
+**Scope**: `git diff main..HEAD` (HEAD `45e76cd` on `feat/erd-field-crud`, branched off `main` @
+`9915e7e`, which also carries `abf7f3b`, a docs-only forecast reassessment — not Phase 5 code).
+664 lines (250 impl / 414 test). Phases 1–4 already merged into `main` and independently verified
+PASS — not re-audited. Phase 6 (relation drawing) remains `[ ]` — not scored.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 5) | 8 |
+| Tasks complete | 8 |
+| Tasks incomplete | 0 |
+
+All 8 checkboxes (`5.1`–`5.8`) in `openspec/changes/studio-erd-designer/tasks.md` are `[x]`,
+confirmed by direct read of the current file and cross-checked against `git show --stat 45e76cd`
+and direct inspection of `patch.ts`, `patch.test.ts`, `ERDCanvas.tsx`, `ERDCanvas.test.tsx`,
+`TableNode.tsx`, and `build-graph.ts`.
+
+| Task | Evidence |
+|---|---|
+| 5.1 | `patch.ts` `case 'addField'` — zero-width insertion anchored on `model.fields[last].decl.end` (or `model.bodyOpen.end` when empty), mirrors `addTable`'s own anchor discipline |
+| 5.2 | `patch.test.ts` "RED/byte-diff: adding a field to Widget leaves every other construct in the combined fixture byte-identical" — independently mutation-reproduced below |
+| 5.3 | `patch.ts` `case 'editField'` — targeted `nameToken`/`typeToken` replacement plus single-`?` insert/remove for `optional` |
+| 5.4 | `patch.test.ts` "RED/mutation: editField changes only the targeted field..." — independently mutation-reproduced below (widened `nameToken.end` by 1) |
+| 5.5 | `patch.ts` `case 'deleteField'` — removes the field's whole line (leading indent through trailing newline), same boundary discipline as `deleteTable` |
+| 5.6 | `patch.test.ts` "RED/boundary: deleting the middle field of three leaves the first and last field lines exactly intact" — orchestrator already reproduced this mutation (2 failed/28 passed), not repeated here |
+| 5.7 | `TableNode.tsx` pencil/trash icon pair per field row + "Add field" footer button, all `window.prompt`-based; `ERDCanvas.tsx` `handleAddField`/`handleEditField`/`handleDeleteField` + extended `buildEditAffordances`; `build-graph.ts`'s `TableNodeData`/`TableEditAffordances` widened with `onAddField?`/`onEditField?`/`onDeleteField?` |
+| 5.8 | `ERDCanvas.test.tsx` field-gating tests, reusing the existing `editDisabled`/`editDisabledReason` pair (no separate field-level flag) — independently mutation-reproduced below (stubbed the three closures to no-ops, 4/18 failed simultaneously: the 2 new field-gating tests + the 2 pre-existing Phase 4 table-gating tests) |
+
+### Build & Tests Execution (re-run in this pass, not trusted from apply-progress)
+**Build**: PASS (`pnpm build --force`, exit 0, 10/10 Turbo tasks, 0 cached — fresh, re-run in this
+pass)
+
+**Tests**: PASS (`pnpm --filter @indigodb/studio exec vitest run`, exit 0, fresh — re-run in this
+pass, not replayed)
+```text
+Test Files  27 passed (27)
+     Tests  222 passed (222)
+```
+Matches the launch prompt's stated baseline exactly (222 tests / 27 files, up from 203 at Phase 4).
+`pnpm exec turbo lint --force` (19/19) and `pnpm exec turbo test --force` (18/18) were already
+established fresh by the orchestrator on this exact commit per the launch prompt and are taken as
+given, consistent with the precedent Phase 4's report set for avoiding the ~9-minute full-suite
+cost twice for identical bytes — not re-run in this pass.
+
+**Coverage**: Not available — no coverage tool configured in this repo (informational only).
+
+### THE BIGGEST RISK — `buildFieldSpans`, the fake span helper, assessed against `span_agreement.rs`
+
+`patch.test.ts`'s `buildSpanIndex` is a test-only regex/brace-matching locator, not the real
+Rust/WASM `parse_with_spans`. Phase 5 extends it with `buildFieldSpans`, a line-scanning regex
+helper that computes `FieldSpan`'s `name`, `decl`, `nameToken`, `typeToken` fields (leaving
+`attributes` stubbed empty, since `addField`/`editField`/`deleteField` never read
+`field.attributes`).
+
+**Does `span_agreement.rs` cover the FIELD span fields the fake computes?** Yes. Read directly:
+`crates/indigo-compiler/tests/span_agreement.rs` (task 1.11, already verified PASS in Phase 1)
+parses the literal fixture `"Table User {\n  id Int @id\n  name String @unique\n}\n"` through the
+real Rust parser and asserts exact recorded offsets for **both** fields' `decl`
+(`id_field.decl`/`name_field.decl`), `name_token`, `type_token`, **and** `attributes` (asserting
+`attributes.len()`, `attributes[0].name`, and `attributes[0].span` for each field's own `@id`/
+`@unique` attribute). The same fixture is independently re-asserted from the WASM boundary side in
+`packages/compiler/test/parity.mjs`'s `"span values agree with the Rust-side recorded values
+(span_agreement.rs)"` check (confirmed present by direct read), so this is a genuine
+Rust-vs-compiled-WASM cross-check, not merely a Rust-only unit test.
+
+**Verdict on the risk**: the de-risking argument Phase 3's report accepted for `ModelSpan`
+(`nameToken`, `bodyClose`) extends cleanly to Phase 5's `FieldSpan` fields. Every field on
+`FieldSpan` that `buildFieldSpans` fakes (`decl`, `name_token`/`nameToken`, `type_token`/
+`typeToken`) is cross-verified against the real parser AND the real compiled WASM artifact by an
+already-shipped, already-verified test — the one field the fake leaves stubbed
+(`attributes: []`) is exactly the one field no Phase 5 production code path reads. This narrows,
+but does not eliminate, the residual divergence risk already flagged as a SUGGESTION in Phase 3:
+`span_agreement.rs`'s cross-check covers exactly one recorded fixture (a two-field table with
+simple `@id`/`@unique` attributes); it does not prove `buildFieldSpans`' brace/regex heuristics
+agree with the real parser on every input shape the Phase 5 test suite's *other* fixtures use
+(e.g. multi-attribute fields, or fields inside the larger `COMBINED_FIXTURE`, which
+`span_agreement.rs` never parses). Rated SUGGESTION, consistent with — and not weaker than — the
+same class of finding Phase 3 accepted for `ModelSpan`.
+
+**Apply agent's `FieldSpan`-already-shipped claim, verified**: confirmed against
+`crates/indigo-compiler/src/span.rs` (`pub struct FieldSpan { pub name, pub decl, pub name_token,
+pub type_token, pub attributes }`, unchanged since Phase 1) and the TS side (`patch.ts` imports
+`type { ModelSpan, FieldSpan } from '@indigodb/core'`, with `ModelSpan.fields: FieldSpan[]` already
+present). No `crates/` diff exists in `45e76cd` (`git show --stat 45e76cd` lists only
+`apps/studio/*` and `tasks.md`), confirming no Rust/WASM rebuild was needed for this phase —
+the claim is accurate.
+
+### Mutation proofs — independently reproduced in this pass
+
+**5.2 — `addField` off-by-one anchor** (`model.fields[last].decl.end` → `+ 1`):
+```
+FAIL patch.test.ts > applyErdEdit — addField (5.1/5.2) >
+  RED/byte-diff: adding a field to Widget leaves every other construct in the combined fixture byte-identical
+Expected: '...\tlabel String\n  note String\n}...'
+Received: '...\tlabel String\n\n  note String}...'
+Test Files  1 failed (1)
+     Tests  2 failed | 28 passed (30)
+```
+Exactly 2 tests failed, with the extra byte consumed exactly as apply-progress described (the
+insertion merges into the closing `}` line). Reverted; `git diff --stat` confirmed a
+byte-identical restore; `patch.test.ts` re-run 30/30 green.
+
+**5.4 — `editField` widened `nameToken` replacement span by one character**
+(`field.nameToken.end` → `field.nameToken.end + 1`), independently reproduced (not only taken from
+the orchestrator's earlier 5.6 reproduction):
+```
+FAIL patch.test.ts > applyErdEdit — editField (5.3/5.4) >
+  RED/mutation: editField changes only the targeted field...
+- Expected: '...email Text?...'
++ Received: '...emailText?...'
+Test Files  1 failed (1)
+     Tests  2 failed | 28 passed (30)
+```
+Exactly the class of bug task 5.4 names — the widened span eats the space before the type,
+merging the name and type tokens. Reverted; `git diff --stat` confirmed a byte-identical restore;
+`patch.test.ts` re-run 30/30 green.
+
+**5.7/5.8 — stubbed all three field closures to no-ops in `ERDCanvas.tsx`'s
+`buildEditAffordances`** (`onAddField`/`onEditField`/`onDeleteField` → `() => {}`):
+```
+FAIL ERDCanvas.test.tsx (4 tests)
+Test Files  1 failed (1)
+     Tests  4 failed | 14 passed (18)
+```
+Exactly 4/18 failed, matching apply-progress's claim precisely. Reverted; `git diff --stat`
+confirmed a byte-identical restore; `ERDCanvas.test.tsx` re-run 18/18 green.
+
+**5.6 — already reproduced by the orchestrator, not repeated here**: dropping `deleteField`'s
+trailing-newline extension (`if (currentText[lineEnd] === '\n') lineEnd += 1;`) failed exactly the
+two `deleteField` boundary tests (2 failed / 28 passed). Reverted, `git diff` clean.
+
+All independently reproduced mutations in this pass used `git checkout --` to revert and
+`git diff --stat`/full re-run to confirm a byte-identical restore before moving to the next
+mutation; the full focused suite (`patch.test.ts` + `ERDCanvas.test.tsx`, 48 tests) was re-run
+green after every reversion, and the full Studio suite (222/222) was re-run fresh at the end of
+this pass.
+
+### `editField` targeted-token replacement — attribute preservation confirmed (D4 at field level)
+
+Source inspection of `patch.ts`'s `editField` case confirms only `field.nameToken`,
+`field.typeToken`, and (for `optional`) a single `?` character immediately after
+`field.typeToken.end` are ever passed to `applyEdits`; `field.attributes` is never read or
+included in any `TextEdit`. **No committed test in `patch.test.ts` exercises this specific
+guarantee** — every `editField` test fixture in the committed suite (`mail String`, `age String`,
+`bio String`) edits a field with zero attributes; the sibling-line check ("the `id Int @id` line...
+stays byte-unchanged") proves an *adjacent* field's attribute survives, not the *edited* field's
+own attribute.
+
+To close this gap for this verify pass, a temporary, non-committed probe test was added and run,
+then reverted (`git diff --stat` confirmed clean afterward): renaming a field carrying
+`@default("active")` via `editField` (name-only change) produced
+`'Table User {\n  id Int @id\n  state String @default("active")\n}\n'` — the attribute survives
+byte-for-byte, exactly as the source-level guarantee predicts. **This confirms the implementation
+is correct**, but the guarantee has zero permanent coverage in the committed suite. Rated
+SUGGESTION (not WARNING/CRITICAL, since the source-level mechanism — targeted-token-only
+replacement, verified both by direct inspection and this pass's ad hoc reproduction — is sound and
+matches the same "narrow, single-purpose replacement" pattern `renameTable`/`deleteTable` already
+use, uncontested by any test in three prior phases): add a permanent `editField` test whose target
+field carries `@id`/`@default(...)`/`@relation(...)` and assert that attribute text survives
+byte-identical after a name/type/optional change.
+
+### Deviations declared by the apply agent — judged
+
+**(a) `editField`'s `optional` toggle is implemented+unit-tested in the constructor but NOT
+exposed in the UI.** Confirmed by reading `TableNode.tsx`'s `handleEditField`: it calls
+`window.prompt` twice (name, type) and never for `optional`; `changes` can only ever carry `name`/
+`fieldType`. Task 5.3's scope line explicitly says "name/type/optional" and 5.7 says "wire the
+field-row add/edit/delete affordances" — full-stop, without carving out `optional`. **Judgment**:
+task 5.3 (the constructor) is honestly complete — `optional` is implemented and independently unit-
+tested (both `true`→insert-`?` and `false`→remove-`?` branches are covered, confirmed by direct
+read of `patch.test.ts`). Task 5.7's checkbox is *not* fully honest against its own stated scope:
+the task names "field-row add/edit/delete affordances" without qualification, and the resulting UI
+genuinely cannot toggle optionality — a user has no path to mark a field optional/required from the
+canvas at all, despite the underlying edit kind supporting it. This is a real, if narrow, UI gap
+that the checkbox does not disclose on its face (apply-progress's own prose *does* disclose it
+candidly under "Deviations from Design," which is why this is not rated higher than WARNING).
+Rated **WARNING**: task 5.7 is functionally complete for name/type but partially wired against its
+own literal task description, honestly self-disclosed in prose but not reflected in the checkbox
+state.
+
+**(b) Field delete has no confirm dialog and no refusal path — judged for genuine safety, not
+just UI minimalism.** Verified server-side: `crates/indigo-compiler/src/validate.rs` rejects
+`"@relation(references:) points at unknown field ... on ..."`. `packages/cli/src/studio-server.ts`'s
+`PUT /api/schema/source` handler (line ~1743) calls `validate(ast)` and responds `422` with
+`validationErrors` **before** any write reaches disk — confirmed by direct read of the route
+handler. So: deleting a field that another table's `@relation(references: [...])` points at
+produces a buffer that Save will refuse with a 422 (surfaced via the existing 422-handling path,
+per Phase 4's task 4.14), not a silently-written broken schema. **No data-safety defect exists** —
+the eventual Save-time validation is the safety net task 5.5/5.6 rely on implicitly, without a
+client-side or ERD-time check confirming this in a dedicated test. This is a genuine, if narrow,
+UX gap (the user learns their field is referenced only at Save time, via a possibly confusing
+422 payload, rather than at delete time with a named refusal like `deleteTable` gives) — consistent
+severity with (c) below. Rated **WARNING**, not CRITICAL: no data loss or corruption is possible,
+only a delayed and less-specific error surface.
+
+**(c) `addTable`'s toolbar button still ungated on `schemaWritable`/`readOnly`.** Confirmed by
+reading `ERDCanvas.tsx`: the "Agregar tabla" button (`ToolbarButton`) has no `disabled` prop wired,
+while every field affordance IS gated via `data.onAddField`'s presence + `disabled` inside
+`TableNode`. This is the same WARNING Phase 4's report already raised and explicitly recommended
+closing "in the same pass that revisits Phase 5/6 affordance gating (task 5.8 already plans this
+pattern for field CRUD)." Phase 5 landed exactly that pattern for fields but did not extend it to
+`addTable`'s own toolbar button. **Carried forward as WARNING, now a repeat**: this is the second
+consecutive phase this exact fix was recommended and not applied; still non-blocking (Save still
+refuses under both `schemaWritable:false` and `readOnly:true`, so no data is ever lost or written),
+but the affordance-gating asymmetry has now persisted across two phases despite an explicit,
+actionable recommendation.
+
+### `window.prompt` as the editing UI
+
+`TableNode.tsx` uses `window.prompt` for table rename (Phase 4, `8fa3d3e`) and now for field
+name/type entry (Phase 5). Assessed on its own merits, not merely because it matches the
+surrounding pattern:
+
+- **In favor of accepting it as-is for now**: this is explicitly a dev-only internal tool
+  (`indigodb studio`), not a customer-facing product surface; `window.prompt` is synchronous,
+  requires zero new state management, and needed no new dependency to ship two full CRUD slices
+  (table + field) in two phases. The existing test architecture (React Flow stubbed to a
+  passthrough, `TableNode` never mounted at the unit level) would need meaningful rework to test a
+  React-rendered modal/inline-edit form anyway — `window.prompt`'s test surface is exactly the
+  closures `ERDCanvas`/`TableNode` build around it, which Phase 4 and Phase 5 both do test.
+- **Against**: this is a React 19 + Tailwind v4 + shadcn-style app (per this repo's own stated
+  stack), and `window.prompt` cannot be styled, cannot show validation errors inline (a field type
+  typo is only caught at parse-time on the next `applyErdEdit` call, surfaced as a generic
+  `anchor-missing`/`parse-failed` banner rather than inline field-level feedback), cannot be
+  tested at the render level, and blocks the entire tab synchronously — a real degradation
+  relative to the rest of the app's UI conventions. Phase 5 is now the SECOND consecutive phase to
+  extend this pattern (table rename → field name/type/well, three sequential prompts for a single
+  field edit when both name and type change). Every additional CRUD surface `window.prompt` covers
+  raises the eventual replacement cost (three call sites now, soon more if Phase 6's relation
+  drawing follows the same precedent).
+
+**Rated WARNING** (not SUGGESTION, not CRITICAL): it is a deliberate, currently-functional
+scaffold appropriate for a dev-only tool today, but the repo's own stated UI conventions
+(shadcn-style components elsewhere in Studio) make this inconsistent with the rest of the
+application, and the pattern is compounding without a stated plan to unwind it before Phase 6 adds
+a fourth interaction (relation drawing) on top. Recommend a design note (not necessarily a
+blocking fix) before Phase 6 either commits to `window.prompt` as the long-term editing UI or
+schedules its replacement with an inline/modal form.
+
+### Boundary/coverage discipline
+
+- **Exact-vs-substring assertions**: `deleteField`'s boundary test ("deleting the middle field of
+  three...") asserts `expect(result.text).toBe(...)` (exact buffer), plus `.not.toContain('mail')`
+  and `.not.toMatch(/\n\s*\n\s*age/)` as supplementary guards — not substring-only. `addField`'s
+  byte-diff test likewise asserts `.toBe(expected)` for the full buffer. Confirmed compliant with
+  the pattern the "seeded fixture hides a branch" finding requires.
+- **Conditional-branch coverage for Phase 5's new conditionals**: `editField`'s `optional` branch
+  has four logical arms (`optional:true` + already has `?`, `optional:true` + no `?`,
+  `optional:false` + has `?`, `optional:false` + no `?`); the committed suite covers exactly two
+  (`true` + no `?` → insert; `false` + has `?` → remove) — the two arms that actually mutate the
+  buffer. The two no-op arms (`true` + already has `?`; `false` + no `?`, both of which correctly
+  produce zero `fieldEdits` entries for that one flag) have no dedicated test, though they are the
+  less risky "nothing to do" arms and the produced `fieldEdits` array is empty either way — a
+  genuine but low-risk gap, not the "seeded fixture hides an entire branch's assertions" pattern
+  that bit this change twice before (Phase 2/3's fully-untested paths). Rated SUGGESTION.
+  `addField`'s two anchor arms (non-empty table / empty table) are both covered by dedicated tests.
+  `deleteField`'s single conditional (`currentText[lineEnd] === '\n'`) has its `true` arm covered
+  by every deleteField test (all fixtures end fields with a trailing newline); its `false` arm
+  (deleting the last field in a table with no trailing newline before `}`) has no dedicated test —
+  matching the same class of gap as the `optional` no-op arms above. Rated SUGGESTION, not WARNING:
+  low blast radius, and the boundary logic mirrors `deleteTable`'s already-proven pattern.
+
+### Spec Compliance Matrix
+
+`studio-erd-editing/spec.md` has 6 requirements / 17 scenarios total. Only ONE scenario is
+literally in scope for Phase 5: "Adding a field inserts one line without touching the rest of the
+table," under Requirement 1. **`editField` and `deleteField` have NO dedicated spec
+Requirement/Scenario at all** — confirmed by direct read: the spec's Purpose paragraph lists
+"add/edit/delete fields" as an ERD capability, and Requirement 1's body text says "field add/edit/
+delete... MUST each be expressed as an `ErdEdit`," but the `#### Scenario` blocks under every
+requirement in the file cover only table-level operations (rename, delete-with-refusal, add-table)
+plus the single field-add scenario — none for `editField`'s targeted-replacement guarantee or
+`deleteField`'s line-removal guarantee specifically.
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Every ERD edit produces a minimal, span-anchored text patch | Adding a field inserts one line without touching the rest of the table | `patch.test.ts` "adding a field to a table with existing fields inserts one new line inside the block, rest byte-unchanged" + "RED/byte-diff: adding a field to Widget..." | ✅ COMPLIANT |
+
+**Compliance summary**: 1/1 in-scope scenario COMPLIANT.
+
+**`editField`/`deleteField` — no dedicated spec scenario (recurring, pre-disclosed-pattern gap)**:
+this is the same class of finding Phase 3's report raised for `addTable` ("no dedicated spec
+Requirement/Scenario, despite the Purpose section listing the capability") and explicitly warned
+would "compound the same pattern for `deleteTable`/field CRUD/`addRelation`" if left unaddressed.
+Phase 4 closed the gap for `deleteTable` (which does have full requirement+3-scenario coverage).
+Phase 5 does NOT close it for `editField`/`deleteField` — the spec remains as silent on these two
+capabilities as it was on `addTable` before Phase 3's warning. Both capabilities are fully
+implemented and well-tested (30 `patch.test.ts` cases, mutation-proven), so this is spec-*silent*,
+not spec-*violating* — same rationale Phase 3 applied. **Rated WARNING**, and specifically flagged
+as a recurring authoring gap: the recommendation to add these scenarios before compounding further
+was made once already (Phase 3) and not acted on for two of the three capabilities it warned about
+(field CRUD here; only `addRelation`/Phase 6 remains).
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|---|---|---|
+| `addField` zero-width insertion, anchored on last field's `decl.end` (or `bodyOpen.end` if empty) | ✅ Implemented | `patch.ts:194-215`, mutation-proven above (5.2) |
+| `editField` targeted `nameToken`/`typeToken` replacement, never full-`decl` rewrite | ✅ Implemented | `patch.ts:216-256`, mutation-proven above (5.4); attribute preservation confirmed by ad hoc probe (see above) but has no permanent test |
+| `editField`'s `optional` toggle reads `currentText[typeToken.end]` directly (no boolean on `FieldSpan`) | ✅ Implemented | `patch.ts:246-253`; two of four logical arms covered (see Boundary/coverage discipline) |
+| `deleteField` removes the whole line (indent + trailing newline), same boundary discipline as `deleteTable` | ✅ Implemented | `patch.ts:257-284`; boundary mutation independently confirmed by the orchestrator (5.6) |
+| Field-row affordances gated on the same `editDisabled`/`editDisabledReason` pair as table rename/delete | ✅ Implemented | `ERDCanvas.tsx` `buildEditAffordances`, mutation-proven above (5.7/5.8, shared-flag reuse) |
+| `deleteField` has no client-side referenced-field refusal path | ⚠️ By design, safety-netted server-side | See deviation (b) above — `validate(ast)` on Save catches it, 422 not silent corruption |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|---|---|---|
+| D3 — fresh parse every call, no cached span/scan | ✅ Yes | Single `parseWithSpans` call per `applyErdEdit` invocation (unchanged shared entry point); field lookups (`findField`) always operate on THIS call's `spans`, never a caller-held reference |
+| D4 — untouched-by-construction | ✅ Yes at field level | `addField` zero-width insertion; `editField` targeted-token replacement (attributes never touched, confirmed by source inspection + ad hoc probe); `deleteField` exact line-boundary removal — same pattern `deleteTable` established in Phase 4 |
+| D5 — refusal computed from the IR, not spans (table-level, unchanged) | N/A this phase | `deleteField` has no analogous IR-sourced refusal at all (see deviation (b)) — D5 was stated for table deletion specifically and Phase 5 does not extend or violate it |
+
+### Verdict
+**PASS WITH WARNINGS** — all 8 Phase 5 tasks complete and traced to real code/tests; the
+`buildFieldSpans` fake-span-helper risk is assessed and found to extend Phase 3's accepted
+de-risking argument cleanly (`span_agreement.rs` cross-checks exactly the `decl`/`nameToken`/
+`typeToken`/`attributes` fields the fake computes, against both the real Rust parser and the
+compiled WASM boundary); the apply agent's claim that `FieldSpan` already shipped in Phase 1's
+committed WASM artifact is independently confirmed against `span.rs` and `patch.ts`'s imports.
+Three mutation proofs independently reproduced in this pass (5.2, 5.4, 5.7/5.8) plus one already
+reproduced by the orchestrator (5.6) — all matched the claimed failures exactly, all reverted with
+confirmed clean `git diff --stat` restores. `editField`'s attribute-preservation guarantee (task
+5.3's stated scope) was confirmed correct via an ad hoc, non-committed probe test but has zero
+permanent coverage — rated SUGGESTION. Full Studio suite re-run fresh (222/222, matching baseline
+exactly) and full monorepo build re-run fresh (10/10). Four WARNINGs found: (a) task 5.7's
+"optional" affordance is honestly self-disclosed as unwired in apply-progress's prose but the
+checkbox does not reflect the partial UI coverage against its own stated scope; (b) `deleteField`
+has no client-side refusal or confirm path, judged genuinely safe only because server-side
+`validate()` on Save catches a broken `@relation` reference before any write — confirmed by direct
+route-handler inspection, not merely assumed; (c) `addTable`'s toolbar button remains ungated for
+the second consecutive phase despite Phase 4's explicit, actionable recommendation to close it
+alongside field-CRUD gating; (d) `editField`/`deleteField` have no dedicated spec
+Requirement/Scenario, repeating the same spec-silence pattern Phase 3 flagged and warned would
+compound if unaddressed — now true for two of the three capabilities that warning named.
+`window.prompt` as the field-editing UI is also rated WARNING: functional and reasonable for a
+dev-only tool today, but inconsistent with the app's own shadcn-style conventions and compounding
+across a second consecutive phase with no stated unwind plan. None of the four items block
+archiving Phase 5 on their own — no data-safety defect exists, and the underlying edit-application
+logic is correct and mutation-proven throughout — but (c) and the spec-silence item (d) are now
+repeat findings across two phases and warrant closing before Phase 6 adds a third and fourth
+compounding instance (relation drawing's own UI and spec scenarios).
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:62309b6201b0203aae3cde1e819b9e7cab001b732c7370a0d9bf719b7547f350
 verdict: pass
 blockers: 0
