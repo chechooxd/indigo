@@ -3,9 +3,16 @@
  *
  * `printSchema` is the inverse of `parse` + `resolve` for the subset of
  * `ResolvedSchema` that `.indigo` can express: a pure, I/O-free function
- * `(ResolvedSchema) -> string`. It never guesses — any IR construct it
- * cannot represent losslessly throws `IndigoPrintError` rather than
- * emitting partial/best-guess text.
+ * `(ResolvedSchema) -> string`. It throws `IndigoPrintError` — never emits
+ * partial/best-guess text — on any IR construct it cannot represent
+ * losslessly (unmappable physical names, ambiguous FK-to-relation
+ * cross-references) and on genuine ambiguity (two relation fields claiming
+ * the same foreign key). One shape is deliberate, documented dual behavior
+ * rather than a guess: a foreign key with no matching relation metadata
+ * (the `db pull` introspection shape, `relations: []`) prints as a plain
+ * scalar column with its FK data in `// @fk(...)` comment form — this is
+ * the correct and only representation for that path until a future
+ * `db-pull-relation-synthesis` change adds relation-field-name synthesis.
  *
  * Deterministic emission order: header comment -> datasource -> enums ->
  * tables, with each collection's IR array order preserved verbatim
@@ -14,12 +21,16 @@
 
 import type { AttributeValue } from "@indigodb/ast";
 import type {
+  AllowOperand,
+  AllowRule,
   ForeignKey,
   ResolvedColumn,
   ResolvedEnum,
   ResolvedIndex,
+  ResolvedRelation,
   ResolvedSchema,
   ResolvedTable,
+  ResolvedTableGroup,
 } from "./ir.js";
 
 export interface PrintOptions {
@@ -167,12 +178,142 @@ function fieldAttrs(col: ResolvedColumn): string[] {
   return attrs;
 }
 
-function printFieldLines(table: ResolvedTable, indent: string): string[] {
-  const rows = table.columns.map((col) => ({
+function arrayEq(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Whether `rel` is the FK-holding side. `pair_relations` (`resolve.rs:592-597`)
+ * back-fills the holder's `fkColumns`/`refColumns` onto the paired inverse
+ * side and sets `inverse: true` — so `fkColumns.length > 0` ALONE is not
+ * sufficient (the inverse side carries them too). Design D1.
+ */
+function isRelationHolder(rel: ResolvedRelation): boolean {
+  return rel.inverse !== true && rel.fkColumns.length > 0;
+}
+
+/**
+ * Partitions `table.foreignKeys` into FKs claimed by a holder relation field
+ * and orphan FKs (no matching relation — the `db pull` introspection shape).
+ * Throws `IndigoPrintError` on any ambiguity (design D3): a relation
+ * matching >=2 FKs, or an FK matched by >=2 relations. A claimed FK carrying
+ * `name` also throws (design D4) — `.indigo`'s `@relation(...)` has no
+ * `name:` argument to print it, and this branch is unreached by the corpus
+ * (0/21 FKs carry a name).
+ */
+function claimForeignKeys(
+  schema: ResolvedSchema,
+  table: ResolvedTable,
+): { fkFor: Map<ResolvedRelation, ForeignKey | undefined>; orphans: ForeignKey[] } {
+  const fkFor = new Map<ResolvedRelation, ForeignKey | undefined>();
+  const claimedBy = new Map<ForeignKey, ResolvedRelation>();
+
+  for (const rel of table.relations) {
+    if (!isRelationHolder(rel)) continue;
+
+    const targetTable = schema.tables.find((t) => t.name === rel.targetModel);
+    if (!targetTable) {
+      throw new IndigoPrintError(
+        `Table "${table.name}": relation field "${rel.name}" references unknown model "${rel.targetModel}"`,
+      );
+    }
+
+    const matches = table.foreignKeys.filter(
+      (fk) => arrayEq(fk.columns, rel.fkColumns) && fk.refTable === targetTable.dbName,
+    );
+
+    if (matches.length > 1) {
+      throw new IndigoPrintError(
+        `Table "${table.name}": relation field "${rel.name}" matches ${matches.length} foreign keys ` +
+          `with identical column set [${rel.fkColumns.join(", ")}] targeting "${targetTable.dbName}" — ` +
+          `cannot determine onDelete/onUpdate`,
+      );
+    }
+
+    const fk = matches[0];
+    if (fk !== undefined) {
+      const claimant = claimedBy.get(fk);
+      if (claimant !== undefined) {
+        throw new IndigoPrintError(
+          `Table "${table.name}": foreign key on [${fk.columns.join(", ")}] is claimed by both ` +
+            `"${claimant.name}" and "${rel.name}"`,
+        );
+      }
+      if (fk.name !== undefined) {
+        throw new IndigoPrintError(
+          `Table "${table.name}": relation field "${rel.name}" claims a foreign key carrying a ` +
+            `constraint name ("${fk.name}") — .indigo's @relation(...) has no name: argument to print it`,
+        );
+      }
+      claimedBy.set(fk, rel);
+    }
+
+    fkFor.set(rel, fk);
+  }
+
+  const orphans = table.foreignKeys.filter((fk) => !claimedBy.has(fk));
+  return { fkFor, orphans };
+}
+
+/**
+ * Prints one relation field. Non-holder sides (inverse/paired) emit the bare
+ * type plus an optional `@relation("name")`; holder sides emit the full
+ * `@relation(fields:, references:, onDelete:, onUpdate:)` clause. `fields:`/
+ * `references:` are only emitted when their array is non-empty (design D9).
+ */
+function printRelationField(
+  schema: ResolvedSchema,
+  table: ResolvedTable,
+  rel: ResolvedRelation,
+  fk: ForeignKey | undefined,
+): { name: string; type: string; attrs: string[] } {
+  const type = `${rel.targetModel}${rel.list ? "[]" : rel.optional ? "?" : ""}`;
+
+  if (!isRelationHolder(rel)) {
+    const attrs = rel.relationName === undefined ? [] : [`@relation(${quoteString(rel.relationName)})`];
+    return { name: rel.name, type, attrs };
+  }
+
+  const targetTable = schema.tables.find((t) => t.name === rel.targetModel);
+  if (!targetTable) {
+    throw new IndigoPrintError(
+      `Table "${table.name}": relation field "${rel.name}" references unknown model "${rel.targetModel}"`,
+    );
+  }
+
+  const args: string[] = [];
+  if (rel.relationName !== undefined) args.push(quoteString(rel.relationName));
+  if (rel.fkColumns.length > 0) {
+    args.push(`fields: [${rel.fkColumns.map((c) => fieldNameFor(table, c)).join(", ")}]`);
+  }
+  if (rel.refColumns.length > 0) {
+    args.push(`references: [${rel.refColumns.map((c) => fieldNameFor(targetTable, c)).join(", ")}]`);
+  }
+  if (fk?.onDelete !== undefined) args.push(`onDelete: ${schemaActionFromSql(fk.onDelete)}`);
+  if (fk?.onUpdate !== undefined) args.push(`onUpdate: ${schemaActionFromSql(fk.onUpdate)}`);
+
+  return { name: rel.name, type, attrs: [`@relation(${args.join(", ")})`] };
+}
+
+/**
+ * Scalar columns and relation fields share one aligned block, relation rows
+ * appended after all scalars in `table.relations` IR order (design D5) —
+ * interleaving is unrecoverable from the IR, and joint padding keeps output
+ * diff-stable.
+ */
+function printFieldLines(
+  schema: ResolvedSchema,
+  table: ResolvedTable,
+  indent: string,
+  fkFor: Map<ResolvedRelation, ForeignKey | undefined>,
+): string[] {
+  const columnRows = table.columns.map((col) => ({
     name: col.name,
     type: `${col.type}${col.nullable ? "?" : ""}`,
     attrs: fieldAttrs(col),
   }));
+  const relationRows = table.relations.map((rel) => printRelationField(schema, table, rel, fkFor.get(rel)));
+  const rows = [...columnRows, ...relationRows];
   const nameWidth = rows.reduce((max, r) => Math.max(max, r.name.length), 0);
   const typeWidth = rows.reduce((max, r) => Math.max(max, r.type.length), 0);
   return rows.map((r) => {
@@ -211,12 +352,39 @@ function printIndexAttr(table: ResolvedTable, idx: ResolvedIndex): string {
   return `${attrName}(${args.join(", ")})`;
 }
 
+/**
+ * Prints one side of a resolved `@@allow` equality condition. Deliberately
+ * separate from `printAttributeValue` (design D6): that function's
+ * `path`/`comparison` throw guard belongs to the unrelated `datasource.url`
+ * path and must stay a dead branch.
+ */
+function printAllowOperand(table: ResolvedTable, op: AllowOperand): string {
+  switch (op.kind) {
+    case "field":
+      return `this.${fieldNameFor(table, op.name)}`;
+    case "claim":
+      return `auth.${op.name}`;
+    case "string":
+      return quoteString(op.value);
+    case "number":
+    case "boolean":
+      return String(op.value);
+  }
+}
+
+function printAllowRule(table: ResolvedTable, rule: AllowRule): string {
+  const left = printAllowOperand(table, rule.left);
+  const right = printAllowOperand(table, rule.right);
+  return `@@allow(${rule.action}, ${left} == ${right})`;
+}
+
 function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string): string {
   checkPrimaryKeySubsequence(table);
 
-  const fieldLines = printFieldLines(table, indent);
+  const { fkFor, orphans } = claimForeignKeys(schema, table);
+  const fieldLines = printFieldLines(schema, table, indent, fkFor);
 
-  const fkLines = table.foreignKeys.map((fk) => `${indent}${printFkComment(schema, table, fk)}`);
+  const fkLines = orphans.map((fk) => `${indent}${printFkComment(schema, table, fk)}`);
 
   const blockLines: string[] = [];
   if (table.dbName !== table.name) blockLines.push(`${indent}@@map(${quoteString(table.dbName)})`);
@@ -226,7 +394,15 @@ function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string
   for (const idx of table.indexes) {
     if (!idx.unique) blockLines.push(`${indent}${printIndexAttr(table, idx)}`);
   }
-  if (table.realtime) blockLines.push(`${indent}@@realtime`);
+  if (table.realtimeColumns !== undefined) {
+    const cols = table.realtimeColumns.map((c) => fieldNameFor(table, c));
+    blockLines.push(`${indent}@@realtime(columns: [${cols.join(", ")}])`);
+  } else if (table.realtime) {
+    blockLines.push(`${indent}@@realtime`);
+  }
+  if (table.allow) {
+    for (const rule of table.allow) blockLines.push(`${indent}${printAllowRule(table, rule)}`);
+  }
   if (table.note !== undefined) blockLines.push(`${indent}@@note(${quoteString(table.note)})`);
 
   const tail = [...fkLines, ...blockLines];
@@ -234,6 +410,18 @@ function printTable(schema: ResolvedSchema, table: ResolvedTable, indent: string
   if (tail.length > 0) body += `\n\n${tail.join("\n")}`;
 
   return `Table ${table.name} {\n${body}\n}`;
+}
+
+/**
+ * Prints one `TableGroup` block verbatim from `ResolvedSchema.tableGroups`
+ * (design D8) — never derived from `table.color`/`table.group`, so a
+ * declared overlap ("last group wins") replays identically on re-resolve.
+ */
+function printTableGroup(group: ResolvedTableGroup, indent: string): string {
+  const lines: string[] = [];
+  if (group.color !== undefined) lines.push(`${indent}color = ${quoteString(group.color)}`);
+  for (const t of group.tables) lines.push(`${indent}${t}`);
+  return `TableGroup ${quoteString(group.name)} {\n${lines.join("\n")}\n}`;
 }
 
 function printHeader(header: string): string {
@@ -257,6 +445,7 @@ export function printSchema(schema: ResolvedSchema, options: PrintOptions = {}):
   if (schema.datasource) blocks.push(printDatasource(schema, indent));
   for (const en of schema.enums) blocks.push(printEnum(en));
   for (const table of schema.tables) blocks.push(printTable(schema, table, indent));
+  for (const group of schema.tableGroups) blocks.push(printTableGroup(group, indent));
 
   const text = blocks.join("\n\n").replace(/\r\n/g, "\n");
   return `${text.replace(/\n+$/, "")}\n`;
