@@ -159,14 +159,14 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: Field CRUD (PR 5, depends on: Phase 3)
 
-- [ ] 5.1 GREEN: implement `addField` edit constructor (insert field line)
-- [ ] 5.2 RED (vitest): adding a field inserts one new line inside the table block; the `id Int @id` line and everything outside the block is unchanged (byte-diff)
-- [ ] 5.3 GREEN: implement `editField` edit constructor (name/type/optional)
-- [ ] 5.4 RED: `editField` changes only the targeted field, rest byte-unchanged (mutation: widen the replacement span by one token)
-- [ ] 5.5 GREEN: implement `deleteField` edit constructor
-- [ ] 5.6 RED: `deleteField` removes only the target field line, rest unchanged
-- [ ] 5.7 GREEN: wire field-row add/edit/delete affordances on `TableNode.tsx` to `applyErdEdit`
-- [ ] 5.8 RED: field edit affordance disabled under `schemaWritable:false`/read-only, consistent with Phase 4 gating (extends existing tests)
+- [x] 5.1 GREEN: implement `addField` edit constructor (insert field line)
+- [x] 5.2 RED (vitest): adding a field inserts one new line inside the table block; the `id Int @id` line and everything outside the block is unchanged (byte-diff)
+- [x] 5.3 GREEN: implement `editField` edit constructor (name/type/optional)
+- [x] 5.4 RED: `editField` changes only the targeted field, rest byte-unchanged (mutation: widen the replacement span by one token)
+- [x] 5.5 GREEN: implement `deleteField` edit constructor
+- [x] 5.6 RED: `deleteField` removes only the target field line, rest unchanged
+- [x] 5.7 GREEN: wire field-row add/edit/delete affordances on `TableNode.tsx` to `applyErdEdit`
+- [x] 5.8 RED: field edit affordance disabled under `schemaWritable:false`/read-only, consistent with Phase 4 gating (extends existing tests)
 
 ## Phase 6: Relation drawing (PR 6, depends on: Phase 5)
 

@@ -342,3 +342,134 @@ describe('ERDCanvas — rename/delete affordance wiring', () => {
     expect(data.editDisabled).toBe(false);
   });
 });
+
+/**
+ * Field-row add/edit/delete wiring (Phase 5). Same stubbing/assertion
+ * strategy as the rename/delete describe block above: `<ReactFlow>` never
+ * mounts `TableNode`, so per-node closure wiring is asserted directly on
+ * the captured `nodes` prop's `data` object.
+ */
+describe('ERDCanvas — field CRUD affordance wiring', () => {
+  function findTableNodeData(id: string): TableNodeData {
+    const node = capturedRef.nodes?.find(n => n.id === id);
+    if (!node) throw new Error(`table node "${id}" not found in captured nodes`);
+    return node.data as TableNodeData;
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchLayout).mockReset();
+    vi.mocked(applyErdEdit).mockReset();
+    capturedRef.onNodesChange = undefined;
+    capturedRef.nodes = undefined;
+    useAuthStore.setState({ schemaWritable: true, readOnly: false });
+  });
+
+  it('adding a field calls applyErdEdit with addField (table, name, fieldType) and forwards an ok result', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+    const currentText = 'Table User {\n  id Int @id\n}\n';
+
+    await renderCanvas({ dslCode: currentText, onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onAddField?.('email', 'String');
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledWith(currentText, {
+      kind: 'addField',
+      table: 'User',
+      name: 'email',
+      fieldType: 'String',
+    });
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('editing a field calls applyErdEdit with editField (table, field, changes) and forwards an ok result', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onEditField?.('email', { fieldType: 'Text' });
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'editField',
+      table: 'User',
+      field: 'email',
+      fieldType: 'Text',
+    });
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('deleting a field calls applyErdEdit with deleteField (table, field) and forwards an ok result', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onDeleteField?.('email');
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'deleteField',
+      table: 'User',
+      field: 'email',
+    });
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('a refused field edit surfaces the refusal message and does NOT call onDslChange', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Field "email" was not found on table "User".',
+    });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    act(() => {
+      findTableNodeData('User').onDeleteField?.('email');
+    });
+
+    expect(onDslChange).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Field "email" was not found on table "User".',
+      ),
+    );
+  });
+
+  it('RED/mutation: field affordances are wired through the SAME editDisabled/editDisabledReason gate as rename/delete — disabled under schemaWritable:false', async () => {
+    useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    const data = findTableNodeData('User');
+    // The closures exist (so TableNode CAN wire the buttons), but the same
+    // editDisabled/editDisabledReason values that gate rename/delete also
+    // gate them — asserted here on the raw callback wiring so a future
+    // change that stops threading `editDisabled` to field-level affordances
+    // is caught without a separate TableNode-mounting harness.
+    expect(data.onAddField).toBeInstanceOf(Function);
+    expect(data.onEditField).toBeInstanceOf(Function);
+    expect(data.onDeleteField).toBeInstanceOf(Function);
+    expect(data.editDisabled).toBe(true);
+    expect(data.editDisabledReason).toMatch(/not writable/i);
+  });
+
+  it('RED/mutation: field affordances are disabled under global read-only mode too (mutation: enable regardless of schemaWritable/readOnly)', async () => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    const data = findTableNodeData('User');
+    expect(data.editDisabled).toBe(true);
+    expect(data.editDisabledReason).toMatch(/read-only/i);
+  });
+});

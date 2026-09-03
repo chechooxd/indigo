@@ -28,6 +28,14 @@ export interface TableNodeData extends Record<string, unknown> {
    */
   onRename?: (name: string) => void;
   onDelete?: (name: string) => void;
+  /**
+   * Field-row CRUD affordances (Phase 5), same absence-means-no-affordance
+   * and same `editDisabled`/`editDisabledReason` gating as the table-level
+   * pair above.
+   */
+  onAddField?: (name: string, fieldType: string) => void;
+  onEditField?: (field: string, changes: { name?: string; fieldType?: string }) => void;
+  onDeleteField?: (field: string) => void;
   /** `true` when the affordances above must render disabled, with `editDisabledReason` as their title. */
   editDisabled?: boolean;
   editDisabledReason?: string;
@@ -58,10 +66,13 @@ function targetFieldIndex(node: CanvasNode, link: ERDLink): number {
   return Math.max(0, idx);
 }
 
-/** Optional rename/delete wiring, passed through to the node's `data` untouched. */
+/** Optional rename/delete/field-CRUD wiring, passed through to the node's `data` untouched. */
 export interface TableEditAffordances {
   onRename: (name: string) => void;
   onDelete: (name: string) => void;
+  onAddField: (name: string, fieldType: string) => void;
+  onEditField: (field: string, changes: { name?: string; fieldType?: string }) => void;
+  onDeleteField: (field: string) => void;
   disabled?: boolean;
   disabledReason?: string;
 }
@@ -83,6 +94,9 @@ export function toTableNode(
       fields: node.fields ?? [],
       onRename: edit?.onRename,
       onDelete: edit?.onDelete,
+      onAddField: edit?.onAddField,
+      onEditField: edit?.onEditField,
+      onDeleteField: edit?.onDeleteField,
       editDisabled: edit?.disabled,
       editDisabledReason: edit?.disabledReason,
     },

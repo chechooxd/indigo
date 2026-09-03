@@ -49,23 +49,69 @@ function findMatchingBraceEnd(source: string, openIndex: number): number {
   throw new Error(`unbalanced braces in fixture starting at offset ${openIndex}`);
 }
 
+type Span = { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
+
+function fakeSpan(start: number, end: number): Span {
+  return { start, end, line: 1, column: 1, endLine: 1, endColumn: 1 };
+}
+
+/**
+ * Builds `FieldSpan`s for every simple `name Type[?]` line inside a model's
+ * body (`[bodyOpenEnd, bodyCloseStart)`), by real string offsets — skips
+ * blank lines, `@@`-prefixed block attributes and `//` comments. Only
+ * covers the plain declarations the Phase 5 fixtures use; attributes are
+ * left empty (unused by `addField`/`editField`/`deleteField`, which never
+ * read `field.attributes`). `decl` spans the whole trimmed line (so it
+ * includes any trailing `@id`-style attribute text), matching the real
+ * parser's `decl_start..last_consumed_end` convention.
+ */
+function buildFieldSpans(source: string, bodyOpenEnd: number, bodyCloseStart: number) {
+  const fields: Array<{ name: string; decl: Span; nameToken: Span; typeToken: Span; attributes: never[] }> = [];
+  let cursor = bodyOpenEnd;
+  const body = source.slice(bodyOpenEnd, bodyCloseStart);
+  for (const line of body.split('\n')) {
+    const lineStart = cursor;
+    cursor += line.length + 1; // account for the split '\n'
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('@@') || trimmed.startsWith('//')) continue;
+    const fieldMatch = /^([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\??/.exec(trimmed);
+    if (!fieldMatch) continue;
+    const leadingWs = line.length - line.trimStart().length;
+    const nameStart = lineStart + leadingWs;
+    const nameEnd = nameStart + fieldMatch[1].length;
+    const typeStart = lineStart + line.indexOf(fieldMatch[2], leadingWs + fieldMatch[1].length);
+    const typeEnd = typeStart + fieldMatch[2].length;
+    const declEnd = lineStart + line.trimEnd().length;
+    fields.push({
+      name: fieldMatch[1],
+      decl: fakeSpan(nameStart, declEnd),
+      nameToken: fakeSpan(nameStart, nameEnd),
+      typeToken: fakeSpan(typeStart, typeEnd),
+      attributes: [],
+    });
+  }
+  return fields;
+}
+
 /**
  * Builds a minimal `SpanIndex` from real string offsets in `source`, one
  * `ModelSpan` per `Table <name>` declaration found. `nameToken` (read by
  * `renameTable`), `bodyOpen`/`bodyClose` (`bodyClose.end` read by
- * `addTable`'s anchor) and `decl` (the whole `Table <name> { ... }` block,
- * read by `deleteTable`) all carry real offsets computed from `source`
- * itself, not hand-typed magic numbers; `fields`/`attributes` stay unused
- * by every edit kind under test, so they stay stubbed.
+ * `addTable`'s anchor, `bodyOpen.end` read by `addField`'s empty-table
+ * anchor) and `decl` (the whole `Table <name> { ... }` block, read by
+ * `deleteTable`) all carry real offsets computed from `source` itself, not
+ * hand-typed magic numbers. `fields` (Phase 5) is computed by
+ * `buildFieldSpans`; `attributes` stays unused by every edit kind under
+ * test, so it stays stubbed.
  */
 function buildSpanIndex(source: string) {
   const models: Array<{
     name: string;
-    decl: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
-    nameToken: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
-    bodyOpen: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
-    bodyClose: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
-    fields: never[];
+    decl: Span;
+    nameToken: Span;
+    bodyOpen: Span;
+    bodyClose: Span;
+    fields: ReturnType<typeof buildFieldSpans>;
     attributes: never[];
   }> = [];
   const re = /Table\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
@@ -77,27 +123,14 @@ function buildSpanIndex(source: string) {
     const bodyOpenStart = match.index + match[0].length - 1;
     const bodyOpenEnd = bodyOpenStart + 1;
     const bodyCloseEnd = findMatchingBraceEnd(source, bodyOpenStart);
+    const bodyCloseStart = bodyCloseEnd - 1;
     models.push({
       name,
-      decl: {
-        start: match.index,
-        end: bodyCloseEnd,
-        line: 1,
-        column: 1,
-        endLine: 1,
-        endColumn: 1,
-      },
-      nameToken: { start: nameStart, end: nameEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
-      bodyOpen: { start: bodyOpenStart, end: bodyOpenEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
-      bodyClose: {
-        start: bodyCloseEnd - 1,
-        end: bodyCloseEnd,
-        line: 1,
-        column: 1,
-        endLine: 1,
-        endColumn: 1,
-      },
-      fields: [],
+      decl: fakeSpan(match.index, bodyCloseEnd),
+      nameToken: fakeSpan(nameStart, nameEnd),
+      bodyOpen: fakeSpan(bodyOpenStart, bodyOpenEnd),
+      bodyClose: fakeSpan(bodyCloseStart, bodyCloseEnd),
+      fields: buildFieldSpans(source, bodyOpenEnd, bodyCloseStart),
       attributes: [],
     });
   }
@@ -433,6 +466,200 @@ describe('applyErdEdit — staleness gate (D3)', () => {
     const expected =
       currentText.slice(0, anchor) + '\n\nTable Comment {\n  id Int @id\n}' + currentText.slice(anchor);
     expect(result.text).toBe(expected);
+  });
+});
+
+describe('applyErdEdit — addField (5.1/5.2)', () => {
+  it('adding a field to a table with existing fields inserts one new line inside the block, rest byte-unchanged', () => {
+    const source = 'Table User {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'addField', table: 'User', name: 'email', fieldType: 'String' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n  email String\n}\n');
+  });
+
+  it('adding a field to an empty table inserts right after the opening brace', () => {
+    const source = 'Table User {\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'addField', table: 'User', name: 'id', fieldType: 'Int' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int\n}\n');
+  });
+
+  it('RED/byte-diff: adding a field to Widget leaves every other construct in the combined fixture byte-identical (mutation target: off-by-one anchor)', () => {
+    mockRealParse(COMBINED_FIXTURE);
+
+    const result = applyErdEdit(COMBINED_FIXTURE, {
+      kind: 'addField',
+      table: 'Widget',
+      name: 'note',
+      fieldType: 'String',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    // Exactly one new line inserted right after Widget's last existing
+    // field ("\tlabel String"), before Widget's closing "}".
+    const expected = COMBINED_FIXTURE.replace(
+      '\tlabel String\n}',
+      '\tlabel String\n  note String\n}',
+    );
+    expect(result.text).toBe(expected);
+
+    // Everything outside Widget's block, including its own pre-existing
+    // "id Int @id" line, is unchanged.
+    expect(result.text).toContain('    id        Int     @id');
+    expect(result.text).toContain('@@allow(read, auth.userId == this.ownerId)');
+    expect(result.text).toContain('@@realtime(columns: [id, email])');
+    expect(result.text).toContain('TableGroup "Billing" {');
+  });
+
+  it('addField refuses as anchor-missing when the target table is absent from the fresh parse', () => {
+    const source = 'Table Post {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'addField', table: 'User', name: 'email', fieldType: 'String' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Table "User" was not found in the current buffer.',
+    });
+  });
+});
+
+describe('applyErdEdit — editField (5.3/5.4)', () => {
+  it('renames a field, changing only its name token', () => {
+    const source = 'Table User {\n  id Int @id\n  mail String\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'editField', table: 'User', field: 'mail', name: 'email' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n  email String\n}\n');
+  });
+
+  it('changes a field type, changing only its type token', () => {
+    const source = 'Table User {\n  id Int @id\n  age String\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'editField', table: 'User', field: 'age', fieldType: 'Int' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n  age Int\n}\n');
+  });
+
+  it('marks a field optional by inserting a trailing "?" after its type', () => {
+    const source = 'Table User {\n  id Int @id\n  bio String\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'editField', table: 'User', field: 'bio', optional: true });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n  bio String?\n}\n');
+  });
+
+  it('clears an optional field by removing its trailing "?"', () => {
+    const source = 'Table User {\n  id Int @id\n  bio String?\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'editField', table: 'User', field: 'bio', optional: false });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n  bio String\n}\n');
+  });
+
+  it('RED/mutation: editField changes only the targeted field — the id Int @id line and everything outside the block stays byte-unchanged', () => {
+    const source = 'Table User {\n  id Int @id\n  mail String\n}\n\nTable Post {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'editField',
+      table: 'User',
+      field: 'mail',
+      name: 'email',
+      fieldType: 'Text',
+      optional: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe(
+      'Table User {\n  id Int @id\n  email Text?\n}\n\nTable Post {\n  id Int @id\n}\n',
+    );
+    // The mutation this test guards against: widening the name-token
+    // replacement span by one extra character (e.g. `nameToken.end + 1`)
+    // would eat the leading space before the type, corrupting "email" into
+    // "emailString" — this exact-string assertion catches that class of
+    // off-by-one directly, without needing a separate mutation run.
+    expect(result.text).not.toContain('emailText');
+    expect(result.text).toContain('id Int @id\n}\n');
+  });
+
+  it('editField refuses as anchor-missing when the field is absent from the fresh parse', () => {
+    const source = 'Table User {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'editField', table: 'User', field: 'missing', name: 'x' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Field "missing" was not found on table "User".',
+    });
+  });
+});
+
+describe('applyErdEdit — deleteField (5.5/5.6)', () => {
+  it('deletes a field, removing exactly its own line', () => {
+    const source = 'Table User {\n  id Int @id\n  email String\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'deleteField', table: 'User', field: 'email' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe('Table User {\n  id Int @id\n}\n');
+  });
+
+  it('RED/boundary: deleting the middle field of three leaves the first and last field lines exactly intact, no blank/indentation-only residue', () => {
+    const source = 'Table User {\n  id Int @id\n  mail String\n  age Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'deleteField', table: 'User', field: 'mail' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    // Exact string, not a substring check — a boundary bug that leaves the
+    // line's indentation or its trailing newline behind produces a blank
+    // or whitespace-only line here instead of a clean two-field body.
+    expect(result.text).toBe('Table User {\n  id Int @id\n  age Int\n}\n');
+    expect(result.text).not.toContain('mail');
+    expect(result.text).not.toMatch(/\n\s*\n\s*age/);
+  });
+
+  it('deleteField refuses as anchor-missing when the field is absent from the fresh parse', () => {
+    const source = 'Table User {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, { kind: 'deleteField', table: 'User', field: 'missing' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Field "missing" was not found on table "User".',
+    });
   });
 });
 

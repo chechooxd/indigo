@@ -24,7 +24,7 @@
  */
 
 import { parseWithSpans, resolve, IndigoParseError } from '@indigodb/core';
-import type { ModelSpan } from '@indigodb/core';
+import type { ModelSpan, FieldSpan } from '@indigodb/core';
 
 /** A resolved, already-anchored text replacement. */
 export interface TextEdit {
@@ -65,14 +65,27 @@ export function applyEdits(source: string, edits: TextEdit[]): string {
  * slice) implemented only `renameTable`. PR3b added `addTable`, an
  * insertion rather than a replace — it has no existing anchor to locate, so
  * it never refuses with `anchor-missing`; only a fresh-parse failure can
- * refuse it. Phase 4 (this slice) adds `deleteTable`. Field CRUD (Phase 5)
- * and `addRelation` (Phase 6) widen this union as those slices land — see
- * `openspec/changes/studio-erd-designer/tasks.md`.
+ * refuse it. Phase 4 added `deleteTable`. Phase 5 (this slice) adds field
+ * CRUD (`addField`/`editField`/`deleteField`), anchored on `FieldSpan`s
+ * nested inside each `ModelSpan.fields` — the same fresh-parse-per-call
+ * discipline applies: a field is looked up in THIS call's `spans`, never
+ * from a caller-held reference. `addRelation` (Phase 6) widens this union
+ * further — see `openspec/changes/studio-erd-designer/tasks.md`.
  */
 export type ErdEdit =
   | { kind: 'renameTable'; from: string; to: string }
   | { kind: 'addTable'; name: string }
-  | { kind: 'deleteTable'; name: string };
+  | { kind: 'deleteTable'; name: string }
+  | { kind: 'addField'; table: string; name: string; fieldType: string }
+  | {
+      kind: 'editField';
+      table: string;
+      field: string;
+      name?: string;
+      fieldType?: string;
+      optional?: boolean;
+    }
+  | { kind: 'deleteField'; table: string; field: string };
 
 export type ErdEditResult =
   | { ok: true; text: string }
@@ -80,6 +93,10 @@ export type ErdEditResult =
 
 function findModel(models: ModelSpan[], name: string): ModelSpan | undefined {
   return models.find((model) => model.name === name);
+}
+
+function findField(model: ModelSpan, name: string): FieldSpan | undefined {
+  return model.fields.find((field) => field.name === name);
 }
 
 /**
@@ -172,6 +189,97 @@ export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult 
       const text = applyEdits(currentText, [
         { start: model.decl.start, end: model.decl.end, text: '' },
       ]);
+      return { ok: true, text };
+    }
+    case 'addField': {
+      // Pure insertion (same shape as `addTable`'s anchor logic): anchors
+      // right after the last field's full declaration (name, type and any
+      // attributes — `decl` covers the whole line's content) so the new
+      // field lands next to existing fields. An empty table anchors right
+      // after the opening `{`, matching `addTable`'s own seed body.
+      const model = findModel(spans.models, edit.table);
+      if (!model) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.table}" was not found in the current buffer.`,
+        };
+      }
+      const anchor =
+        model.fields.length > 0
+          ? model.fields[model.fields.length - 1].decl.end
+          : model.bodyOpen.end;
+      const insertion = `\n  ${edit.name} ${edit.fieldType}`;
+      const text = applyEdits(currentText, [{ start: anchor, end: anchor, text: insertion }]);
+      return { ok: true, text };
+    }
+    case 'editField': {
+      // Targeted token replacement, never a full-`decl` rewrite: replacing
+      // only `nameToken`/`typeToken` (and the single `?` immediately after
+      // the type token, when present) leaves the field's attributes and
+      // surrounding whitespace byte-unchanged. Widening any of these
+      // replacement spans by even one token would start eating adjacent
+      // text (task 5.4's mutation target).
+      const model = findModel(spans.models, edit.table);
+      if (!model) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.table}" was not found in the current buffer.`,
+        };
+      }
+      const field = findField(model, edit.field);
+      if (!field) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Field "${edit.field}" was not found on table "${edit.table}".`,
+        };
+      }
+      const fieldEdits: TextEdit[] = [];
+      if (edit.name !== undefined && edit.name !== field.name) {
+        fieldEdits.push({ start: field.nameToken.start, end: field.nameToken.end, text: edit.name });
+      }
+      if (edit.fieldType !== undefined) {
+        fieldEdits.push({ start: field.typeToken.start, end: field.typeToken.end, text: edit.fieldType });
+      }
+      if (edit.optional !== undefined) {
+        const hasQuestionMark = currentText[field.typeToken.end] === '?';
+        if (edit.optional && !hasQuestionMark) {
+          fieldEdits.push({ start: field.typeToken.end, end: field.typeToken.end, text: '?' });
+        } else if (!edit.optional && hasQuestionMark) {
+          fieldEdits.push({ start: field.typeToken.end, end: field.typeToken.end + 1, text: '' });
+        }
+      }
+      const text = applyEdits(currentText, fieldEdits);
+      return { ok: true, text };
+    }
+    case 'deleteField': {
+      // Removes the field's ENTIRE line — its leading indentation (found by
+      // scanning back to the previous newline) through its trailing newline
+      // (if any) — not just `decl`'s trimmed content, so no blank,
+      // indentation-only line survives the deletion (the same boundary
+      // hazard `deleteTable` guards against with an exact-string test).
+      const model = findModel(spans.models, edit.table);
+      if (!model) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.table}" was not found in the current buffer.`,
+        };
+      }
+      const field = findField(model, edit.field);
+      if (!field) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Field "${edit.field}" was not found on table "${edit.table}".`,
+        };
+      }
+      const lineStart = currentText.lastIndexOf('\n', field.decl.start - 1) + 1;
+      let lineEnd = field.decl.end;
+      if (currentText[lineEnd] === '\n') lineEnd += 1;
+      const text = applyEdits(currentText, [{ start: lineStart, end: lineEnd, text: '' }]);
       return { ok: true, text };
     }
   }

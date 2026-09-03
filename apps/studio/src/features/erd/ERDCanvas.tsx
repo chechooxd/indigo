@@ -115,14 +115,64 @@ export default function ERDCanvas({
     [dslCode, onDslChange],
   );
 
+  const handleAddField = useCallback(
+    (table: string, name: string, fieldType: string) => {
+      const result = applyErdEdit(dslCode, { kind: 'addField', table, name, fieldType });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [dslCode, onDslChange],
+  );
+
+  const handleEditField = useCallback(
+    (table: string, field: string, changes: { name?: string; fieldType?: string }) => {
+      const result = applyErdEdit(dslCode, { kind: 'editField', table, field, ...changes });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [dslCode, onDslChange],
+  );
+
+  const handleDeleteField = useCallback(
+    (table: string, field: string) => {
+      const result = applyErdEdit(dslCode, { kind: 'deleteField', table, field });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [dslCode, onDslChange],
+  );
+
   const buildEditAffordances = useCallback(
     (name: string): TableEditAffordances => ({
       onRename: next => handleRenameTable(name, next),
       onDelete: () => handleDeleteTable(name),
+      onAddField: (fieldName, fieldType) => handleAddField(name, fieldName, fieldType),
+      onEditField: (field, changes) => handleEditField(name, field, changes),
+      onDeleteField: field => handleDeleteField(name, field),
       disabled: editDisabled,
       disabledReason: editDisabledReason,
     }),
-    [handleRenameTable, handleDeleteTable, editDisabled, editDisabledReason],
+    [
+      handleRenameTable,
+      handleDeleteTable,
+      handleAddField,
+      handleEditField,
+      handleDeleteField,
+      editDisabled,
+      editDisabledReason,
+    ],
   );
 
   // Reconcile parsed schema → table nodes, preserving dragged positions.
