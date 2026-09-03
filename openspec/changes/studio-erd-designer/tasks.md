@@ -45,6 +45,28 @@ itself too pessimistic and the engine/consumer split was probably unnecessary. T
 numbers for PR4–PR6 are therefore an upper bound, not a prediction: reassess each against
 the previous slice's actuals rather than treating this table as settled.
 
+### Reassessment before PR5 (2026-09-03)
+
+The revised table above asked for PR5 and PR6 to be reassessed against actuals rather than
+taken as settled. Code lines per slice, excluding `openspec/` and `.atl/`:
+
+| Slice | Tasks | Code lines | Per task |
+|-------|-------|-----------|----------|
+| PR1 `ast-source-spans` | 12 | 760 | 63 |
+| PR2 `studio-layout-persistence` | 21 | 1525 | 73 |
+| PR3a patch engine | 8 | 339 | 42 |
+| PR3b addTable + wiring | 5 | 238 | 48 |
+| PR4 rename + delete | 14 | 600 | 43 |
+
+The three most recent slices sit at 42-48 lines per task and are in the same subsystem PR5
+touches. PR5 has 8 tasks, which projects to **~350 lines** — and even at PR2's worst-in-series
+rate of 73 it reaches only 584. The ~900 estimate was roughly double the observed cost.
+
+**PR5 keeps whole, no split.** PR6 (7 tasks) is left for its own reassessment, but the same
+rate projects it near 300-500, so its ~1000 estimate is likely inflated too. Note the rate is
+lower for slices confined to one subsystem: PR1 and PR2 both crossed package boundaries
+(Rust/WASM, and the CLI server plus the Studio), which is what made them costlier per task.
+
 Decision needed before apply: No
 Chained PRs recommended: Yes
 Chain strategy: stacked-to-main
