@@ -195,6 +195,26 @@ describe('applyErdEdit — untouched-by-construction (D4)', () => {
     expect(result.text).toContain('\tlabel String');
     expect(result.text).toContain('Table Invoice {\n  id Int @id\n}');
   });
+
+  it('adding a table to a buffer that declares no tables appends at the end of the buffer (mutation target: fallback anchor)', () => {
+    // No `Table <name> {` declaration anywhere, so `spans.models` is empty
+    // and the anchor falls back to `currentText.length`. The buffer still
+    // carries a construct the ERD does not model, to prove the fallback is
+    // an append rather than a prepend or a rewrite.
+    const currentText = '// no tables declared yet\nTableGroup "Billing" {\n  color = "#fff"\n}\n';
+    mockRealParse(currentText);
+
+    const result = applyErdEdit(currentText, { kind: 'addTable', name: 'Invoice' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    expect(result.text).toBe(currentText + '\n\nTable Invoice {\n  id Int @id\n}');
+    // Stated explicitly: a fallback anchor of anything other than the end
+    // of the buffer (e.g. offset 0) would break this prefix relation.
+    expect(result.text.startsWith(currentText)).toBe(true);
+    expect(result.text).toContain('// no tables declared yet\nTableGroup "Billing" {');
+  });
 });
 
 describe('applyErdEdit — staleness gate (D3)', () => {
@@ -213,6 +233,28 @@ describe('applyErdEdit — staleness gate (D3)', () => {
       reason: 'parse-failed',
       message: 'Parse errors found in .indigo schema',
     });
+  });
+
+  it('a fresh-parse failure refuses addTable as parse-failed — never anchor-missing, since an insertion has no anchor to miss', () => {
+    vi.mocked(parseWithSpans).mockImplementation(() => {
+      throw new IndigoParseError('Parse errors found in .indigo schema', [
+        { message: 'Unexpected token' },
+      ]);
+    });
+
+    const currentText = 'Table Broken {\n';
+    const result = applyErdEdit(currentText, { kind: 'addTable', name: 'Invoice' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'parse-failed',
+      message: 'Parse errors found in .indigo schema',
+    });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).not.toBe('anchor-missing');
+    // Buffer untouched: the refusal carries no replacement text at all.
+    expect('text' in result).toBe(false);
+    expect(currentText).toBe('Table Broken {\n');
   });
 
   it('a missing anchor after an intervening edit refuses the patch as anchor-missing, buffer untouched', () => {

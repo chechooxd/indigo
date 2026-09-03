@@ -162,6 +162,57 @@ version/staleness/validation contract `studio-schema-write` already defines.
 - WHEN the user reloads the Studio tab without clicking Save
 - THEN the on-disk `.indigo` file reflects none of the discarded edits
 
+### Requirement: Adding a table inserts beside the existing tables without deleting anything
+
+Adding a table from the canvas MUST be expressed as a zero-width insertion:
+the patch's start and end offsets are the same anchor, so no existing byte is
+ever deleted and every byte on either side of the anchor is copied through
+verbatim. The anchor MUST be the end of the LAST table's body (immediately
+after its closing `}`), NOT the end of the buffer, so the new table lands
+beside the existing tables rather than after a trailing construct such as a
+`TableGroup` block. When the current buffer declares no tables at all, there
+is no last table to anchor to and the insertion MUST fall back to the end of
+the buffer. Because a pure insertion has no existing node to locate, adding
+a table MUST NOT ever be refused with `anchor-missing`; the only refusal it
+can produce is `parse-failed`, from `applyErdEdit`'s internal fresh parse.
+
+#### Scenario: A new table lands after the last table, not after a trailing TableGroup
+
+- GIVEN a buffer whose last table declaration is followed by a
+  `TableGroup "Billing" { ... }` block
+- WHEN the user adds a table `Invoice` from the canvas
+- THEN the new `Invoice` block is inserted immediately after the last
+  table's closing `}`
+- AND the `TableGroup` block still follows it, unchanged and in place
+
+#### Scenario: Adding a table leaves every existing byte untouched
+
+- GIVEN a buffer containing `@@allow`, `@@realtime(columns: [...])`, a
+  `TableGroup` block, comments, and tab-indented irregular whitespace
+- WHEN the user adds a table from the canvas
+- THEN the resulting buffer is the original buffer with the new table's
+  text spliced in at the anchor and nothing else changed
+- AND each of those constructs is byte-identical before and after the edit,
+  because the insertion deletes no range at all
+
+#### Scenario: Adding a table to a buffer with no tables yet appends at the end
+
+- GIVEN a buffer that declares no tables, containing only a comment and a
+  `TableGroup` block
+- WHEN the user adds a table `Invoice` from the canvas
+- THEN the edit succeeds
+- AND the new `Invoice` block is appended at the end of the buffer, with the
+  original text preserved verbatim as its prefix
+
+#### Scenario: Adding a table to an unparseable buffer refuses with parse-failed
+
+- GIVEN the current buffer does not parse
+- WHEN the user adds a table from the canvas
+- THEN the result is `{ok: false, reason: 'parse-failed', ...}` and the
+  buffer is left untouched
+- AND the reason is never `anchor-missing`, since an insertion has no
+  existing anchor that could go missing
+
 ### Requirement: Renaming a table rewrites only its own declaration (non-goal: relation propagation)
 
 Renaming a table from the ERD MUST rewrite only that table's own name at its
