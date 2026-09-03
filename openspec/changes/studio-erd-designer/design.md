@@ -191,6 +191,8 @@ Combination rows are mandatory — a missing combination here becomes an `sdd-ve
 | Server | Malformed payload (`x:"1"`, `NaN`, over cap) → 400, nothing written | Table-driven |
 | Server | Atomic write: no temp file left after 200 **and** after 400/409 | Directory listing assertions (mirrors the schema-write scenarios) |
 | Studio unit | **Unknown table key × empty layout file** → ignored, no crash; missing key → seed formula `40+(idx%3)*320` | vitest on `layout-store` + canvas seeding |
+| Studio unit | **Schema Save × layout** → a schema Save issues NO `PUT /api/schema/layout`; the two persist independently | vitest + fetch spy, in `ERDDesignerPage.test.tsx` |
+| Studio unit | **Node drag × autosave wiring** → drag-end reaches `updatePosition` → `schedule` and the canvas actually issues the debounced `PUT`; unit-testing the debounce alone leaves the wiring uncovered | vitest with fake timers over `ERDCanvas` |
 | Studio unit | `schemaWritable:false` × ERD edit affordance → disabled with a stated reason; no request issued | vitest + fetch spy |
 | Studio unit | Read-only × ERD edit action → refusal surfaced, no `PUT` | vitest + fetch spy |
 | Studio unit | Schema `PUT` → 422 after an ERD-authored patch → buffer kept, diagnostics shown, no success toast | Extends `ERDDesignerPage.test.tsx` |

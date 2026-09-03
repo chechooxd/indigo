@@ -40,7 +40,7 @@ than erroring.
 `GET /api/schema/layout` MUST return the current layout object plus an
 opaque `version` (content hash of the sidecar file's bytes, or a fixed
 sentinel when the file does not yet exist). `PUT /api/schema/layout` MUST
-accept `{layout, version}`, reject with `409` on a version mismatch without
+accept `{positions, version}`, reject with `409` on a version mismatch without
 writing, and commit via a temp file + atomic rename in the same directory,
 identical in shape to `studio-schema-write`'s write path.
 
@@ -95,7 +95,7 @@ respond `404` whenever `schemaPath` is absent, regardless of body content.
 - WHEN a client calls `GET /api/auth/status`
 - THEN the response includes `layoutWritable: false`
 - AND a `PUT /api/schema/layout` request receives `404`, even with a
-  well-formed `{layout, version}` body
+  well-formed `{positions, version}` body
 
 #### Scenario: Missing schemaPath also disables layout GET meaningfully
 
