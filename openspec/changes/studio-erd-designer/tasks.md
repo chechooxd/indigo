@@ -4,10 +4,38 @@
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | ~500+450+450+350+450+500 ≈ 2700 across 6 slices |
+| Estimated changed lines | ~500+450+450+350+450+500 ≈ 2700 across 6 slices — **superseded, see recalibration below** |
 | 400-line budget risk | High (per-slice: Medium/Medium/Medium/Low/Medium/Medium) |
 | Chained PRs recommended | Yes |
 | Suggested split | PR1 ast-source-spans → PR2 studio-layout-persistence (parallel) → PR3 patch engine+addTable → PR4 rename/delete → PR5 field CRUD → PR6 relation drawing |
+
+### Recalibration after PR1 and PR2 (maintainer decision, 2026-09-03)
+
+The original estimates counted implementation lines only. Under strict TDD the tests are
+roughly as large as the code they cover, so every slice lands near double its forecast:
+
+| Slice | Forecast | Actual | Implementation | Tests |
+|-------|----------|--------|----------------|-------|
+| PR1 `ast-source-spans` | 500 | 794 | — | — |
+| PR2 `studio-layout-persistence` | 450 | **1456** | 673 | 783 |
+
+PR2 breached the 800-line cap and needed a maintainer `sdd-attempt reset`. The decision was
+to accept it rather than split already-green code — separating a test file from the
+implementation it exercises makes review harder, not easier — and to re-forecast the
+remaining slices with test lines counted, splitting any that do not fit **before** they are
+written.
+
+Revised forecast (≈2× the original, with tests):
+
+| Slice | Revised | Action |
+|-------|---------|--------|
+| PR3 patch engine + add table | ~950 | **Split at the engine/consumer seam** → PR3a (3.1–3.4, 3.6, 3.8–3.10: `patch.ts`, fixture corpus, staleness + export-surface guards) and PR3b (3.5, 3.7, 3.11–3.13: `addTable` constructor, byte-diff proof, canvas wiring) |
+| PR4 rename + delete | ~700 | Fits; keep whole |
+| PR5 field CRUD | ~900 | Reassess against PR3a/PR3b actuals before starting |
+| PR6 relation drawing | ~1000 | Reassess against PR4/PR5 actuals before starting |
+
+The 800-line cap is deliberately left unchanged. A cap raised to match whatever the work
+happens to cost stops being a constraint on reviewer burden and becomes paperwork.
 | Delivery strategy | auto-chain |
 | Chain strategy | stacked-to-main |
 
