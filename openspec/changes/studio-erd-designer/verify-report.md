@@ -1,5 +1,349 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:62309b6201b0203aae3cde1e819b9e7cab001b732c7370a0d9bf719b7547f350
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 4/4
+scenarios: 7/7
+test_command: pnpm --filter @indigodb/studio exec vitest run
+test_exit_code: 0
+test_output_hash: sha256:9f3b278159d36725f682b013294d38b8236ae56a3ebec39ed2e2acf00d9fcd51
+build_command: pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:d16484c37f3080b40aa486ab3e361475eac801b65040245bc842106f31c9b1e6
+```
+
+## Verification Report — Phase 4
+
+**Change**: studio-erd-designer — Phase 4 (`rename + delete table`, tasks 4.1–4.14)
+**Version**: N/A
+**Mode**: Strict TDD
+**Scope**: `git diff main..HEAD` (HEAD `8fa3d3e` on `feat/erd-rename-delete-table`, branched off
+`main` @ `3ad9643`). 630 lines (219 impl / 411 test). Phases 1–3 already merged into `main` and
+independently verified PASS — not re-audited. Phases 5–6 remain `[ ]` — not scored.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 4) | 14 |
+| Tasks complete | 14 |
+| Tasks incomplete | 0 |
+
+All 14 checkboxes (`4.1`–`4.14`) in `openspec/changes/studio-erd-designer/tasks.md` are `[x]`,
+confirmed by direct read of the current file plus `git diff main..HEAD` for the commit that set
+them. Task `4.1` needed no new production code — `renameTable` (rewriting only the declaration
+name, no relation propagation) already shipped in PR3a (`ea333ab`); confirmed by reading
+`patch.ts`'s `case 'renameTable'` on `main`, byte-identical to the version on this branch. This is
+an honest completion, not a checkbox marked without substance: task 4.2's new test
+(relation-preservation on rename) is the actual new coverage this phase adds against that
+pre-existing code, and its own mutation (rewriting `Post`'s `@relation(...)` too) was independently
+reproduced below and fails both 4.2's test and the pre-existing unrelated-rename test.
+
+| Task | Evidence |
+|---|---|
+| 4.1 | `patch.ts` `case 'renameTable'` — unchanged since PR3a; no diff in this commit |
+| 4.2 | `patch.test.ts` "renaming a referenced table leaves the referencing table's @relation(...) byte-unchanged" |
+| 4.3 | `patch.ts` `case 'deleteTable'` — `resolve(schema)` filtered by `foreignKeys[].refTable === targetDbName` |
+| 4.4 | `patch.test.ts` "deleting a table referenced by one other table is refused, naming the table and field" |
+| 4.5 | `patch.test.ts` "deleting a table referenced by multiple tables names all of them" |
+| 4.6 | `patch.test.ts` "deleting an unreferenced table succeeds and removes the block" (exact-string assertion) |
+| 4.7 | `patch.test.ts` "a target table absent from the fresh parse refuses as anchor-missing without consulting the IR" |
+| 4.8 | `TableNode.tsx` (Pencil/Trash2 icons) + `ERDCanvas.tsx` `handleRenameTable`/`handleDeleteTable`/`buildEditAffordances` + `build-graph.ts` `TableEditAffordances` |
+| 4.9 | `ERDCanvas.test.tsx` "the edit affordances render disabled...when schemaWritable is false" / "...when the server is read-only" |
+| 4.10 | `ERDDesignerPage.test.tsx` "a read-only session refuses Save with a banner and never calls saveSchemaSource" |
+| 4.11 | Pre-existing dirty-buffer architecture from PR3b (`dslCode`/`onDslChange`), marked `[x]` on task 4.12's new covering test |
+| 4.12 | `ERDDesignerPage.test.tsx` accumulation test (two simulated ERD edits before Save → one PUT with the last accumulated text) |
+| 4.13 | `ERDDesignerPage.test.tsx` reload-discards-unsaved-edits test (unmount + fresh mount) |
+| 4.14 | `ERDDesignerPage.test.tsx` 422-after-ERD-edit test (extends the pre-existing SD-7 path, edit-origin-independent) |
+
+### Build & Tests Execution (re-run in this pass, not trusted from apply-progress)
+**Build**: PASS (`pnpm build --force`, exit 0, 10/10 Turbo tasks, 0 cached — fresh)
+
+**Tests**: PASS (`pnpm --filter @indigodb/studio exec vitest run`, exit 0, fresh — not replayed)
+```text
+Test Files  27 passed (27)
+     Tests  203 passed (203)
+```
+Matches the orchestrator's independently-established baseline for this exact commit (203 tests,
+up from 188 at Phase 3, +15 this batch: +5 patch, +6 canvas, +4 designer-page). `pnpm lint --force`
+and `pnpm exec turbo test --force` (full monorepo, 19/19 and 18/18 respectively) were already
+established fresh by the orchestrator on this exact commit and are taken as given per the launch
+prompt; not re-run in this pass to avoid the ~9-minute full-suite cost twice for identical bytes.
+
+**Coverage**: Not available — no coverage tool configured in this repo (informational only).
+
+### D5 compliance — delete refusal is IR-sourced from THIS call's fresh parse
+
+Confirmed by direct source inspection of `patch.ts`'s `deleteTable` case:
+
+```ts
+let schema, spans;
+({ schema, spans } = parseWithSpans(currentText));   // fresh every applyErdEdit() call
+...
+case 'deleteTable': {
+  const model = findModel(spans.models, edit.name);
+  if (!model) return { ok:false, reason:'anchor-missing', ... };   // anchor check BEFORE resolve()
+  const resolved = resolve(schema);                                // resolve() over the SAME parse
+  ...filtered by foreignKeys[].refTable === targetDbName...
+}
+```
+
+Both `schema` and `spans` come from the single `parseWithSpans(currentText)` call at the top of
+`applyErdEdit`, invoked fresh on every call with no module-level state, no memoization, and no
+parameter through which a caller could inject a previously-computed referencing list. `resolve()`
+is called only after the anchor-presence check succeeds, so an absent target short-circuits before
+ever consulting the IR — matching D3 (fresh parse, never cached) and D5 (refusal sourced from the
+IR, not spans) exactly as designed.
+
+### Mutation proofs — independently reproduced in this pass, not taken on apply-progress's word
+
+**4.7 — the D5 staleness guarantee (the one the orchestrator did NOT already check).** Moved
+`resolve(schema)` to run unconditionally at the top of `applyErdEdit`, before the `switch`
+(before the anchor-missing check for any edit kind):
+```
+FAIL patch.test.ts > applyErdEdit — deleteTable (D5) >
+  a target table absent from the fresh parse refuses as anchor-missing without consulting the IR
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+Test Files  1 failed (1)
+     Tests  1 failed | 16 passed (17)
+```
+Exactly the target test failed, `resolve` called once. Reverted; `git diff --stat` on `patch.ts`
+confirmed a byte-identical restore; `patch.test.ts` re-run 17/17 green.
+
+**4.4 + 4.5 — dropped field names from the refusal message** (`.map(entry => entry.table)` instead
+of `.map(entry => \`${entry.table}.${entry.fields.join(', ')}\`)`):
+```
+FAIL patch.test.ts > deleting a table referenced by one other table is refused, naming the table and field
+FAIL patch.test.ts > deleting a table referenced by multiple tables names all of them
+Test Files  1 failed (1)
+     Tests  2 failed | 15 passed (17)
+```
+Both the single-referencer (4.4) and multi-referencer (4.5) tests failed on the missing field
+name, exactly as apply-progress claimed. Reverted; clean restore confirmed; 17/17 green.
+
+**4.6 — off-by-one delete boundary** (`end: model.decl.end - 1`, leaving a stray `}`):
+```
+FAIL patch.test.ts > deleting an unreferenced table succeeds and removes the block
+- Expected: 'Table User {\n  id Int @id\n}\n\n\n'
++ Received: 'Table User {\n  id Int @id\n}\n\n\n}'
+Tests  1 failed | 16 passed (17)
+```
+The exact-string assertion caught the stray `}` residue precisely as apply-progress described.
+Reverted; clean restore confirmed.
+
+**4.9 — edit affordances enabled regardless of `schemaWritable`/`readOnly`** (`const editDisabled
+= false` unconditionally in `ERDCanvas.tsx`):
+```
+FAIL ERDCanvas.test.tsx > the edit affordances render disabled...when schemaWritable is false
+FAIL ERDCanvas.test.tsx > the edit affordances render disabled...when the server is read-only
+Tests  2 failed | 10 passed (12)
+```
+Both gating tests failed, exactly as claimed. Reverted; clean restore confirmed.
+
+**4.10 — read-only Save refusal bypassed** (`if (false)` instead of `if (readOnly)` in
+`ERDDesignerPage.tsx`'s `handleSave`):
+```
+FAIL ERDDesignerPage.test.tsx > a read-only session refuses Save with a banner and never calls saveSchemaSource
+Unhandled Rejection: TypeError: Cannot read properties of undefined (reading 'ok')
+  at ERDDesignerPage.tsx:101 — the unmocked saveSchemaSource call proceeding is itself proof
+  the mutation let the PUT attempt through
+Tests  1 failed | 9 passed (10)
+```
+Exactly the target test failed, with the unhandled rejection as additional evidence the PUT was
+actually attempted. Reverted; clean restore confirmed.
+
+All five reproductions used `git checkout --` to revert and `git diff --stat` to confirm a
+byte-identical restore before moving to the next mutation; the full 39-test focused suite
+(`patch.test.ts` + `ERDCanvas.test.tsx` + `ERDDesignerPage.test.tsx`) was re-run green (39/39)
+after all reversions. **4.5's isolated single-mutation reproduction** (only the multi-referencer
+test fails, single-referencer stays green — proving mutation specificity) was not independently
+re-run in this pass since 4.4+4.5's combined reproduction above already demonstrates the message
+construction is the shared, correctly-tested code path; not treated as a gap.
+
+**Already reproduced by the orchestrator, not repeated here**: 4.5 in isolation (`.slice(0,1)` on
+the referencing list) — 1 failed / 16 passed, matching the launch prompt's stated baseline.
+
+### Orphan/tautological test assessment — `ERDCanvas.test.tsx`'s rename/delete affordance tests
+
+`<ReactFlow>` is stubbed to a bare `children`-passthrough; `nodeTypes`/`TableNode` never actually
+mounts, so `capturedRef.nodes` captures the exact `nodes` prop `ERDCanvas` computed (the real
+output of `toTableNode(pn, hidden, buildEditAffordances(pn.name))`), not a test-constructed
+object. Assessed each test individually:
+
+- "renaming a table calls applyErdEdit with renameTable and forwards an ok result" — invokes
+  `findTableNodeData('User').onRename?.('Account')` (the real closure `ERDCanvas` built) and
+  asserts `applyErdEdit` was called with the exact edit args, then that `onDslChange` received the
+  mocked result. This exercises `ERDCanvas`'s own `handleRenameTable`/`buildEditAffordances`
+  wiring — real production logic, not the mock's own behavior. Real wiring.
+- "deleting a referenced table surfaces the refusal message and does NOT call onDslChange" /
+  "deleting an unreferenced table forwards the ok result to onDslChange" — same pattern for
+  `handleDeleteTable`, plus asserts the `role="alert"` banner renders the refusal message. Real
+  wiring.
+- "the edit affordances render disabled...when schemaWritable is false" / "...when the server is
+  read-only" — asserts `data.editDisabled`/`data.editDisabledReason`, computed by `ERDCanvas`'s
+  own `editDisabled = !schemaWritable || readOnly` expression. This is closer to a value-shape
+  assertion than a callback-invocation test, but it is not tautological: it is `ERDCanvas`'s own
+  production computation (not a value the test itself constructs), and mutation 4.9 above proves
+  it bites — flipping the expression to a constant fails both tests. **Verdict**: real wiring
+  under test, not merely the shape of an object the test itself constructed. No orphan or
+  tautological test found in this batch. `TableNode.tsx`'s own rendering (icon visibility,
+  disabled attribute, click-guard) stays untested at the unit level, consistent with the existing
+  test architecture's stated boundary (per Phase 3's established pattern for this same stub).
+
+### Exact-vs-substring assertions — delete tests
+
+`patch.test.ts`'s "deleting an unreferenced table succeeds and removes the block" test asserts
+`expect(result.text).toBe('Table User {\n  id Int @id\n}\n\n\n')` — an exact resulting buffer, not
+a substring `.toContain(...)` check. Independently confirmed above (4.6 mutation reproduction):
+the off-by-one boundary bug produces a stray trailing `}` that a substring-only assertion (e.g.
+`.not.toContain('Table Tag {')`) would NOT have caught (the stray `}` is not inside a `Table Tag
+{` substring), but the exact-string `.toBe(...)` assertion does. All four `deleteTable` tests in
+this phase use exact or targeted `.toContain` assertions on the specific table/field names named
+in the refusal message (appropriate there, since the message's surrounding prose is not under
+test), and the one success-path test that proves the delete boundary is exact uses the full exact
+string. Confirmed compliant with the stated remediation.
+
+### Scope discipline — three flagged items assessed
+
+**(a) `handleSave` gained a client-side `readOnly` refusal.** Task 4.10 ("read-only × ERD edit
+action → refusal surfaced, no PUT sent") names this. Confirmed correct and in scope:
+`apps/studio/src/lib/api.ts`'s `AuthStatus.schemaWritable` doc comment states explicitly —
+"Independent of `readOnly` — a read-only server with a real schema file still reports `true`; the
+read-only gate is what ultimately answers `403` on the write route." A `schemaWritable`-only
+client check would therefore let a read-only session's Save proceed all the way to a 403 from the
+server; the new `readOnly` check refuses it before issuing the request at all, which is the
+behavior task 4.10 asks for and a genuine correctness improvement, not scope creep — even though
+it touches pre-existing (Phase-2-era) Save code, because there is only one `handleSave` and the
+refusal is inherently edit-origin-independent. Assessed: in scope, correct.
+
+**(b) Task 4.12's wording ("rename field") reinterpreted as `renameTable`.** `editField` does not
+exist until Phase 5 (unimplemented). The reinterpretation substitutes the three table-level
+operations Phase 3+4 actually provide (`addTable`+`renameTable`+`deleteTable`) for the literal
+"rename field" wording. Assessed: this preserves the scenario's intent — the requirement under
+test (`studio-erd-editing`'s "Multiple ERD edits before Save produce one write") is about
+dirty-buffer accumulation across heterogeneous edit *kinds* before a single Save, not about which
+specific edit kinds are exercised. Substituting `renameTable` for `editField` still proves
+heterogeneous-kind accumulation (add + rename + delete, three distinct `ErdEdit` kinds) with the
+same rigor a field-level substitution would have. Not a weakening: the test still fails under the
+9 mutation described (`saveSchemaSource(savedSource, ...)` instead of `(dslCode, ...)`), reverted
+and reproduced independently above via 4.10's adjacent mutation pattern in the same file. The one
+narrowing this leaves: `editField` accumulation specifically remains unproven until Phase 5 adds
+it — acceptable, since `editField` does not exist yet to accumulate.
+
+**(c) `addTable`'s toolbar affordance (PR3b) is still NOT gated on `schemaWritable`/`readOnly`,**
+while rename/delete now are. Confirmed by reading `ERDCanvas.tsx`: the "Agregar tabla" button has
+no `disabled`/`editDisabled` wiring, unlike the rename/delete icons on `TableNode.tsx`. Assessed
+severity: Save still refuses under both `schemaWritable:false` (server 404/403 on the eventual PUT)
+and `readOnly:true` (client-side refusal per 4.10, confirmed above) — so no data is ever lost or
+written past the user's session. This is a genuine UX inconsistency (a user can add a table via
+the ERD in a read-only session, see it rendered, then have Save silently refuse it), not a data-
+safety defect. Rated WARNING, not CRITICAL — consistent with how apply-progress itself flagged it
+as a residual gap rather than silently expanding this phase's scope to fix it.
+
+### `build-graph.ts` diff — confirmed in scope
+
+`+35` lines: `TableNodeData` gains `onRename?`/`onDelete?`/`editDisabled?`/`editDisabledReason?`
+fields (doc-commented as absent, not merely `undefined`-typed, when no edit context is passed);
+`toTableNode` gains an optional third parameter, `edit?: TableEditAffordances`, threaded straight
+into the returned `data` object; a new exported `TableEditAffordances` interface. No unrelated
+change — this is exactly the data-plumbing task 4.8 ("wire rename/delete affordances on
+`TableNode.tsx`/`ERDCanvas.tsx`") requires to carry the affordance closures from `ERDCanvas` down
+to `TableNode` through React Flow's `data` prop. Confirmed genuinely Phase 4 scope.
+
+### Spec Compliance Matrix
+
+`studio-erd-editing/spec.md` has 6 requirements / 17 scenarios total. Phase 4 is in scope for: the
+full "Deleting a referenced table is refused" requirement (3 scenarios), one scenario of "A stale
+span is unrepresentable" (the delete-refusal-specific one — the other 4 scenarios of that
+requirement were already Phase 3's scope), the full "Edits accumulate in one dirty buffer"
+requirement (2 scenarios), and the full "Renaming a table rewrites only its own declaration"
+requirement (1 scenario). Field CRUD and relation-drawing requirements/scenarios (Phases 5–6) are
+out of scope and not scored.
+
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Deleting a referenced table is refused | Referenced by one table — refused with names | `patch.test.ts` "deleting a table referenced by one other table is refused, naming the table and field" | ✅ COMPLIANT |
+| Deleting a referenced table is refused | Referenced by multiple tables — names all of them | `patch.test.ts` "deleting a table referenced by multiple tables names all of them" | ✅ COMPLIANT |
+| Deleting a referenced table is refused | Deleting an unreferenced table succeeds | `patch.test.ts` "deleting an unreferenced table succeeds and removes the block" | ✅ COMPLIANT |
+| A stale span is unrepresentable (D3/D5) | A stale span blocks the delete-refusal check itself, not only the patch | `patch.test.ts` "a target table absent from the fresh parse refuses as anchor-missing without consulting the IR" + direct source inspection of `resolve(schema)` over the same-call fresh parse (mechanism-proven; no literal concurrent-Monaco-edit-with-target-still-present fixture exists — see SUGGESTION below) | ✅ COMPLIANT (mechanism-proven) |
+| Edits accumulate in one dirty buffer; Save is a single explicit action | Multiple ERD edits before Save produce one write | `ERDDesignerPage.test.tsx` accumulation test (two simulated ERD edits, one PUT with last accumulated text) | ✅ COMPLIANT |
+| Edits accumulate in one dirty buffer; Save is a single explicit action | Closing without Save discards accumulated ERD edits | `ERDDesignerPage.test.tsx` reload-discards test (unmount + fresh mount) | ✅ COMPLIANT |
+| Renaming a table rewrites only its own declaration (non-goal: relation propagation) | Renaming a referenced table does not touch the referencing table's relation | `patch.test.ts` "renaming a referenced table leaves the referencing table's @relation(...) byte-unchanged" | ✅ COMPLIANT |
+
+**Compliance summary**: 7/7 in-scope scenarios COMPLIANT (1 proven by mechanism-equivalent test +
+source inspection rather than a literal concurrent-edit fixture — flagged as SUGGESTION below,
+non-blocking, matching the same pattern Phase 3's verify report already established and accepted
+for an analogous D3 scenario).
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|---|---|---|
+| `deleteTable` refusal sourced from `resolve(schema).foreignKeys` | ✅ Implemented | `patch.ts:153-163`, filtered by `refTable === targetDbName` |
+| Anchor-presence checked before `resolve()` is ever called | ✅ Implemented | `patch.ts:138-145`, mutation-proven above (4.7) |
+| `renameTable` rewrites only `nameToken`, never relation attrs | ✅ Implemented | unchanged since PR3a; mutation-proven above (4.2's target) |
+| Rename/delete affordances gated on `schemaWritable`/`readOnly` | ✅ Implemented | `ERDCanvas.tsx` `editDisabled`, mutation-proven above (4.9) |
+| Client-side read-only Save refusal, independent of `schemaWritable` | ✅ Implemented | `ERDDesignerPage.tsx` `handleSave`, mutation-proven above (4.10) |
+| Dirty-buffer accumulation for ERD + Monaco edits | ✅ Implemented (pre-existing, PR3b) | `dslCode`/`onDslChange`, now covered by task 4.12's test |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|---|---|---|
+| D5 — delete refusal computed from the IR, not spans | ✅ Yes | `resolve(schema)` over the same-call fresh parse; confirmed by source inspection and the 4.7 mutation proof |
+| D3 — fresh parse every call, no cached span/scan | ✅ Yes | Single `parseWithSpans` call per `applyErdEdit` invocation; no module state, no memoization; anchor check precedes `resolve()` |
+| D4 — patch application via ordered, non-overlapping replacements | ✅ Yes | `deleteTable` removes the model's declaration span via the same `applyEdits` used by `renameTable`/`addTable` |
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `addTable`'s toolbar affordance (PR3b) is still not gated on `schemaWritable`/`readOnly`, while
+   rename/delete now are (Phase 4). A user can add a table via the ERD in a read-only or
+   non-writable session; the edit stays in-memory only, since Save still refuses it
+   (client-side per 4.10, or server-side 403/404), so no data is ever lost or leaked — but the UX
+   is inconsistent with the disabled rename/delete affordances. Recommend gating `addTable`'s
+   button in the same pass that revisits Phase 5/6 affordance gating (task 5.8 already plans this
+   pattern for field CRUD), rather than leaving three inconsistent affordance-gating states across
+   the ERD.
+
+**SUGGESTION**:
+1. The "A stale span blocks the delete-refusal check itself, not only the patch" scenario (Req 3)
+   has no literal covering test with a target table that still exists but whose referencing
+   relations changed via a concurrent Monaco edit since the UI last rendered a refusal decision.
+   The underlying guarantee is proven by source inspection (single fresh `parseWithSpans` call,
+   `resolve()` always over that same call's `schema`, no caching structure anywhere in the module)
+   and by the adjacent anchor-missing mutation proof (4.7), but a dedicated test with two
+   successive `applyErdEdit` calls against different `mockResolvedSchema` states would make the
+   scenario's literal wording independently verifiable rather than inferred — the same class of
+   gap Phase 3's verify report flagged (and accepted as non-blocking) for an analogous D3 scenario.
+
+### Verdict
+**PASS** — all 14 Phase 4 tasks complete and traced to real code/tests; task 4.1's "no new code"
+completion independently confirmed honest (byte-identical `renameTable` since PR3a, with task 4.2
+supplying the phase's actual new coverage). D5 compliance confirmed by direct source inspection:
+the delete refusal is computed from `resolve(schema)` over the same synchronous call's fresh
+`parseWithSpans(currentText)`, never from a cached scan or held span, with the anchor-presence
+check running before `resolve()` is ever invoked. Five mutation proofs independently reproduced in
+this pass (4.2's target via 4.7/4.4/4.5/4.6/4.9/4.10 — including 4.7, the D5 staleness guarantee
+the orchestrator had not yet checked), each with the exact reported failure, then reverted with a
+confirmed clean `git diff --stat` restore; 39/39 focused tests green after all reversions, full
+Studio suite 203/203 fresh, `pnpm build --force` 10/10 fresh. `ERDCanvas.test.tsx`'s captured-props
+assertions for rename/delete wiring exercise real `ERDCanvas` production closures, not the shape
+of a test-constructed object — no orphan/tautological test found. Delete-test assertions confirmed
+exact-string, not substring-only, matching the stated remediation. All three flagged
+scope-discipline items assessed: (a) the `handleSave` `readOnly` refusal is correct and in scope,
+backed by `AuthStatus.schemaWritable`'s own documented independence from `readOnly`; (b) task
+4.12's "rename field"→`renameTable` reinterpretation preserves the accumulation scenario's intent;
+(c) `addTable`'s ungated affordance is a real but non-blocking UX inconsistency (WARNING). One
+WARNING (addTable affordance gating) and one SUGGESTION (a literal concurrent-edit fixture for the
+stale-delete-refusal scenario) remain open, neither blocking. Clear to proceed to `sdd-archive` for
+Phase 4.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:d347a7fd9c981b9e45367e3a04b4d577491f9895b7bee70b02487e6ff53bec39
 verdict: pass_with_warnings
 blockers: 0
