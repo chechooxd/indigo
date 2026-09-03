@@ -192,9 +192,14 @@ The old regex parser in `src/lib/parser.ts` now only provides the ERD view-model
 
 Studio internals: single Zustand store (`src/store/useStudioStore.ts`, which also holds the
 `resolvedSchema` used by `DocBrowser.tsx` for real relations); `@/` alias → `apps/studio/src`;
-shadcn-style UI in `src/components/ui/`; feature modules in `src/features/` (`erd/` is a custom
-canvas/SVG renderer — not a graph library — with orthogonal edge routing in `src/lib/routing.ts`
-and node sizing in `src/shared/lib/node-geometry.ts`; `studio/browser/` = data browser);
+shadcn-style UI in `src/components/ui/`; feature modules in `src/features/` (`erd/` renders with
+**React Flow** (`@xyflow/react`) — `ERDCanvas.tsx` plus `components/TableNode.tsx` and
+`components/GroupNode.tsx` as custom node types, graph assembly in `lib/build-graph.ts`, node
+sizing in `src/shared/lib/node-geometry.ts`. It was a hand-rolled SVG canvas with its own
+orthogonal edge routing in `src/lib/routing.ts`; that file is gone and so is the routing code —
+React Flow owns edges now. `TableNode.tsx`'s per-field `Handle`s carry `isConnectable={false}`:
+live connection seams deliberately switched off, not dead scaffolding. `studio/browser/` = data
+browser);
 i18n via `react-i18next` (`src/i18n/locales/` en/es). `studio/browser/hooks/useLiveTable.ts`
 gives the Table Browser its live-refresh: it opens `@indigodb/client`'s `SseTransport` directly
 against `REALTIME_PATH` for the active `@@realtime` table and debounces/coalesces a refetch on
