@@ -13,12 +13,14 @@ pub mod lexer;
 pub mod parser;
 pub mod resolve;
 pub mod rules;
+pub mod span;
 pub mod validate;
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use error::CompilerError;
+use span::SpanIndex;
 
 /// Parses source into a `Schema`, or every lexer+parser error found.
 /// The parser always runs over the token stream, even when the lexer
@@ -31,6 +33,23 @@ pub fn parse_source(source: &str) -> Result<ast::Schema, Vec<CompilerError>> {
     let (schema, parse_errors) = parser::Parser::new(&tokens).parse_schema();
     if lex_errors.is_empty() && parse_errors.is_empty() {
         return Ok(schema);
+    }
+    lex_errors.extend(parse_errors);
+    Err(lex_errors)
+}
+
+/// Same as `parse_source`, plus a `SpanIndex` collected alongside the AST —
+/// the Rust-side half of `parse_with_spans`'s side channel (see
+/// `span.rs`/`parser.rs::parse_schema_with_spans`). Never used by `parse`.
+pub fn parse_source_with_spans(
+    source: &str,
+) -> Result<(ast::Schema, SpanIndex), Vec<CompilerError>> {
+    let (tokens, mut lex_errors) = lexer::tokenize(source);
+    let ctx = span::SpanContext::new(source);
+    let (schema, spans, parse_errors) =
+        parser::Parser::new_with_spans(&tokens, &ctx).parse_schema_with_spans();
+    if lex_errors.is_empty() && parse_errors.is_empty() {
+        return Ok((schema, spans));
     }
     lex_errors.extend(parse_errors);
     Err(lex_errors)
@@ -72,6 +91,25 @@ fn deserialize_schema(schema_json: &str) -> Result<ast::Schema, String> {
 pub fn parse(source: &str) -> String {
     match parse_source(source) {
         Ok(schema) => to_json(&OkEnvelope { ok: schema }),
+        Err(errors) => to_json(&ErrorsEnvelope { errors: &errors }),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParseWithSpansOutput {
+    schema: ast::Schema,
+    spans: SpanIndex,
+}
+
+/// Side channel, additive only — see `span.rs` and the `ast-source-spans`
+/// spec. `schema` here is byte-identical to what `parse(source)` returns;
+/// `parse`'s own envelope/shape is entirely unaffected by this export
+/// existing. `{"ok": {schema, spans}}` | `{"errors": CompilerError[]}`
+#[wasm_bindgen]
+pub fn parse_with_spans(source: &str) -> String {
+    match parse_source_with_spans(source) {
+        Ok((schema, spans)) => to_json(&OkEnvelope { ok: ParseWithSpansOutput { schema, spans } }),
         Err(errors) => to_json(&ErrorsEnvelope { errors: &errors }),
     }
 }

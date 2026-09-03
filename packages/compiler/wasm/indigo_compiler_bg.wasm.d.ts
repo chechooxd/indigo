@@ -3,6 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const compile: (a: number, b: number) => [number, number];
 export const parse: (a: number, b: number) => [number, number];
+export const parse_with_spans: (a: number, b: number) => [number, number];
 export const resolve: (a: number, b: number) => [number, number];
 export const validate: (a: number, b: number) => [number, number];
 export const __wbindgen_externrefs: WebAssembly.Table;

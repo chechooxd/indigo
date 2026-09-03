@@ -19,11 +19,28 @@
 use crate::ast::*;
 use crate::error::CompilerError;
 use crate::lexer::{Token, TokenKind};
+use crate::span::{AttributeSpan, FieldSpan, ModelSpan, SpanContext, SpanIndex};
 
 pub struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     errors: Vec<CompilerError>,
+    /// `Some` only when spans were requested (`new_with_spans`). Span
+    /// collection below is always gated on this, so `parse_schema()` (the
+    /// plain, `parse`-facing entry point) does zero extra work and produces
+    /// zero extra data — the AST it returns is unaffected either way.
+    span_ctx: Option<&'a SpanContext>,
+    /// Byte offset (end, exclusive) of the most recently consumed token,
+    /// updated by every `advance()`. Together with a byte offset captured
+    /// via `self.peek().start` before a construct starts, this brackets
+    /// exactly the tokens that construct consumed — with no separate
+    /// "current node" bookkeeping needed.
+    last_consumed_end: usize,
+    /// Scratch slot: `parse_field` stashes the `FieldSpan` it just built
+    /// here (when tracking); `parse_model`'s loop takes it right after a
+    /// successful `parse_field()` call. Never read across an early return.
+    pending_field_span: Option<FieldSpan>,
+    model_spans: Vec<ModelSpan>,
 }
 
 const DECL_KEYWORDS: [TokenKind; 5] = [
@@ -36,10 +53,38 @@ const DECL_KEYWORDS: [TokenKind; 5] = [
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new() }
+        Self {
+            tokens,
+            pos: 0,
+            errors: Vec::new(),
+            span_ctx: None,
+            last_consumed_end: 0,
+            pending_field_span: None,
+            model_spans: Vec::new(),
+        }
+    }
+
+    /// Same parser, but also collects a `SpanIndex` alongside the AST.
+    /// `ctx` converts every collected byte-offset range into a UTF-16
+    /// `SourceSpan` at the point of collection (see `span.rs`).
+    pub fn new_with_spans(tokens: &'a [Token], ctx: &'a SpanContext) -> Self {
+        Self { span_ctx: Some(ctx), ..Self::new(tokens) }
     }
 
     pub fn parse_schema(mut self) -> (Schema, Vec<CompilerError>) {
+        let (schema, _spans, errors) = self.parse_schema_impl();
+        (schema, errors)
+    }
+
+    /// Identical parse to `parse_schema`, plus the `SpanIndex` collected
+    /// along the way. `Schema`'s shape is untouched either way — this
+    /// method exists so `parse_with_spans` (lib.rs) can get both without a
+    /// second parse pass; `parse_schema()` above just discards the spans.
+    pub fn parse_schema_with_spans(mut self) -> (Schema, SpanIndex, Vec<CompilerError>) {
+        self.parse_schema_impl()
+    }
+
+    fn parse_schema_impl(&mut self) -> (Schema, SpanIndex, Vec<CompilerError>) {
         let mut schema = Schema::default();
 
         while !self.at(TokenKind::Eof) {
@@ -78,22 +123,36 @@ impl<'a> Parser<'a> {
             }
         }
 
-        (schema, self.errors)
+        let spans = SpanIndex { models: std::mem::take(&mut self.model_spans) };
+        (schema, spans, std::mem::take(&mut self.errors))
     }
 
     // ─── Declarations ────────────────────────────────────────────────────
 
     fn parse_model(&mut self) -> Option<Model> {
+        let track = self.span_ctx.is_some();
+        let decl_start = self.peek().start;
         self.advance(); // Table
+        let name_start = self.peek().start;
         let name = self.expect_identifier("a model name after 'Table'")?;
+        let name_token_bytes = (name_start, self.last_consumed_end);
+        let lbrace_start = self.peek().start;
         self.expect(TokenKind::LBrace)?;
+        let body_open_bytes = (lbrace_start, self.last_consumed_end);
 
         let mut fields = Vec::new();
         let mut attributes = Vec::new();
+        let mut field_spans = Vec::new();
+        let mut attribute_spans = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
             match self.peek_kind() {
                 TokenKind::DoubleAt => {
+                    let attr_start = self.peek().start;
                     if let Some(attr) = self.parse_attribute(TokenKind::DoubleAt) {
+                        if track {
+                            attribute_spans
+                                .push(self.span_ctx.unwrap().span(attr_start, self.last_consumed_end));
+                        }
                         attributes.push(attr);
                     } else {
                         self.sync_to_block_end();
@@ -101,6 +160,11 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::Identifier => {
                     if let Some(field) = self.parse_field() {
+                        if track {
+                            if let Some(field_span) = self.pending_field_span.take() {
+                                field_spans.push(field_span);
+                            }
+                        }
                         fields.push(field);
                     } else {
                         self.sync_to_field_or_block_end();
@@ -112,13 +176,35 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        let rbrace_start = self.peek().start;
         self.expect(TokenKind::RBrace)?;
+        let body_close_bytes = (rbrace_start, self.last_consumed_end);
+
+        if track {
+            let ctx = self.span_ctx.unwrap();
+            self.model_spans.push(ModelSpan {
+                name: name.clone(),
+                decl: ctx.span(decl_start, self.last_consumed_end),
+                name_token: ctx.span(name_token_bytes.0, name_token_bytes.1),
+                body_open: ctx.span(body_open_bytes.0, body_open_bytes.1),
+                body_close: ctx.span(body_close_bytes.0, body_close_bytes.1),
+                fields: field_spans,
+                attributes: attribute_spans,
+            });
+        }
         Some(Model { name, fields, attributes })
     }
 
     fn parse_field(&mut self) -> Option<Field> {
+        let track = self.span_ctx.is_some();
+        let name_start = self.peek().start;
         let name = self.expect_identifier("a field name")?;
+        let name_token_bytes = (name_start, self.last_consumed_end);
+        let decl_start = name_start;
+
+        let type_start = self.peek().start;
         let type_name = self.expect_identifier("a type after the field name")?;
+        let type_token_bytes = (type_start, self.last_consumed_end);
 
         // `?` OR `[]` — a single optional modifier, never both (parity).
         let mut optional = false;
@@ -133,8 +219,28 @@ impl<'a> Parser<'a> {
         }
 
         let mut attributes = Vec::new();
+        let mut attribute_spans = Vec::new();
         while self.at(TokenKind::At) {
-            attributes.push(self.parse_attribute(TokenKind::At)?);
+            let attr_start = self.peek().start;
+            let attr = self.parse_attribute(TokenKind::At)?;
+            if track {
+                attribute_spans.push(AttributeSpan {
+                    name: attr.name.clone(),
+                    span: self.span_ctx.unwrap().span(attr_start, self.last_consumed_end),
+                });
+            }
+            attributes.push(attr);
+        }
+
+        if track {
+            let ctx = self.span_ctx.unwrap();
+            self.pending_field_span = Some(FieldSpan {
+                name: name.clone(),
+                decl: ctx.span(decl_start, self.last_consumed_end),
+                name_token: ctx.span(name_token_bytes.0, name_token_bytes.1),
+                type_token: ctx.span(type_token_bytes.0, type_token_bytes.1),
+                attributes: attribute_spans,
+            });
         }
 
         Some(Field {
@@ -411,11 +517,12 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> &Token {
-        let token = &self.tokens[self.pos.min(self.tokens.len() - 1)];
+        let idx = self.pos.min(self.tokens.len() - 1);
+        self.last_consumed_end = self.tokens[idx].end;
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
         }
-        token
+        &self.tokens[idx]
     }
 
     fn expect(&mut self, kind: TokenKind) -> Option<()> {

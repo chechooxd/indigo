@@ -26,5 +26,16 @@ export {
   resolveSchema,
   validateSchema,
   compileSchema,
+  parseSchemaWithSpans,
 } from "./shared.js";
-export type { CompilerError, ParseResult, CompileResult } from "./shared.js";
+export type {
+  CompilerError,
+  ParseResult,
+  CompileResult,
+  SourceSpan,
+  AttributeSpan,
+  FieldSpan,
+  ModelSpan,
+  SpanIndex,
+  ParseWithSpansResult,
+} from "./shared.js";

@@ -13,6 +13,14 @@ export function compile(source: string): string;
 export function parse(source: string): string;
 
 /**
+ * Side channel, additive only — see `span.rs` and the `ast-source-spans`
+ * spec. `schema` here is byte-identical to what `parse(source)` returns;
+ * `parse`'s own envelope/shape is entirely unaffected by this export
+ * existing. `{"ok": {schema, spans}}` | `{"errors": CompilerError[]}`
+ */
+export function parse_with_spans(source: string): string;
+
+/**
  * Accepts a `Schema` as JSON. `{"ok": ResolvedSchema}` | `{"error": string}`
  */
 export function resolve(schema_json: string): string;
@@ -28,6 +36,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly compile: (a: number, b: number) => [number, number];
     readonly parse: (a: number, b: number) => [number, number];
+    readonly parse_with_spans: (a: number, b: number) => [number, number];
     readonly resolve: (a: number, b: number) => [number, number];
     readonly validate: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;

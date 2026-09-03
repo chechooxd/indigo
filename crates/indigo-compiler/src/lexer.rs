@@ -120,6 +120,13 @@ pub struct Token {
     pub column: u32,
     pub end_line: u32,
     pub end_column: u32,
+    /// UTF-8 byte offsets from `lexer.span()`, end-exclusive. Consumed by
+    /// `span.rs`'s `SpanContext` to build UTF-16 `SourceSpan`s for
+    /// `parse_with_spans` — unrelated to `line`/`column` above, which stay
+    /// on the pre-existing (inclusive-end, byte-column) convention used by
+    /// `CompilerError` diagnostics.
+    pub start: usize,
+    pub end: usize,
 }
 
 /// Maps byte offsets to 1-based (line, column).
@@ -221,6 +228,8 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                         column,
                         end_line,
                         end_column,
+                        start: span.start,
+                        end: span.end,
                     }),
                     Err(escape_error) => {
                         errors.push(escape_error);
@@ -233,6 +242,8 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                             column,
                             end_line,
                             end_column,
+                            start: span.start,
+                            end: span.end,
                         });
                     }
                 }
@@ -265,6 +276,8 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
                     column,
                     end_line,
                     end_column,
+                    start: span.start,
+                    end: span.end,
                 });
             }
             Err(()) => {
@@ -289,6 +302,8 @@ pub fn tokenize(source: &str) -> (Vec<Token>, Vec<CompilerError>) {
         column,
         end_line: line,
         end_column: column,
+        start: eof_offset,
+        end: eof_offset,
     });
 
     (tokens, errors)

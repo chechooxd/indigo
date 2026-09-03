@@ -1,0 +1,17 @@
+// Span-only fixture (ast-source-spans slice 1): a non-ASCII character on a
+// line before a target field's declaration. Proves `SourceSpan.start`/`end`
+// are UTF-16 code-unit offsets, not raw UTF-8 byte offsets — `é` is 2 UTF-8
+// bytes but 1 UTF-16 code unit, so a byte-offset span for `title` would be
+// off by one relative to the correct UTF-16 offset.
+//
+// Deliberately excluded from the golden-snapshot parity loop
+// (`packages/compiler/test/parity.mjs`) — it carries no
+// `fixtures/snapshots/22-non-ascii.json`, since its only purpose is the
+// span/slicing assertions in `parity.mjs`'s dedicated span block and the
+// Rust unit test in `crates/indigo-compiler/src/span.rs`.
+
+Table Post {
+  id Int @id
+  @note("café")
+  title String
+}

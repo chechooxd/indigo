@@ -70,3 +70,64 @@ export function compileSchema(source: string): CompileResult {
   const out = JSON.parse(wasm.compile(source));
   return "ok" in out ? out.ok : { errors: out.errors };
 }
+
+/**
+ * Source span, side-channel only — never a field on `Schema`/`Model`/
+ * `Field`/`Attribute` (see `ast-source-spans` spec, decision D1). `start`/
+ * `end` are UTF-16 code-unit offsets, end-exclusive, so
+ * `currentText.slice(span.start, span.end)` yields exactly the node's
+ * source text. `line`/`column`/`endLine`/`endColumn` are 1-based.
+ */
+export interface SourceSpan {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface AttributeSpan {
+  name: string;
+  span: SourceSpan;
+}
+
+export interface FieldSpan {
+  name: string;
+  decl: SourceSpan;
+  nameToken: SourceSpan;
+  typeToken: SourceSpan;
+  attributes: AttributeSpan[];
+}
+
+export interface ModelSpan {
+  name: string;
+  decl: SourceSpan;
+  nameToken: SourceSpan;
+  bodyOpen: SourceSpan;
+  bodyClose: SourceSpan;
+  fields: FieldSpan[];
+  attributes: SourceSpan[];
+}
+
+/** Enums/`datasource`/`generator`/`TableGroup` carry no spans — unedited. */
+export interface SpanIndex {
+  models: ModelSpan[];
+}
+
+export type ParseWithSpansResult =
+  | { schema: Schema; spans: SpanIndex }
+  | { errors: CompilerError[] };
+
+/**
+ * Side channel: `schema` here is byte-identical to what `parseSchema(source)`
+ * would return. `parseSchema`'s own output is unaffected by this function
+ * existing (see `ast-source-spans` spec).
+ */
+export function parseSchemaWithSpans(source: string): ParseWithSpansResult {
+  ensureInitialized();
+  const out = JSON.parse(wasm.parse_with_spans(source));
+  return "ok" in out
+    ? { schema: out.ok.schema as Schema, spans: out.ok.spans as SpanIndex }
+    : { errors: out.errors };
+}

@@ -31,18 +31,18 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: `ast-source-spans` (PR 1, depends on: none)
 
-- [ ] 1.1 RED `crates/indigo-compiler/src/span.rs`: unit test asserting `SourceSpan` offsets over ASCII fixture `  id Int @id` (mutation: swap start/end)
-- [ ] 1.2 GREEN: create `span.rs` (`SourceSpan`, `SpanIndex` serde types); `lexer.rs` `Token` gains `start`/`end` from `lexer.span()`
-- [ ] 1.3 RED: create `fixtures/22-non-ascii.indigo` (`@note("café")` before a target field); Rust test: byte-offset span would slice wrong text (mutation: skip UTF-16 conversion)
-- [ ] 1.4 GREEN: implement byte→UTF-16 conversion table in `span.rs`; wire into `parser.rs` span collection for `Model`/`Field`/`Attribute`
-- [ ] 1.5 GREEN: `lib.rs` — add `parse_with_spans` export returning `{ok:{schema,spans}}`/`{errors}`
-- [ ] 1.6 RED `packages/compiler/test/parity.mjs`: `parse(source)` output byte-identical before/after `parse_with_spans` exists (mutation: leak `span` field onto `parse`'s output)
-- [ ] 1.7 GREEN: rebuild WASM (`pnpm --filter @indigodb/compiler build:wasm`), refresh `wasm-sources.sha256`, commit artifact
-- [ ] 1.8 GREEN: `packages/compiler/src/shared.ts`, `index.node.ts`, `index.browser.ts` add `parseSchemaWithSpans` + types; `packages/core/src/index.ts` re-exports `parseWithSpans`
-- [ ] 1.9 RED `parity.mjs`: `currentText.slice(span.start, span.end)` on `22-non-ascii.indigo` equals target field text (mutation: revert to byte offsets)
-- [ ] 1.10 GREEN: assert all 21 golden snapshots byte-identical, zero regeneration (diff-directory check)
-- [ ] 1.11 RED: Rust-vs-WASM span-agreement test — same fixture via `cargo test` and via `parseWithSpans()` from Node, identical values (mutation: change one offset calc site only)
-- [ ] 1.12 Verify: `pnpm --filter @indigodb/compiler build && pnpm --filter @indigodb/compiler test`; freshness guard green
+- [x] 1.1 RED `crates/indigo-compiler/src/span.rs`: unit test asserting `SourceSpan` offsets over ASCII fixture `  id Int @id` (mutation: swap start/end)
+- [x] 1.2 GREEN: create `span.rs` (`SourceSpan`, `SpanIndex` serde types); `lexer.rs` `Token` gains `start`/`end` from `lexer.span()`
+- [x] 1.3 RED: create `fixtures/22-non-ascii.indigo` (`@note("café")` before a target field); Rust test: byte-offset span would slice wrong text (mutation: skip UTF-16 conversion)
+- [x] 1.4 GREEN: implement byte→UTF-16 conversion table in `span.rs`; wire into `parser.rs` span collection for `Model`/`Field`/`Attribute`
+- [x] 1.5 GREEN: `lib.rs` — add `parse_with_spans` export returning `{ok:{schema,spans}}`/`{errors}`
+- [x] 1.6 RED `packages/compiler/test/parity.mjs`: `parse(source)` output byte-identical before/after `parse_with_spans` exists (mutation: leak `span` field onto `parse`'s output)
+- [x] 1.7 GREEN: rebuild WASM (`pnpm --filter @indigodb/compiler build:wasm`), refresh `wasm-sources.sha256`, commit artifact
+- [x] 1.8 GREEN: `packages/compiler/src/shared.ts`, `index.node.ts`, `index.browser.ts` add `parseSchemaWithSpans` + types; `packages/core/src/index.ts` re-exports `parseWithSpans`
+- [x] 1.9 RED `parity.mjs`: `currentText.slice(span.start, span.end)` on `22-non-ascii.indigo` equals target field text (mutation: revert to byte offsets)
+- [x] 1.10 GREEN: assert all 21 golden snapshots byte-identical, zero regeneration (diff-directory check)
+- [x] 1.11 RED: Rust-vs-WASM span-agreement test — same fixture via `cargo test` and via `parseWithSpans()` from Node, identical values (mutation: change one offset calc site only)
+- [x] 1.12 Verify: `pnpm --filter @indigodb/compiler build && pnpm --filter @indigodb/compiler test`; freshness guard green
 
 ## Phase 2: `studio-layout-persistence` + read-only gate extension (PR 2, depends on: none, parallel to PR 1)
 
