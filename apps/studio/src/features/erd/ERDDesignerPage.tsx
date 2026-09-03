@@ -344,6 +344,8 @@ export default function ERDDesignerPage() {
               hiddenTables={hiddenTables}
               isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => setIsSidebarOpen(o => !o)}
+              dslCode={dslCode}
+              onDslChange={handleDslChange}
             />
           </ReactFlowProvider>
         </section>

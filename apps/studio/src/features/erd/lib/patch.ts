@@ -61,15 +61,18 @@ export function applyEdits(source: string, edits: TextEdit[]): string {
 }
 
 /**
- * The edit vocabulary an ERD action can express. This PR (`studio-erd-designer`
- * PR3a, the patch engine slice) implements only `renameTable`, enough to
- * prove the engine's anchor resolution and refusal paths end-to-end.
- * `addTable` (PR3b), `deleteTable`'s referenced-table refusal and
- * `renameTable`'s relation-preservation guarantee (Phase 4), field CRUD
- * (Phase 5), and `addRelation` (Phase 6) widen this union as those slices
- * land — see `openspec/changes/studio-erd-designer/tasks.md`.
+ * The edit vocabulary an ERD action can express. PR3a (the patch engine
+ * slice) implemented only `renameTable`. PR3b (this slice) adds `addTable`,
+ * an insertion rather than a replace — it has no existing anchor to locate,
+ * so it never refuses with `anchor-missing`; only a fresh-parse failure can
+ * refuse it. `deleteTable`'s referenced-table refusal and `renameTable`'s
+ * relation-preservation guarantee (Phase 4), field CRUD (Phase 5), and
+ * `addRelation` (Phase 6) widen this union as those slices land — see
+ * `openspec/changes/studio-erd-designer/tasks.md`.
  */
-export type ErdEdit = { kind: 'renameTable'; from: string; to: string };
+export type ErdEdit =
+  | { kind: 'renameTable'; from: string; to: string }
+  | { kind: 'addTable'; name: string };
 
 export type ErdEditResult =
   | { ok: true; text: string }
@@ -110,6 +113,24 @@ export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult 
       const text = applyEdits(currentText, [
         { start: model.nameToken.start, end: model.nameToken.end, text: edit.to },
       ]);
+      return { ok: true, text };
+    }
+    case 'addTable': {
+      // Pure insertion, no existing node to locate — the anchor is the end
+      // of the last model's body (right after its closing `}`) so the new
+      // table lands next to existing tables rather than after everything
+      // else in the file (e.g. a trailing `TableGroup` block). When the
+      // buffer has no models yet, the anchor falls back to the end of the
+      // buffer. Because `start === end` at the anchor, this is a zero-width
+      // insertion: nothing is deleted, so every byte on either side of the
+      // anchor — including any construct that follows, like `TableGroup` —
+      // is copied through untouched by `applyEdits` (design D4).
+      const anchor =
+        spans.models.length > 0
+          ? spans.models[spans.models.length - 1].bodyClose.end
+          : currentText.length;
+      const insertion = `\n\nTable ${edit.name} {\n  id Int @id\n}`;
+      const text = applyEdits(currentText, [{ start: anchor, end: anchor, text: insertion }]);
       return { ok: true, text };
     }
   }

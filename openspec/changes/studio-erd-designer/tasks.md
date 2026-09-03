@@ -108,15 +108,15 @@ Chain strategy: stacked-to-main
 - [x] 3.2 RED (vitest): `applyEdits` with overlapping ranges throws (mutation: remove overlap check)
 - [x] 3.3 GREEN: implement overlap-detection throw
 - [x] 3.4 GREEN: create combined fixture (`@@allow` + `@@realtime(columns:)` + `TableGroup` + comments + irregular whitespace) — no existing fixture covers this combination
-- [ ] 3.5 RED: byte-diff after `addTable` against the combined fixture — diff confined to edited span, `@@allow`/`@@realtime`/`TableGroup`/comments untouched (mutation: off-by-one into adjacent construct)
+- [x] 3.5 RED: byte-diff after `addTable` against the combined fixture — diff confined to edited span, `@@allow`/`@@realtime`/`TableGroup`/comments untouched (mutation: off-by-one into adjacent construct)
 - [x] 3.6 GREEN: implement `applyErdEdit(currentText, edit)` — calls `parseWithSpans(currentText)` internally, locates anchor
-- [ ] 3.7 GREEN: implement `addTable` edit constructor
+- [x] 3.7 GREEN: implement `addTable` edit constructor
 - [x] 3.8 RED (vitest): module export-surface test — only `applyErdEdit` applies edits; no export returns a `SpanIndex`/span (D3 enforceability guard; mutation: re-export `parseWithSpans` from `patch.ts`)
 - [x] 3.9 RED: fresh-parse failure → `{ok:false, reason:'parse-failed'}`, buffer untouched (mutation: swallow parse error and apply anyway)
 - [x] 3.10 RED: target anchor absent from fresh parse → `{ok:false, reason:'anchor-missing'}` (mutation: fall back to a cached position)
-- [ ] 3.11 RED: unchanged buffer applies `addTable` normally (positive control)
-- [ ] 3.12 GREEN: wire add-table affordance on `ERDCanvas.tsx` to `applyErdEdit`
-- [ ] 3.13 Verify: `pnpm --filter @indigodb/studio build` then `vitest run` for `patch.ts` suite against rebuilt `dist`
+- [x] 3.11 RED: unchanged buffer applies `addTable` normally (positive control)
+- [x] 3.12 GREEN: wire add-table affordance on `ERDCanvas.tsx` to `applyErdEdit`
+- [x] 3.13 Verify: `pnpm --filter @indigodb/studio build` then `vitest run` for `patch.ts` suite against rebuilt `dist`
 
 ## Phase 4: Rename + delete table (PR 4, depends on: Phase 3)
 

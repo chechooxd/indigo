@@ -22,7 +22,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Grid3x3, Network, Snowflake, LayoutGrid, Search } from 'lucide-react';
+import { Grid3x3, Network, Snowflake, LayoutGrid, Search, Plus } from 'lucide-react';
 
 import type { CanvasNode, ERDLink, ERDTableGroup } from '../../types/erd.types';
 import { applyLayout, type LayoutType } from '../../shared/lib/layout-engine';
@@ -35,6 +35,7 @@ import {
   type TableRFNode,
 } from './lib/build-graph';
 import { useLayoutStore, resolvePositions } from './lib/layout-store';
+import { applyErdEdit } from './lib/patch';
 
 const nodeTypes: NodeTypes = { table: TableNode, group: GroupNode };
 
@@ -45,6 +46,12 @@ interface ERDCanvasProps {
   hiddenTables: Set<string>;
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
+  /** Current `.indigo` source buffer — `applyErdEdit`'s `addTable` affordance
+   * parses this fresh on every click (design D3) and, on success, hands the
+   * patched text to `onDslChange`. Persistence to disk is unaffected here —
+   * this only updates the same in-memory buffer Monaco edits also apply to. */
+  dslCode: string;
+  onDslChange: (next: string) => void;
 }
 
 export default function ERDCanvas({
@@ -54,6 +61,8 @@ export default function ERDCanvas({
   hiddenTables,
   isSidebarOpen,
   onToggleSidebar,
+  dslCode,
+  onDslChange,
 }: ERDCanvasProps) {
   const [tableNodes, setTableNodes] = useNodesState<TableRFNode>([]);
   const [showGrid, setShowGrid] = useState(true);
@@ -116,6 +125,20 @@ export default function ERDCanvas({
     [setTableNodes, updatePosition],
   );
 
+  // Picks a name that does not collide with any currently-parsed table, so
+  // the affordance never needs a dialog just to add a starter table.
+  const handleAddTable = useCallback(() => {
+    const existingNames = new Set(parsedNodes.map(n => n.name));
+    let name = 'NewTable';
+    for (let suffix = 1; existingNames.has(name); suffix++) {
+      name = `NewTable${suffix}`;
+    }
+    const result = applyErdEdit(dslCode, { kind: 'addTable', name });
+    if (result.ok) {
+      onDslChange(result.text);
+    }
+  }, [dslCode, onDslChange, parsedNodes]);
+
   const runLayout = useCallback(
     (type: LayoutType) => {
       setTableNodes(nds => {
@@ -161,6 +184,10 @@ export default function ERDCanvas({
         maskColor="rgba(9,9,11,0.6)"
       />
       <Panel position="top-right" className="flex gap-1 bg-zinc-900/90 border border-zinc-800 p-1 rounded-lg shadow-xl backdrop-blur">
+        <ToolbarButton title="Agregar tabla" onClick={handleAddTable}>
+          <Plus size={15} />
+        </ToolbarButton>
+        <div className="w-px bg-zinc-800 mx-0.5" />
         <ToolbarButton title="Organización: Izquierda-derecha" onClick={() => runLayout('lr')}>
           <Network size={15} />
         </ToolbarButton>

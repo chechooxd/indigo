@@ -21,8 +21,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act, fireEvent, screen } from '@testing-library/react';
 import type { NodeChange } from '@xyflow/react';
+import type { ReactNode } from 'react';
 
 const { capturedRef } = vi.hoisted(() => ({
   capturedRef: { onNodesChange: undefined as ((changes: NodeChange[]) => void) | undefined },
@@ -32,14 +33,17 @@ vi.mock('@xyflow/react', async () => {
   const actual = await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react');
   return {
     ...actual,
-    ReactFlow: (props: { onNodesChange?: (changes: NodeChange[]) => void }) => {
+    ReactFlow: (props: { onNodesChange?: (changes: NodeChange[]) => void; children?: ReactNode }) => {
       capturedRef.onNodesChange = props.onNodesChange;
-      return <div data-testid="react-flow-stub" />;
+      // Renders `children` (unlike PR2's original bare-div stub) so
+      // `<Panel>`'s toolbar buttons — including "Agregar tabla" — mount and
+      // are clickable from this test.
+      return <div data-testid="react-flow-stub">{props.children}</div>;
     },
     Background: () => null,
     Controls: () => null,
     MiniMap: () => null,
-    Panel: () => null,
+    Panel: (props: { children?: ReactNode }) => <div>{props.children}</div>,
   };
 });
 
@@ -52,24 +56,43 @@ vi.mock('../../../lib/api', async () => {
   };
 });
 
+// `applyErdEdit` (`../lib/patch`) internally calls `parseWithSpans`, which
+// pulls in the real WASM compiler — unavailable in this jsdom/Vitest
+// environment (see `patch.test.ts`'s own header comment). Stubbed here so
+// this file only exercises `ERDCanvas`'s OWN wiring: does it call
+// `applyErdEdit` with the right arguments, and does it forward an `ok`
+// result's `text` to `onDslChange`.
+vi.mock('../lib/patch', () => ({
+  applyErdEdit: vi.fn(),
+}));
+
 import { fetchLayout, saveLayout } from '../../../lib/api';
+import { applyErdEdit } from '../lib/patch';
 import { ReactFlowProvider } from '@xyflow/react';
 import ERDCanvas from '../ERDCanvas';
 import type { CanvasNode } from '../../../types/erd.types';
 
 const PARSED_NODES: CanvasNode[] = [{ id: 'User', name: 'User', x: 0, y: 0, color: '#000', fields: [] }];
 
-async function renderCanvas() {
+async function renderCanvas(
+  options: {
+    dslCode?: string;
+    onDslChange?: (next: string) => void;
+    parsedNodes?: CanvasNode[];
+  } = {},
+) {
   vi.mocked(fetchLayout).mockResolvedValue({ positions: {}, version: 'v1' });
   render(
     <ReactFlowProvider>
       <ERDCanvas
-        parsedNodes={PARSED_NODES}
+        parsedNodes={options.parsedNodes ?? PARSED_NODES}
         links={[]}
         tableGroups={[]}
         hiddenTables={new Set()}
         isSidebarOpen={false}
         onToggleSidebar={() => {}}
+        dslCode={options.dslCode ?? 'Table User {\n  id Int @id\n}\n'}
+        onDslChange={options.onDslChange ?? (() => {})}
       />
     </ReactFlowProvider>,
   );
@@ -127,5 +150,70 @@ describe('ERDCanvas — drag-end autosave wiring', () => {
     });
 
     expect(saveLayout).not.toHaveBeenCalled();
+  });
+});
+
+describe('ERDCanvas — add-table affordance wiring', () => {
+  beforeEach(() => {
+    vi.mocked(fetchLayout).mockReset();
+    vi.mocked(applyErdEdit).mockReset();
+    capturedRef.onNodesChange = undefined;
+  });
+
+  it('clicking "Agregar tabla" calls applyErdEdit with the current buffer and a name that does not collide with an existing table', async () => {
+    const currentText = 'Table User {\n  id Int @id\n}\n';
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ dslCode: currentText, onDslChange });
+
+    fireEvent.click(screen.getByTitle('Agregar tabla'));
+
+    expect(applyErdEdit).toHaveBeenCalledTimes(1);
+    expect(applyErdEdit).toHaveBeenCalledWith(currentText, { kind: 'addTable', name: 'NewTable' });
+  });
+
+  it('an ok result is forwarded to onDslChange with the patched text', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    fireEvent.click(screen.getByTitle('Agregar tabla'));
+
+    expect(onDslChange).toHaveBeenCalledTimes(1);
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('a refused (not ok) result is NOT forwarded to onDslChange — the buffer stays untouched', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({
+      ok: false,
+      reason: 'parse-failed',
+      message: 'boom',
+    });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    fireEvent.click(screen.getByTitle('Agregar tabla'));
+
+    expect(onDslChange).not.toHaveBeenCalled();
+  });
+
+  it('picks NewTable1 when a table already named NewTable is in the currently-parsed nodes', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const parsedNodes: CanvasNode[] = [
+      ...PARSED_NODES,
+      { id: 'NewTable', name: 'NewTable', x: 0, y: 0, color: '#000', fields: [] },
+    ];
+
+    await renderCanvas({ parsedNodes });
+
+    fireEvent.click(screen.getByTitle('Agregar tabla'));
+
+    expect(applyErdEdit).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'addTable',
+      name: 'NewTable1',
+    });
   });
 });

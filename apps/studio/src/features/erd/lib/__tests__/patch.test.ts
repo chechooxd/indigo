@@ -37,33 +37,59 @@ import type { ErdEdit } from '../patch';
 
 const dummySpan = { start: 0, end: 0, line: 1, column: 1, endLine: 1, endColumn: 1 };
 
+/** Returns the exclusive end offset of the `{` opened at `openIndex`, by counting brace depth. */
+function findMatchingBraceEnd(source: string, openIndex: number): number {
+  let depth = 0;
+  for (let i = openIndex; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  throw new Error(`unbalanced braces in fixture starting at offset ${openIndex}`);
+}
+
 /**
  * Builds a minimal `SpanIndex` from real string offsets in `source`, one
- * `ModelSpan` per `Table <name>` declaration found. Only `nameToken` carries
- * real offsets — the only field `applyErdEdit`'s `renameTable` case reads.
+ * `ModelSpan` per `Table <name>` declaration found. `nameToken` (read by
+ * `renameTable`) and `bodyOpen`/`bodyClose` (`bodyClose.end` read by
+ * `addTable`'s anchor) carry real offsets computed from `source` itself,
+ * not hand-typed magic numbers; `decl`/`fields`/`attributes` stay unused
+ * by both edit kinds under test, so they stay stubbed.
  */
 function buildSpanIndex(source: string) {
   const models: Array<{
     name: string;
     decl: typeof dummySpan;
     nameToken: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
-    bodyOpen: typeof dummySpan;
-    bodyClose: typeof dummySpan;
+    bodyOpen: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
+    bodyClose: { start: number; end: number; line: number; column: number; endLine: number; endColumn: number };
     fields: never[];
     attributes: never[];
   }> = [];
-  const re = /Table\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  const re = /Table\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(source))) {
     const name = match[1];
-    const start = match.index + match[0].length - name.length;
-    const end = start + name.length;
+    const nameStart = match.index + match[0].indexOf(name);
+    const nameEnd = nameStart + name.length;
+    const bodyOpenStart = match.index + match[0].length - 1;
+    const bodyOpenEnd = bodyOpenStart + 1;
+    const bodyCloseEnd = findMatchingBraceEnd(source, bodyOpenStart);
     models.push({
       name,
       decl: dummySpan,
-      nameToken: { start, end, line: 1, column: 1, endLine: 1, endColumn: 1 },
-      bodyOpen: dummySpan,
-      bodyClose: dummySpan,
+      nameToken: { start: nameStart, end: nameEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
+      bodyOpen: { start: bodyOpenStart, end: bodyOpenEnd, line: 1, column: 1, endLine: 1, endColumn: 1 },
+      bodyClose: {
+        start: bodyCloseEnd - 1,
+        end: bodyCloseEnd,
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 1,
+      },
       fields: [],
       attributes: [],
     });
@@ -135,6 +161,40 @@ describe('applyErdEdit — untouched-by-construction (D4)', () => {
     expect(result.text).toContain('// A table carrying a row-level access rule.');
     expect(result.text).toContain('\tlabel String');
   });
+
+  it('adding a table inserts after the last model, leaving @@allow, @@realtime(columns:), TableGroup, comments and irregular whitespace byte-identical (mutation target: off-by-one anchor)', () => {
+    mockRealParse(COMBINED_FIXTURE);
+
+    const edit: ErdEdit = { kind: 'addTable', name: 'Invoice' };
+    const result = applyErdEdit(COMBINED_FIXTURE, edit);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    // The anchor is computed independently here (string search, not reused
+    // production logic): right after the LAST model's (`ProjectedUser`)
+    // closing `}`, before the blank line and `TableGroup` block that follow
+    // it in the fixture.
+    const lastModelClose = '@@realtime(columns: [id, email])\n}';
+    const anchor = COMBINED_FIXTURE.indexOf(lastModelClose) + lastModelClose.length;
+    const insertion = '\n\nTable Invoice {\n  id Int @id\n}';
+    const expected =
+      COMBINED_FIXTURE.slice(0, anchor) + insertion + COMBINED_FIXTURE.slice(anchor);
+    expect(result.text).toBe(expected);
+
+    // Byte-diff confinement: an off-by-one anchor (e.g. inserting at
+    // `bodyClose.end + 1` instead of `bodyClose.end`) would consume the
+    // first byte of the blank line separating `ProjectedUser` from
+    // `TableGroup`, reaching into content adjacent to that construct —
+    // this assertion on the exact expected string catches that class of
+    // bug, and the constructs below are asserted individually too.
+    expect(result.text).toContain('@@allow(read, auth.userId == this.ownerId)');
+    expect(result.text).toContain('@@realtime(columns: [id, email])');
+    expect(result.text).toContain('TableGroup "Billing" {');
+    expect(result.text).toContain('// A table carrying a row-level access rule.');
+    expect(result.text).toContain('\tlabel String');
+    expect(result.text).toContain('Table Invoice {\n  id Int @id\n}');
+  });
 });
 
 describe('applyErdEdit — staleness gate (D3)', () => {
@@ -178,6 +238,21 @@ describe('applyErdEdit — staleness gate (D3)', () => {
     const result = applyErdEdit(currentText, { kind: 'renameTable', from: 'Post', to: 'Article' });
 
     expect(result).toEqual({ ok: true, text: 'Table Article {\n  id Int @id\n}\n' });
+  });
+
+  it('an unchanged buffer applies addTable normally (positive control)', () => {
+    const currentText = 'Table Post {\n  id Int @id\n}\n';
+    mockRealParse(currentText);
+
+    const result = applyErdEdit(currentText, { kind: 'addTable', name: 'Comment' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    const anchor = currentText.indexOf('}') + 1;
+    const expected =
+      currentText.slice(0, anchor) + '\n\nTable Comment {\n  id Int @id\n}' + currentText.slice(anchor);
+    expect(result.text).toBe(expected);
   });
 });
 
