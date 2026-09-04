@@ -1,5 +1,262 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:f794b46b7d91944400cbf988b795a86c1ff1b63a4f9dd6116798c78625612615
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 4/4
+test_command: pnpm --filter @indigodb/studio exec vitest run
+test_exit_code: 0
+test_output_hash: sha256:3c8d813870c546413a9f2df51441c87d1f616e042e5db6bee25360f22df28aab
+build_command: pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:7b69fd5f09548d8a4bfc289160ff479fc735dd567510686f88980dce088d92af
+```
+
+## Verification Report — Phase 6
+
+**Change**: studio-erd-designer — Phase 6 (`relation drawing: addRelation + connectable handles`, tasks 6.1–6.9)
+**Version**: N/A
+**Mode**: Strict TDD
+**Scope**: `git diff main..HEAD` (HEAD `a0f0c9d` on `feat/erd-relation-drawing`, branched off
+`main` @ `17cc199`). 488 lines (137 impl / 351 test). Phases 1–5 already merged into `main` and
+independently verified — not re-audited. Task 6.7 (manual E2E) is deliberately left `[ ]` — see
+Completeness below; this is not scored as a failure.
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 6) | 9 |
+| Tasks complete | 8 |
+| Tasks incomplete | 1 (6.7 — deliberate, manual E2E) |
+
+All 8 automated checkboxes (`6.1`–`6.6`, `6.8`, `6.9`) in
+`openspec/changes/studio-erd-designer/tasks.md` are `[x]`, confirmed by direct read of the
+current file and cross-checked against `git show --stat a0f0c9d` and direct inspection of
+`patch.ts`, `patch.test.ts`, `ERDCanvas.tsx`, `ERDCanvas.test.tsx`, `TableNode.tsx`,
+`TableNode.test.tsx`, `build-graph.ts`, and `specs/studio-erd-editing/spec.md`.
+
+Task 6.7 stays `[ ]` with an accurate note: *"Manual E2E (recorded): add table → add field →
+draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a
+scratch project) — **NOT verified this batch**: no interactive browser session was available to
+the executing agent. See apply-progress for exactly what automated coverage substitutes for it
+and what a human still needs to run."* This is an honest, scoped statement — it names exactly
+what automation *did* cover (patch correctness, handle gating, `onConnect` wiring) and what a
+human still must click through. No automated test was passed off as E2E coverage; the note is
+accurate. Per the launch instructions, this does not block PASS.
+
+| Task | Evidence |
+|---|---|
+| 6.1 | `patch.ts` `addRelation` case, `patch.ts:290-321` |
+| 6.2 | `patch.test.ts` `describe('applyErdEdit — addRelation (6.1/6.2)')`, 4 tests |
+| 6.3 | `build-graph.ts` `handlesConnectable` field + `TableNode.tsx` two handle styles |
+| 6.4 | `TableNode.test.tsx` (new file), 3 tests, real `<ReactFlow>` mount |
+| 6.5 | `ERDCanvas.tsx` `handleConnect` + `onConnect={handleConnect}` wiring |
+| 6.6 | `ERDCanvas.test.tsx` `describe('ERDCanvas — relation drawing (onConnect) wiring')`, 8 tests |
+| 6.8 | `specs/studio-erd-editing/spec.md` new Requirement, 4 scenarios |
+| 6.9 | `ERDCanvas.test.tsx` 2 gating tests (`schemaWritable:false`, `readOnly:true`) |
+
+### Build & Tests Execution
+**Build**: ✅ Passed — `pnpm build --force`, 10/10 fresh (0 cached), includes Studio's
+`tsc -b && vite build`.
+
+**Lint**: ✅ Passed — `pnpm exec turbo lint --force`, 19/19 fresh (0 cached), includes Studio's
+`tsc -b --noEmit`.
+
+**Tests (Studio suite)**: ✅ 240 passed / 0 failed / 0 skipped — `pnpm --filter @indigodb/studio
+exec vitest run`, 28/28 files, fresh run (re-executed by this verify pass, matches the baseline
+stated in the launch prompt exactly: 240 tests / 28 files).
+
+**Tests (whole monorepo)**: ✅ `pnpm exec turbo test --force`, 18/18 fresh (0 cached),
+~11 minutes wall time, backgrounded and polled per the harness caveat. DB-gated realtime suites
+SKIP without `INDIGODB_TEST_DATABASE_URL`, consistent with repo convention.
+
+**Coverage**: Not available — no coverage tool configured for this package (consistent with
+prior phases' reports).
+
+### Mutation Proofs — Reproduced Independently
+This verify pass did not trust apply-progress prose; each claimed mutation was re-applied to the
+current working tree, run, observed to fail, then reverted with a clean `git diff`.
+
+| Task | Mutation | Reproduced Result | Revert Clean |
+|---|---|---|---|
+| 6.2 | `field.decl.end` → `field.decl.end + 1` (off-by-one anchor) | 3/6 `addRelation` tests failed, producing corrupted merged-line output (e.g. `authorId Int @default(0)\n @relation(...)}` with the closing brace eaten) — matches the claimed proof exactly | ✅ `git diff` clean |
+| 6.4 | `handlesConnectable = Boolean(data.handlesConnectable)` → hardcoded `true` | 2/3 `TableNode.test.tsx` tests failed (`expected true to be false`) on the view-mode and disabled-equivalent cases | ✅ `git diff` clean |
+| 6.6 | `sourceIdx`/`targetIdx` derived from `sourceHandle`/`targetHandle` → hardcoded `0` | Primary wiring test failed: `fromField` came back `"id"` instead of `"authorId"` — matches the claimed proof exactly | ✅ `git diff` clean |
+| 6.9 | Removed `if (editDisabled) return;` from `handleConnect` | Both gating tests failed — but with a **thrown `TypeError: Cannot read properties of undefined (reading 'ok')`** at `ERDCanvas.tsx:188`, not a clean `expect()` failure. See Assertion Quality below. | ✅ `git diff` clean |
+
+### 6.9 Gating Quality — Real Finding
+The apply agent's own report flagged this honestly, and reproduction confirms it: the two 6.9
+gating tests (`schemaWritable:false`, `readOnly:true` in `ERDCanvas.test.tsx`) call
+`vi.mocked(applyErdEdit).mockReset()` in `beforeEach` with **no default return value** for this
+describe block. Under the real (unmutated) code, the `if (editDisabled) return;` guard fires
+before `applyErdEdit` is ever called, so `expect(applyErdEdit).not.toHaveBeenCalled()` and
+`expect(onDslChange).not.toHaveBeenCalled()` pass on their own merits — a genuine assertion of
+"no relation edit was issued."
+
+Under the guard-removed mutation, `handleConnect` proceeds to call the (still `undefined`-
+returning) mocked `applyErdEdit`, then immediately dereferences `result.ok` on the `undefined`
+result and throws inside `act(...)`. The test still fails — vitest reports it as a failure — but
+it fails because the mutated code **crashed**, not because the test's own `expect()` assertions
+ran and found a violation. The two assertions after the `act()` call are never reached under the
+mutation.
+
+This is a real, if minor, weakness: the test *does* catch this specific mutation (crash-on-throw
+is still a red signal a reviewer would investigate), so it is not a false-negative safety net.
+But it does not prove the semantically precise claim "no `addRelation` call was issued" through
+its own assertion machinery — it proves "the code did something unexpected" via an unrelated
+crash. A stronger version would give `applyErdEdit` a default `mockReturnValue({ok:true,
+text:'X'})` for this describe block (as several sibling describe blocks already do), so a removed
+guard would flow cleanly through to `onDslChange` being called and the `expect(...)
+.not.toHaveBeenCalled()` assertions would fail on their own merits instead of via crash.
+
+**Classification: WARNING** — the mutation is still caught, so this is not a coverage gap, but
+the assertion quality is weaker than the surrounding suite's convention (every other
+`mockReset()`-then-gate test in this file sets a `mockReturnValue` first).
+
+### `TableNode.test.tsx` — Native `<ReactFlow>` Mount Quality
+Confirmed genuine: this file renders through the real `@xyflow/react` `<ReactFlow>` +
+`<ReactFlowProvider>` (not the `ERDCanvas.test.tsx` mock), queries `.react-flow__handle` — React
+Flow's own DOM class — and asserts on `classList.contains('connectable')` (React Flow's native
+class toggled by the `Handle` component's own `isConnectable` prop) plus computed `style.width`/
+`style.opacity`. None of these assertions reference this test file's own scaffolding; the
+mutation proof for 6.4 (hardcoding `handlesConnectable = true`) fails 2/3 of these tests purely
+through React Flow's own internal behavior. This is a legitimate first use of a real-mount
+pattern in this change and is not testing its own setup.
+
+### D3/D4 Compliance — `addRelation`
+Confirmed by source inspection of `patch.ts`:
+- **Fresh parse every call**: `applyErdEdit` calls `parseWithSpans(currentText)` synchronously
+  inside the same call that applies the edit (module-level doc comment, `patch.ts:6-23`) — no
+  span is ever exported or cached across calls (design D3). `addRelation` follows the identical
+  `findModel`/`findField` lookup `editField` already uses, against that same fresh parse.
+- **Zero-width, targeted insertion**: `addRelation`'s only `TextEdit` is
+  `{ start: field.decl.end, end: field.decl.end, text: attribute }` — a zero-width insertion at
+  the field declaration's end offset, not a range replace.
+- **Everything else byte-untouched**: `applyEdits` (design D4) copies every byte of `source`
+  outside the edit range verbatim; verified directly by the byte-diff test against
+  `COMBINED_FIXTURE`, which asserts every other construct (`Widget`, `@@realtime(columns:)`,
+  `TableGroup`, comments, irregular whitespace) survives byte-identical.
+- **Composes correctly with an existing attribute**: `field.decl.end` already accounts for any
+  attributes already present on the line (same span `editField` relies on for its `?` insertion),
+  so appending at that offset naturally goes *after* an existing `@default(0)`, confirmed by the
+  dedicated "preserves an existing attribute" test — the result reads
+  `authorId Int @default(0) @relation(fields: [authorId], references: [id])`, both attributes
+  intact and in the order they were authored/drawn.
+
+### Standing Obligation — Discharged
+`tasks.md`'s standing rule (added after Phase 3/5 recurred the same warning) requires, per new
+`ErdEdit` kind: (a) a spec Requirement naming it, (b) a covering test per scenario, (c) a
+`schemaWritable`/`readOnly` gate on the shared `editDisabled` flag. Checked against `addRelation`:
+
+| Obligation | Status | Evidence |
+|---|---|---|
+| (a) Spec Requirement | ✅ | `specs/studio-erd-editing/spec.md` — new Requirement "Drawing a relation between two fields appends a `@relation` attribute on the source field" |
+| (b) Covering test per scenario | ✅ 4/4 | See mapping below |
+| (c) Shared `editDisabled` gate | ✅ | `handleConnect`'s `if (editDisabled) return;` (task 6.9), plus `handlesConnectable` computed from the SAME `edit`/`edit.disabled` inputs in `build-graph.ts`'s `toTableNode` — no second gating path |
+
+**Scenario → test mapping (all 4 new scenarios have a real committed test):**
+| Scenario | Test |
+|---|---|
+| Completing a drag adds a relation attribute on the source field | `patch.test.ts` — "inserts a @relation attribute on the target field..." + byte-diff test on `COMBINED_FIXTURE` |
+| An existing attribute survives the relation attribute being appended | `patch.test.ts` — "preserves an existing attribute on the target field..." |
+| Field connection handles are interactive only in edit mode | `TableNode.test.tsx` — all 3 tests (edit mode, view mode, disabled-equivalent) |
+| Drawing a relation from an absent field refuses with anchor-missing | `patch.test.ts` — "addRelation refuses as anchor-missing when the source table is absent..." |
+
+The mechanism worked this time: unlike Phase 3 (`addTable` shipped spec-silent) and Phase 5
+(`editField`/`deleteField` shipped spec-silent, re-triggering the same WARNING), Phase 6 shipped
+`addRelation` with its spec Requirement, all 4 scenarios backed by real tests, and the shared-flag
+gate — in the SAME commit, not a follow-up remediation. The standing obligation discharged its
+purpose.
+
+### Spec Compliance Matrix (Phase 6 additions only)
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Drawing a relation appends `@relation` on the source field | Completing a drag adds the attribute | `patch.test.ts > applyErdEdit — addRelation (6.1/6.2)` (2 tests) | ✅ COMPLIANT |
+| " | Existing attribute survives | `patch.test.ts` — "preserves an existing attribute..." | ✅ COMPLIANT |
+| " | Handles interactive only in edit mode | `TableNode.test.tsx` (3 tests) | ✅ COMPLIANT |
+| " | Anchor-missing refusal | `patch.test.ts` — "addRelation refuses as anchor-missing..." | ✅ COMPLIANT |
+
+**Compliance summary**: 4/4 scenarios compliant.
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| `addRelation` edit constructor | ✅ Implemented | Matches design D2–D4; anchored on `FieldSpan` |
+| Connectable handles in edit mode (D7) | ✅ Implemented | `isConnectable={handlesConnectable}` on all 4 per-field `Handle`s |
+| `onConnect` wiring | ✅ Implemented | Gated on `editDisabled`, resolves handle IDs via `tableNodes` state (already confirmed by orchestrator — no re-derivation needed) |
+| Shared writability gate | ✅ Implemented | Reuses `editDisabled` — no second gating path |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| D3 (no exported span, fresh parse per call) | ✅ Yes | `addRelation` uses the same `parseWithSpans`-per-call discipline |
+| D4 (byte-untouched outside edit range) | ✅ Yes | Confirmed via byte-diff test + `applyEdits` overlap guard |
+| D7 (connectable handles, edit-mode only) | ✅ Yes | `handlesConnectable` derived from `edit !== undefined && !edit.disabled` |
+
+### Deviations From Design (carried from apply-progress, independently reasonable)
+1. `to`/`toField` are not independently validated against the fresh parse — only the anchor
+   (`from`/`fromField`) is. Matches task 6.1's stated scope and the `ErdEdit` shape design
+   specified. **Already assessed by the orchestrator**: `handleConnect` derives both `to` and
+   `toField` from `tableNodes` (real, currently-rendered nodes, with `find` guards), so this risk
+   does not reach the drag UI path — it could only matter for a hypothetical direct
+   `applyErdEdit` caller bypassing the canvas, which is out of this change's scope. Confirmed
+   correct on review of `handleConnect`'s source.
+2. No confirm/undo affordance for accidental connections — consistent with every other ERD
+   affordance's minimal-UI precedent in this change.
+3. Rename propagation into existing `@relation(...)` attributes is out of scope — a pre-existing,
+   explicitly-deferred non-goal, not a Phase 6 regression.
+
+### Issues Found
+**CRITICAL**: None.
+
+**WARNING**:
+1. 6.9's two gating tests (`schemaWritable:false`, `readOnly:true`) pass their mutation check via
+   an unmocked-return crash (`Cannot read properties of undefined (reading 'ok')`) rather than
+   through their own `expect(...).not.toHaveBeenCalled()` assertions actually being reached and
+   evaluated cleanly. The mutation is still caught (not a false-negative), but the assertion
+   quality is below the surrounding suite's own convention of giving `applyErdEdit` a
+   `mockReturnValue` before exercising a gated path. Recommend (for a future pass, non-blocking):
+   add `vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'SHOULD_NOT_BE_USED' })` before
+   these two tests so the guard's absence is caught by the intended assertion, not a crash.
+2. (Carried forward, informational only) `to`/`toField` in `addRelation` are not validated
+   against the fresh parse — a relation can be drawn to a table/field name that does not exist,
+   producing a syntactically valid but semantically dangling `@relation(...)`. The orchestrator
+   already confirmed the drag UI path cannot reach this (both are derived from real rendered
+   nodes), so this is not reachable through the shipped affordance today; flagged only in case a
+   future direct `applyErdEdit` caller is added without the same guard.
+
+**SUGGESTION**: None beyond the above.
+
+### Whole-Change Readiness — All 6 Phases
+`studio-erd-designer` is **ready for `sdd-archive` once task 6.7 is manually closed** by a human
+running `indigodb studio` against a scratch project end-to-end (add table → add field → draw
+relation → Save → reload → confirm both layout and `.indigo` source survive). Nothing else is
+outstanding:
+
+- Phases 1–5: previously verified (`PASS` / `PASS WITH WARNINGS`), merged to `main`, not
+  re-audited per this launch's scope — no new findings surfaced against them during this pass.
+- Phase 6 (this report): 8/9 tasks complete with real substance, all traced to `a0f0c9d`; 1
+  WARNING (6.9 assertion quality, non-blocking); the standing obligation mechanism worked as
+  designed for the first time this change.
+- Task 6.7 is the only open checkbox across the entire 92-task breakdown, and its note in
+  `tasks.md` is accurate — it does not misrepresent automated coverage as E2E verification.
+
+**Verdict for archive**: proceed to `sdd-archive` after a human closes 6.7. No CRITICAL findings
+block delivery.
+
+### Verdict
+**PASS WITH WARNINGS**
+Phase 6 is complete in substance and traceable to `a0f0c9d`; all claimed mutation proofs
+reproduced cleanly; one non-blocking assertion-quality WARNING found in the 6.9 gating tests;
+task 6.7 is correctly left open and correctly documented as a human follow-up, not a failure.
+
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:578eda5d0f11a285abe7db6b6d8a4efb2c258fbd632df219d869ddd9e429e790
 verdict: pass_with_warnings
 blockers: 0

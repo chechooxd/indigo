@@ -623,6 +623,11 @@ describe('ERDCanvas — relation drawing (onConnect) wiring', () => {
 
   it('RED/mutation: onConnect is gated on the SAME editDisabled flag as every other affordance — schemaWritable:false applies no edit', async () => {
     useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    // Seed a valid return so that if the `editDisabled` guard were removed,
+    // `handleConnect` would run to completion and this test would fail on its
+    // own `not.toHaveBeenCalled()` assertion — not on a TypeError from reading
+    // `.ok` off an undefined result.
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
     const onDslChange = vi.fn();
 
     await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
@@ -637,6 +642,11 @@ describe('ERDCanvas — relation drawing (onConnect) wiring', () => {
 
   it('RED/mutation: onConnect is gated under global read-only mode too', async () => {
     useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    // Seed a valid return so that if the `editDisabled` guard were removed,
+    // `handleConnect` would run to completion and this test would fail on its
+    // own `not.toHaveBeenCalled()` assertion — not on a TypeError from reading
+    // `.ok` off an undefined result.
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
     const onDslChange = vi.fn();
 
     await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
