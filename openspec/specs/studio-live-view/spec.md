@@ -3,9 +3,11 @@
 ## Purpose
 
 Defines the Table Browser's live-refresh contract: subscribing to the already-embedded,
-unauthenticated realtime SSE stream for the active `@@realtime` table, and turning any
-`change`/`wake` frame into a debounced, coalesced full refetch of that table's rows. This
-capability is explicitly outside the `@@allow`/RLS/handle trust boundary — Studio already
+unauthenticated realtime SSE stream for the active `@@realtime` table, and turning the data-free
+`event: wake` frame into a debounced, coalesced full refetch of that table's rows. SSE dispatch
+never carries row data or emits `event: change` for any table (`realtime-live-endpoint`'s
+fail-closed dispatch requirement), so the wake frame is the only signal this stream delivers.
+This capability is explicitly outside the `@@allow`/RLS/handle trust boundary — Studio already
 holds a privileged, unscoped DB connection, so its live view matches that posture rather than
 simulating an end-user's scoped view. No frame payload is ever read; every trigger produces
 the same `fetchTableRows(name)` call already used by the manual Refresh button.
@@ -31,27 +33,34 @@ non-`@@realtime` table.
 - WHEN the user selects that table
 - THEN no live subscription opens and no live status indicator renders
 
-### Requirement: Both `change` and `wake` frames trigger the same debounced refetch, without reading frame data
+### Requirement: A `wake` frame triggers the debounced refetch, without reading frame data; `change`-frame handling stays wired but is unreachable over SSE
 
-On receiving either an `event: change` or an `event: wake` frame for the subscribed table, the
-Table Browser MUST treat it purely as a "this table changed" signal and arm a fixed 50ms
-trailing debounce before calling the existing `fetchTableRows(name)` and replacing the grid's
-records via `updateTableRecords`. The Table Browser MUST NOT read any field off the frame
-payload to decide how to update the grid.
+`RealtimeEngine.dispatch()` never emits `event: change` over the unauthenticated SSE route, for
+any table — only the data-free `event: wake` frame `{table, op, lsn, seq}` (`realtime-live-endpoint`'s
+fail-closed dispatch requirement). On receiving that `wake` frame for the subscribed table, the
+Table Browser MUST treat it purely as a "this table changed" signal and arm a fixed 50ms trailing
+debounce before calling the existing `fetchTableRows(name)` and replacing the grid's records via
+`updateTableRecords`. The Table Browser MUST NOT read any field off the frame payload to decide
+how to update the grid. The hook's `onEvent` handler (wired for a hypothetical `event: change`
+payload) remains present and calls the identical refetch path, purely as defensive,
+forward-compatible code — it MUST NOT be relied upon, since no `event: change` frame reaches it
+over SSE today.
 
-#### Scenario: A `change` frame triggers a refetch after the debounce window
+#### Scenario: A `wake` frame triggers a refetch after the debounce window
+
+- GIVEN a live subscription is active and in `live` status, on any `@@realtime` model, `@@allow`
+  or not
+- WHEN one `event: wake` frame arrives for the subscribed table
+- THEN no refetch occurs synchronously; `fetchTableRows` runs once the 50ms trailing window
+  elapses with no further frame, and the grid is replaced with the returned rows, with no
+  frame field read
+
+#### Scenario: An `event: change` frame, if it ever arrived, would run the identical refetch path
 
 - GIVEN a live subscription is active and in `live` status
-- WHEN one `event: change` frame arrives for the subscribed table
-- THEN no refetch occurs synchronously; `fetchTableRows` runs once the 50ms trailing window
-  elapses with no further frame, and the grid is replaced with the returned rows
-
-#### Scenario: A `wake` frame triggers the identical refetch path as a `change` frame
-
-- GIVEN a live subscription is active and in `live` status, on an `@@allow` model that only
-  ever emits data-free `wake` frames
-- WHEN one `event: wake` frame arrives for the subscribed table
-- THEN the same debounced `fetchTableRows` + `updateTableRecords` path runs as for a `change`
+- WHEN the transport's `onEvent` handler fires (defensive path; not reachable from SSE today,
+  since `dispatch()` never emits `event: change` over the wire)
+- THEN the same debounced `fetchTableRows` + `updateTableRecords` path runs as for a `wake`
   frame, with no frame field read
 
 ### Requirement: A burst of frames within the debounce window coalesces to exactly one refetch

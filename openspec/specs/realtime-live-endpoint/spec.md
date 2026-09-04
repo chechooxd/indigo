@@ -214,16 +214,21 @@ filled) MUST be sealed and immutable: it MUST be served with
 - THEN the response contains zero events, `hasMore: false`, and `Cache-Control: no-store` —
   never a cacheable directive, even though the request otherwise succeeded
 
-### Requirement: SSE dispatch is scoped to a data-free wake-up signal for `@@allow`-protected models
+### Requirement: SSE dispatch is scoped to a data-free wake-up signal for every model, `@@allow` or not
 
-For a model carrying an `@@allow` block at all (`ResolvedTable.allow !== undefined`), regardless
-of whether that block includes a `read` rule, `RealtimeEngine.dispatch()` MUST send an SSE frame
-containing only `{table, op, lsn}` — no `pk`, `new`, or `old`. This is because `computeBuckets`
-returns `[]` (deny-all) for an `@@allow` block with no `read` rule, and the real table's RLS
-denies every read without a matching policy; scoping only on the presence of a `read` rule would
-leave such a model on full-payload SSE while its `GET ?handle&offset` path denies all reads,
-reopening the leak the guard exists to prevent. Models without `@@allow` MUST continue to receive
-today's full-payload SSE frames, byte-identical to prior behavior.
+`RealtimeEngine.handleRequest`'s `GET <REALTIME_PATH>?tables=...` route performs zero
+authentication and sets `access-control-allow-origin: "*"` — any origin can open it. Because of
+that, `RealtimeEngine.dispatch()` MUST send every SSE subscriber a frame containing only
+`{table, op, lsn, seq}` — never `pk`, `new`, or `old` — for ANY table, `@@allow` or not. Scoping
+only `@@allow`-protected models (as an earlier version of this requirement did) left every
+`@@realtime` model without `@@allow` on full-payload SSE, an unauthenticated, cross-origin-
+readable leak of live row data; fail-closed dispatch is now unconditional, not predicated on
+`ResolvedTable.allow`. Row data reaches a remote consumer only through the handle-authenticated
+`GET <REALTIME_LOG_PATH>?handle&offset` route (`handleLogRequest`), which verifies a signed
+handle and binds `app.user_id` for RLS scoping before returning any row. In-process listeners
+(an app embedding `RealtimeEngine` in the same process, as the Studio does) are not on the wire
+and are unaffected: they still receive the complete `RealtimeEvent`, including projected
+`new`/`old`.
 
 This wake frame is now a **client-observable trigger contract**: the generated client's
 `.live()` (see `client-live-queries`) treats `event: wake` as the sole signal to refetch via
@@ -257,12 +262,13 @@ client consumer, so the frame's observability by a live-query loop was unverifie
   — because `ResolvedTable.allow !== undefined` for this model, even though `computeBuckets`
   would independently deny all reads via RLS
 
-#### Scenario: Non-`@@allow` realtime model is unaffected
+#### Scenario: Non-`@@allow` realtime model also gets wake-up-only SSE
 
 - GIVEN a `@@realtime` model with no `@@allow` block
 - WHEN a row changes on that model
-- THEN the dispatched SSE frame is byte-identical to the frame shape emitted before this change
-  (`table`, `op`, `pk`, `new`, `old`, `txid`, `ts`, `lsn`, `seq` as applicable)
+- THEN the dispatched SSE frame is the scoped `{table, op, lsn, seq}` shape, not the
+  full-payload frame emitted before this change — the SSE route is unauthenticated
+  regardless of `@@allow`, so it never carries `pk`, `new`, or `old` for any model
 
 #### Scenario: A generated `.live()` query observes the wake frame as its refetch trigger
 
@@ -343,38 +349,41 @@ from a genuinely live stream.
   source — this degraded state is scoped to `REALTIME_PATH` and
   `REALTIME_LOG_PATH` only
 
-### Requirement: `dispatch()` and `handleLogRequest` forward stored bodies verbatim and never re-widen
+### Requirement: In-process listeners and `handleLogRequest` forward stored bodies verbatim and never re-widen
 
-For a table with `@@realtime(columns: [...])`, `RealtimeEngine.dispatch()` MUST emit
-the SSE frame's `new`/`old` exactly as received from `WalSource` (already projected)
-— it MUST NOT re-read or re-derive a wider payload. `handleLogRequest` MUST map
-`_indigo_realtime_log` rows to `RealtimeEvent`s verbatim, applying no filtering of
-its own. Because `handleLogRequest` filters nothing and the log itself stores only
-the projected view (`realtime-shape-log`), a replay page is structurally guaranteed
-to be exactly as narrow as the live SSE frame for the same row: a narrow stored row
-cannot produce a wider page, since nothing widens it in between. This is the
-normative guarantee; a DB-gated test exercising `GET ?handle&offset` end-to-end is
-confirmation of it, not the sole proof. There MUST be no code path, option, or flag
-that restores a projected-out column at dispatch or replay time.
+For a table with `@@realtime(columns: [...])`, `RealtimeEngine.dispatch()` MUST hand its
+in-process `listeners` the `RealtimeEvent`'s `new`/`old` exactly as received from `WalSource`
+(already projected) — it MUST NOT re-read or re-derive a wider payload; SSE dispatch never
+carries `new`/`old` at all (see the wake-only dispatch requirement above), so this projection
+guarantee applies to the in-process listener path and to `handleLogRequest`, not to a live SSE
+frame. `handleLogRequest` MUST map `_indigo_realtime_log` rows to `RealtimeEvent`s verbatim,
+applying no filtering of its own. Because `handleLogRequest` filters nothing and the log itself
+stores only the projected view (`realtime-shape-log`), a replay page is structurally guaranteed
+to be exactly as narrow as what an in-process listener saw for the same row: a narrow stored row
+cannot produce a wider page, since nothing widens it in between. This is the normative
+guarantee; a DB-gated test exercising `GET ?handle&offset` end-to-end is confirmation of it, not
+the sole proof. There MUST be no code path, option, or flag that restores a projected-out column
+at dispatch (in-process) or replay time.
 
 This requirement is independent of, and stacks with, the existing `@@allow` row-level
-SSE scoping: a model may have neither, either, or both of `@@allow` row filtering and
-`@@realtime(columns: [...])` column projection active at once.
+scoping on `handleLogRequest`'s buckets: a model may have neither, either, or both of `@@allow`
+row filtering and `@@realtime(columns: [...])` column projection active at once.
 
-#### Scenario: Live SSE frame matches the projected log row
+#### Scenario: In-process listener payload matches the projected log row
 
-- GIVEN a model with `@@realtime(columns: [id, status])` and a `passwordHash` field
-- WHEN a row change is dispatched over SSE
-- THEN the frame's `new`/`old` contain only `id` and `status` — identical to what was
+- GIVEN a model with `@@realtime(columns: [id, status])` and a `passwordHash` field, and
+  an in-process listener registered on `RealtimeEngine`
+- WHEN a row change is dispatched
+- THEN the listener's `new`/`old` contain only `id` and `status` — identical to what was
   written to `_indigo_realtime_log`
 
-#### Scenario: Replay page is exactly as narrow as the live frame (structural guarantee; DB-gated test confirms it)
+#### Scenario: Replay page is exactly as narrow as the in-process payload (structural guarantee; DB-gated test confirms it)
 
 - GIVEN a model with `@@realtime(columns: [id, status])`, and `handleLogRequest`
   mapping stored log rows to `RealtimeEvent`s with no filtering step of its own
 - WHEN a client pages through `GET ?handle&offset` covering that row's change
 - THEN the returned event's `new`/`old` values contain only `id` and `status`,
-  matching what the live SSE frame carried at dispatch time — guaranteed by the
+  matching what an in-process listener received at dispatch time — guaranteed by the
   stored row already being narrow, not by any narrowing performed at replay time;
   a `log.mjs`/`endpoint.mjs` DB-gated test that exercises this end-to-end confirms
   the guarantee but is not required for the guarantee to hold
@@ -388,27 +397,35 @@ SSE scoping: a model may have neither, either, or both of `@@allow` row filterin
   per `realtime-wal-source`), and the frame's `new`/`old` — for subscribers who pass
   the row-level check — contain only `id` and `status`
 
-### Requirement: `subscribe()` callbacks receive the projected payload; this is an intentional shape change
+### Requirement: `subscribe()`'s row handlers are dormant over SSE; re-enabling them needs handle authentication, not `@@allow`
 
-The generated client's `RealtimeModelDelegate.subscribe()` (`onInsert`, `onUpdate`,
-`onDelete`, `onChange`) MUST receive exactly the `new`/`old` values dispatched by the
-engine — narrowed for any model using `@@realtime(columns: [...])`. This is an
-intentional, accepted breaking-ish change in payload shape for any model that adopts
-`columns`: existing subscriber code reading a now-excluded field receives `undefined`
-for it, not an error.
+The generated client's `RealtimeModelDelegate.subscribe()` row handlers (`onInsert`, `onUpdate`,
+`onDelete`, `onChange`) receive row data ONLY when fed from an in-process `RealtimeEvent`
+listener (e.g. `RealtimeEngine`'s `on("change")`, as the Studio uses it same-process). Fed from
+the unauthenticated SSE transport, they MUST NOT fire at all: `dispatch()` never emits `event:
+change` over SSE, so `subscribe()`'s SSE-backed handlers have nothing to receive `new`/`old`
+from, for any model. This is the deliberate current contract, not a bug or a temporary gap;
+re-enabling remote push over SSE requires authenticating `REALTIME_PATH` itself, not widening
+`@@allow` — `@@allow` governs row-level read access, not transport authentication, and cannot
+close the unauthenticated-origin problem that made dispatch fail-closed in the first place. Row
+data for a remote consumer remains reachable only via the handle-authenticated `GET
+<REALTIME_LOG_PATH>?handle&offset` route. Column projection (`@@realtime(columns: [...])`) still
+narrows `new`/`old` for whichever path a consumer uses to receive row data — the in-process
+listener or the authenticated log route — exactly as before this change.
 
-#### Scenario: Subscriber receives fewer keys after adopting `columns`
+#### Scenario: `subscribe()`'s row handlers do not fire over SSE, for any model
 
-- GIVEN a generated client subscribed to a model that previously streamed all columns
-  and now declares `@@realtime(columns: [id, status])`
-- WHEN a row changes
-- THEN `onInsert`/`onUpdate`/`onDelete`/`onChange` receive `new`/`old` containing only
-  `id` and `status`; a previously-present field such as `passwordHash` is simply
-  absent from the object, not present as `undefined` via an explicit key
+- GIVEN a generated client subscribed to a `@@realtime` model, `@@allow` or not
+- WHEN a row changes on that model and the SSE transport dispatches the resulting
+  `event: wake` frame
+- THEN `onInsert`/`onUpdate`/`onDelete`/`onChange` do not fire from that frame — the
+  frame carries no `new`/`old` for `subscribe()` to read
 
-#### Scenario: Non-projected model's subscriber is unaffected
+#### Scenario: In-process listener still receives the projected payload
 
-- GIVEN a generated client subscribed to a model with bare `@@realtime`
-- WHEN a row changes
-- THEN `subscribe()` callbacks receive every column, exactly as before this
-  capability existed
+- GIVEN an app embedding `RealtimeEngine` in the same process (e.g. the Studio) and
+  registering an `on("change")` listener for a model with `@@realtime(columns: [id, status])`
+- WHEN a row changes on that model
+- THEN the listener receives the full `RealtimeEvent`, with `new`/`old` narrowed to
+  `id` and `status` by column projection — unaffected by SSE's fail-closed dispatch,
+  since the listener is not on the wire

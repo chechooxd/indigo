@@ -302,14 +302,21 @@ only when the last subscriber (across `.live()` and `.subscribe()`) on that tabl
 - WHEN one subscriber tears down
 - THEN the SSE connection remains open for the remaining subscriber
 
-### Requirement: `.subscribe()` is unaffected; its `@@allow` wake-frame gap is a known, unfixed issue
+### Requirement: `.subscribe()`'s SSE-backed push handlers are dormant for every model; this is the deliberate fail-closed posture, not an unfixed gap
 
-`.live()` MUST be purely additive. `.subscribe()`'s generated output and runtime behavior MUST
-remain byte-identical to today. `.subscribe()` dereferences per-row event fields (e.g. `pk`)
-unconditionally and has no handling for `event: wake`; on `@@allow`-protected models it never
-receives such fields at all under the wake-only SSE contract. This is a **pre-existing defect
-from the prior realtime slice**, is NOT fixed by this change, and remains a known issue for
-`@@allow` models — callers on such models MUST use `.live()` instead of `.subscribe()`.
+`.live()` MUST be purely additive. `.subscribe()`'s generated output MUST remain byte-identical
+to today. `.subscribe()` dereferences per-row event fields (e.g. `pk`) unconditionally and has
+no handling for `event: wake`; since `RealtimeEngine.dispatch()` never emits `event: change` over
+SSE for ANY table — `@@allow` or not (`realtime-live-endpoint`'s fail-closed dispatch
+requirement) — `.subscribe()`'s per-row handlers (`onInsert`/`onUpdate`/`onDelete`/`onChange`)
+never fire from the SSE transport, for any realtime model. This is NOT a pre-existing defect
+scoped to `@@allow` models and is NOT something a future change quietly "fixes" by widening
+`@@allow`: the SSE route is unauthenticated regardless of `@@allow`, so `@@allow` resolution can
+never be the mechanism that re-enables it. Re-enabling `.subscribe()`'s push handlers over SSE
+requires authenticating `REALTIME_PATH` itself. Until then, callers needing live updates on any
+model MUST use `.live()` instead of `.subscribe()`'s row handlers; `.subscribe()`'s row data
+remains available only to an in-process listener embedding `RealtimeEngine` directly, or via the
+handle-authenticated `GET <REALTIME_LOG_PATH>?handle&offset` route.
 
 #### Scenario: `.subscribe()` generated output is unchanged
 
@@ -317,12 +324,14 @@ from the prior realtime slice**, is NOT fixed by this change, and remains a know
 - WHEN the client is generated
 - THEN `.subscribe()`'s emitted code is byte-identical to the pre-change output
 
-#### Scenario: `.subscribe()` on an `@@allow` model remains a known-broken path, not silently fixed
+#### Scenario: `.subscribe()`'s row handlers stay dormant over SSE for every model, `@@allow` or not
 
-- GIVEN a model with `@@realtime` and `@@allow`
-- WHEN a row changes and only a wake frame is dispatched (per `realtime-live-endpoint`)
+- GIVEN any `@@realtime` model, with or without `@@allow`
+- WHEN a row changes and only a wake frame is dispatched over SSE (per `realtime-live-endpoint`)
 - THEN `.subscribe()`'s per-row dispatch logic is unchanged and still does not handle `wake`
-  frames — this remains a documented known issue, out of scope for this change
+  frames — this is the deliberate current contract for every realtime model, not a
+  model-specific known issue, and re-enabling it requires authenticating `REALTIME_PATH`,
+  not resolving `@@allow`
 
 ### Requirement: `@indigodb/client` exposes a browser-safe `./realtime` subpath free of `pg` and `node:async_hooks`
 
