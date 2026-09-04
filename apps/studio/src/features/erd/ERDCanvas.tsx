@@ -234,6 +234,10 @@ export default function ERDCanvas({
   // Picks a name that does not collide with any currently-parsed table, so
   // the affordance never needs a dialog just to add a starter table.
   const handleAddTable = useCallback(() => {
+    // Gated on the SAME `editDisabled` flag as every per-node affordance:
+    // the button below already renders `disabled`, and this guard keeps the
+    // handler itself honest if it is ever invoked programmatically.
+    if (editDisabled) return;
     const existingNames = new Set(parsedNodes.map(n => n.name));
     let name = 'NewTable';
     for (let suffix = 1; existingNames.has(name); suffix++) {
@@ -243,7 +247,7 @@ export default function ERDCanvas({
     if (result.ok) {
       onDslChange(result.text);
     }
-  }, [dslCode, onDslChange, parsedNodes]);
+  }, [dslCode, onDslChange, parsedNodes, editDisabled]);
 
   const runLayout = useCallback(
     (type: LayoutType) => {
@@ -300,7 +304,11 @@ export default function ERDCanvas({
         maskColor="rgba(9,9,11,0.6)"
       />
       <Panel position="top-right" className="flex gap-1 bg-zinc-900/90 border border-zinc-800 p-1 rounded-lg shadow-xl backdrop-blur">
-        <ToolbarButton title="Agregar tabla" onClick={handleAddTable}>
+        <ToolbarButton
+          title={editDisabled ? editDisabledReason : 'Agregar tabla'}
+          disabled={editDisabled}
+          onClick={handleAddTable}
+        >
           <Plus size={15} />
         </ToolbarButton>
         <div className="w-px bg-zinc-800 mx-0.5" />
@@ -329,11 +337,13 @@ export default function ERDCanvas({
 function ToolbarButton({
   title,
   active,
+  disabled,
   onClick,
   children,
 }: {
-  title: string;
+  title?: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -341,7 +351,8 @@ function ToolbarButton({
     <button
       title={title}
       onClick={onClick}
-      className={`p-1.5 rounded cursor-pointer transition-colors ${
+      disabled={disabled}
+      className={`p-1.5 rounded cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         active ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
       }`}
     >

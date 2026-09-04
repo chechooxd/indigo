@@ -168,6 +168,13 @@ describe('ERDCanvas — add-table affordance wiring', () => {
     vi.mocked(fetchLayout).mockReset();
     vi.mocked(applyErdEdit).mockReset();
     capturedRef.onNodesChange = undefined;
+    // `schemaWritable` defaults to `false` in `useAuthStore` (fail-soft until
+    // the status probe confirms a writable `schemaPath`), and the toolbar's
+    // add-table button is gated on the same `editDisabled` flag as every
+    // per-node affordance — so the enabled-path tests below must state the
+    // writable session explicitly rather than inherit whichever value an
+    // earlier describe block happened to leave behind.
+    useAuthStore.setState({ schemaWritable: true, readOnly: false });
   });
 
   it('clicking "Agregar tabla" calls applyErdEdit with the current buffer and a name that does not collide with an existing table', async () => {
@@ -225,6 +232,41 @@ describe('ERDCanvas — add-table affordance wiring', () => {
       kind: 'addTable',
       name: 'NewTable1',
     });
+  });
+
+  it('the toolbar add-table button renders disabled, with the read-only reason as its title, when the server is read-only — clicking it applies no edit', async () => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    // Same presentation contract as `TableNode`'s per-node affordances: the
+    // title carries the disabled reason instead of the action label, so the
+    // enabled-state title is deliberately absent while gated.
+    expect(screen.queryByTitle('Agregar tabla')).toBeNull();
+    const button = screen.getByTitle('Studio is in read-only mode.');
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+    expect(applyErdEdit).not.toHaveBeenCalled();
+    expect(onDslChange).not.toHaveBeenCalled();
+  });
+
+  it('the toolbar add-table button renders disabled, with the not-writable reason, when schemaWritable is false — the SAME editDisabled gate as rename/delete/field affordances', async () => {
+    useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange });
+
+    expect(screen.queryByTitle('Agregar tabla')).toBeNull();
+    const button = screen.getByTitle(/not writable/i);
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+    expect(applyErdEdit).not.toHaveBeenCalled();
+    expect(onDslChange).not.toHaveBeenCalled();
   });
 });
 
