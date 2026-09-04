@@ -18,6 +18,7 @@ import {
   applyNodeChanges,
   useNodesState,
   useReactFlow,
+  type Connection,
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
@@ -154,6 +155,47 @@ export default function ERDCanvas({
     [dslCode, onDslChange],
   );
 
+  // Relation-drawing (Phase 6, design D7): `onConnect` fires once React Flow
+  // resolves a completed drag between two field `Handle`s. Handle IDs are
+  // `{s|t}-{l|r}-{fieldIndex}` (`buildEdges`' own convention, unchanged by
+  // this slice) — the field index is read back from the SAME `tableNodes`
+  // state `toTableNode` built, never re-derived from the schema, so the
+  // relation always targets the field the user actually dragged from/to.
+  // Gated on the SAME `editDisabled` flag as every other edit affordance
+  // (task 6.9) — no second gating path.
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (editDisabled) return;
+      const { source, sourceHandle, target, targetHandle } = connection;
+      if (!source || !target || !sourceHandle || !targetHandle) return;
+
+      const sourceNode = tableNodes.find(n => n.id === source);
+      const targetNode = tableNodes.find(n => n.id === target);
+      if (!sourceNode || !targetNode) return;
+
+      const sourceIdx = Number(sourceHandle.split('-').pop());
+      const targetIdx = Number(targetHandle.split('-').pop());
+      const fromField = sourceNode.data.fields[sourceIdx]?.name;
+      const toField = targetNode.data.fields[targetIdx]?.name;
+      if (!fromField || !toField) return;
+
+      const result = applyErdEdit(dslCode, {
+        kind: 'addRelation',
+        from: sourceNode.data.name,
+        fromField,
+        to: targetNode.data.name,
+        toField,
+      });
+      if (result.ok) {
+        setEditError(null);
+        onDslChange(result.text);
+      } else {
+        setEditError(result.message);
+      }
+    },
+    [tableNodes, dslCode, onDslChange, editDisabled],
+  );
+
   const buildEditAffordances = useCallback(
     (name: string): TableEditAffordances => ({
       onRename: next => handleRenameTable(name, next),
@@ -275,6 +317,7 @@ export default function ERDCanvas({
       nodes={nodes}
       edges={edges}
       onNodesChange={onNodesChange}
+      onConnect={handleConnect}
       nodeTypes={nodeTypes}
       fitView
       minZoom={0.2}

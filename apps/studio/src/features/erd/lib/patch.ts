@@ -69,8 +69,12 @@ export function applyEdits(source: string, edits: TextEdit[]): string {
  * CRUD (`addField`/`editField`/`deleteField`), anchored on `FieldSpan`s
  * nested inside each `ModelSpan.fields` — the same fresh-parse-per-call
  * discipline applies: a field is looked up in THIS call's `spans`, never
- * from a caller-held reference. `addRelation` (Phase 6) widens this union
- * further — see `openspec/changes/studio-erd-designer/tasks.md`.
+ * from a caller-held reference. `addRelation` (Phase 6, this slice) widens
+ * the union further: it anchors on the same `fromField` `FieldSpan` used by
+ * `editField`, and appends a `@relation(fields: [...], references: [...])`
+ * attribute right after `decl.end` (the whole trimmed line, attributes
+ * included) — never rewriting the line, so every existing attribute on that
+ * field survives untouched.
  */
 export type ErdEdit =
   | { kind: 'renameTable'; from: string; to: string }
@@ -85,7 +89,8 @@ export type ErdEdit =
       fieldType?: string;
       optional?: boolean;
     }
-  | { kind: 'deleteField'; table: string; field: string };
+  | { kind: 'deleteField'; table: string; field: string }
+  | { kind: 'addRelation'; from: string; fromField: string; to: string; toField: string };
 
 export type ErdEditResult =
   | { ok: true; text: string }
@@ -280,6 +285,39 @@ export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult 
       let lineEnd = field.decl.end;
       if (currentText[lineEnd] === '\n') lineEnd += 1;
       const text = applyEdits(currentText, [{ start: lineStart, end: lineEnd, text: '' }]);
+      return { ok: true, text };
+    }
+    case 'addRelation': {
+      // Anchored on `edit.from`'s `fromField` — the SAME `FieldSpan` lookup
+      // `editField` uses. The `@relation(...)` attribute is appended right
+      // after `decl.end` (that field's whole trimmed line, any existing
+      // attributes included), never a rewrite of the line, so an already
+      // `@id`/`@default(...)`-carrying field keeps every prior attribute
+      // byte-unchanged (same discipline as `editField`'s `?` insertion).
+      // `to`/`toField` are not independently validated against the fresh
+      // parse — they are interpolated literally into the attribute text,
+      // matching this edit's stated scope (task 6.1: emit the attribute on
+      // the target field).
+      const model = findModel(spans.models, edit.from);
+      if (!model) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.from}" was not found in the current buffer.`,
+        };
+      }
+      const field = findField(model, edit.fromField);
+      if (!field) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Field "${edit.fromField}" was not found on table "${edit.from}".`,
+        };
+      }
+      const attribute = ` @relation(fields: [${edit.fromField}], references: [${edit.toField}])`;
+      const text = applyEdits(currentText, [
+        { start: field.decl.end, end: field.decl.end, text: attribute },
+      ]);
       return { ok: true, text };
     }
   }

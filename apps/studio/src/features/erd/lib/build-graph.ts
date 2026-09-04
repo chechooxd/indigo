@@ -39,6 +39,16 @@ export interface TableNodeData extends Record<string, unknown> {
   /** `true` when the affordances above must render disabled, with `editDisabledReason` as their title. */
   editDisabled?: boolean;
   editDisabledReason?: string;
+  /**
+   * `true` when this node's per-field `Handle`s (Phase 6, design D7) must be
+   * connectable, with an enlarged hit area, so the user can draw a relation
+   * by dragging between two fields. Derived from the SAME edit context as
+   * every other affordance above — present (edit mode) AND not
+   * `editDisabled` — never a second gating path of its own (the Standing
+   * obligation in `tasks.md`). Absent/`false` in view mode or whenever
+   * `editDisabled` is `true`, matching Handle's native `isConnectable` prop.
+   */
+  handlesConnectable?: boolean;
 }
 
 export interface GroupNodeData extends Record<string, unknown> {
@@ -99,6 +109,10 @@ export function toTableNode(
       onDeleteField: edit?.onDeleteField,
       editDisabled: edit?.disabled,
       editDisabledReason: edit?.disabledReason,
+      // Edit mode = an edit context was supplied at all; view/read-only mode
+      // (no `edit`, e.g. a read-only ERD view) never enables handles no
+      // matter what `disabled` would have evaluated to.
+      handlesConnectable: edit !== undefined && !edit.disabled,
     },
   };
 }

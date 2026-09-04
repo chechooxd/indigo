@@ -186,16 +186,16 @@ each kind it adds:
 `addRelation` is a new `ErdEdit` kind — the **Standing obligation** above applies to it in
 full, and 6.8/6.9 below discharge it.
 
-- [ ] 6.1 GREEN: implement `addRelation` edit constructor emitting `@relation(fields:[...], references:[...])` on the target field
-- [ ] 6.2 RED (vitest): `addRelation` patch inserts the attribute on the correct field only, rest of file byte-unchanged
-- [ ] 6.3 GREEN: enable connectable handles in edit mode (D7) — flip `isConnectable`, enlarge hit area (currently 1×1/`opacity:0`); `buildEdges`' handle IDs (`s-l-{idx}`) stay unchanged
-- [ ] 6.4 RED: edit mode reveals enlarged, interactive handles; view/read-only mode leaves them non-interactive (mutation: enable handles regardless of mode)
-- [ ] 6.5 GREEN: wire `onConnect` on `<ReactFlow>` to call `applyErdEdit` with `addRelation` on a successful connection
-- [ ] 6.6 RED: `onConnect` between two field handles triggers exactly one `addRelation` call with correct `from`/`fromField`/`to`/`toField`
-- [ ] 6.7 Manual E2E (recorded): add table → add field → draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a scratch project)
-- [ ] 6.8 Spec: add a Requirement (or Scenarios under an existing one) in
+- [x] 6.1 GREEN: implement `addRelation` edit constructor emitting `@relation(fields:[...], references:[...])` on the target field
+- [x] 6.2 RED (vitest): `addRelation` patch inserts the attribute on the correct field only, rest of file byte-unchanged
+- [x] 6.3 GREEN: enable connectable handles in edit mode (D7) — flip `isConnectable`, enlarge hit area (currently 1×1/`opacity:0`); `buildEdges`' handle IDs (`s-l-{idx}`) stay unchanged
+- [x] 6.4 RED: edit mode reveals enlarged, interactive handles; view/read-only mode leaves them non-interactive (mutation: enable handles regardless of mode)
+- [x] 6.5 GREEN: wire `onConnect` on `<ReactFlow>` to call `applyErdEdit` with `addRelation` on a successful connection
+- [x] 6.6 RED: `onConnect` between two field handles triggers exactly one `addRelation` call with correct `from`/`fromField`/`to`/`toField`
+- [ ] 6.7 Manual E2E (recorded): add table → add field → draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a scratch project) — **NOT verified this batch**: no interactive browser session was available to the executing agent. See apply-progress for exactly what automated coverage substitutes for it and what a human still needs to run.
+- [x] 6.8 Spec: add a Requirement (or Scenarios under an existing one) in
       `specs/studio-erd-editing/spec.md` naming `addRelation`, each scenario mapped to one of
       the tests above
-- [ ] 6.9 RED: the relation-drawing affordance is gated on the same `editDisabled` flag as
+- [x] 6.9 RED: the relation-drawing affordance is gated on the same `editDisabled` flag as
       every other ERD edit affordance (mutation: enable it regardless of
       `schemaWritable`/`readOnly`)

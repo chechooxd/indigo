@@ -334,11 +334,66 @@ before and after the edit. When the target table or field is absent from
 - THEN the result is `{ok: false, reason: 'anchor-missing', ...}` and the
   buffer is left untouched
 
+### Requirement: Drawing a relation between two fields appends a `@relation` attribute on the source field
+
+Drawing a relation on the canvas — completing a drag from one field's
+connection handle to another field's connection handle — MUST be expressed
+as an `addRelation` edit and applied through the same `applyErdEdit`
+entry point as every other `ErdEdit` kind. The patch MUST append a
+`@relation(fields: [<fromField>], references: [<toField>])` attribute
+immediately after the source field's own declaration content, and MUST NOT
+rewrite any other byte of that line or any other field. Field-level
+connection handles MUST be interactive only when the canvas is in edit mode
+(schema writable, not read-only); in view mode or whenever editing is
+disabled, the handles MUST remain non-interactive, matching the existing
+1×1/`opacity: 0` hit area. When the source table or the source field is
+absent from `applyErdEdit`'s internal fresh parse, the edit MUST be refused
+as `anchor-missing` with the buffer left untouched.
+
+#### Scenario: Completing a drag between two field handles adds a relation attribute on the source field
+
+- GIVEN tables `Post` (with a field `authorId Int`) and `User` (with a field
+  `id Int @id`)
+- WHEN the user drags a connection from `Post.authorId`'s handle to
+  `User.id`'s handle and releases it
+- THEN the resulting buffer's `Post.authorId` line reads
+  `authorId Int @relation(fields: [authorId], references: [id])`
+- AND every other byte of the buffer, including `Post`'s own `id Int @id`
+  line and the `User` table, is unchanged
+
+#### Scenario: An existing attribute on the source field survives the relation attribute being appended
+
+- GIVEN a field `authorId Int @default(0)` on `Post`
+- WHEN the user draws a relation from `Post.authorId` to `User.id`
+- THEN the resulting line is
+  `authorId Int @default(0) @relation(fields: [authorId], references: [id])`
+- AND the pre-existing `@default(0)` attribute is byte-unchanged
+
+#### Scenario: Field connection handles are interactive only in edit mode
+
+- GIVEN the ERD canvas renders a table node
+- WHEN the canvas is in edit mode (schema writable, not read-only)
+- THEN each field row's connection handles are connectable with an enlarged
+  hit area
+- AND WHEN the canvas is in view mode, or editing is disabled
+  (`schemaWritable` is `false` or the server is read-only)
+- THEN each field row's connection handles remain non-interactive, at their
+  original 1×1/`opacity: 0` hit area
+
+#### Scenario: Drawing a relation from a field absent from the fresh parse refuses with anchor-missing
+
+- GIVEN the source field targeted by a completed connection is not present
+  in `applyErdEdit`'s internal fresh parse of `currentText`
+- WHEN the connection is resolved into an `addRelation` edit
+- THEN the result is `{ok: false, reason: 'anchor-missing', ...}` and the
+  buffer is left untouched
+
 ### Requirement: Every ERD edit affordance is gated on one shared writability flag
 
 Every affordance that can author an `ErdEdit` — the per-table rename and
-delete controls, the per-field edit/delete and add-field controls, AND the
-canvas toolbar's add-table button — MUST be disabled, with a stated reason,
+delete controls, the per-field edit/delete and add-field controls, the
+canvas toolbar's add-table button, AND the field-level connection handles
+that draw a relation — MUST be disabled, with a stated reason,
 whenever the schema cannot be persisted: either the session has no writable
 `schemaPath` (`schemaWritable` is `false`) or the server is in global
 read-only mode. All of them MUST derive that state from the SAME computed

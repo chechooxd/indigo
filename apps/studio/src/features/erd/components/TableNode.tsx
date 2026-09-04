@@ -1,10 +1,15 @@
 /**
  * React Flow custom node: a database table card (dbdiagram-style).
  *
- * Each field row carries four invisible handles (source/target × left/right) so
+ * Each field row carries four handles (source/target × left/right) so
  * relations can attach at the exact field, on whichever side faces the related
- * table. The handles are non-interactive (edges are built programmatically from
- * the schema, not drawn by the user).
+ * table. In view mode (or whenever editing is disabled) the handles stay the
+ * original 1×1, `opacity: 0` hit area and non-interactive — edges are built
+ * programmatically from the schema, not drawn by the user. In edit mode
+ * (`data.handlesConnectable`, design D7) they become connectable with an
+ * enlarged hit area so the user can drag between two fields to draw a
+ * relation via `ERDCanvas`'s `onConnect`. `buildEdges`' handle IDs
+ * (`s-l-{idx}` etc.) are unchanged either way, so rendering is unaffected.
  */
 
 import React from 'react';
@@ -12,7 +17,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { TableProperties, Pencil, Trash2, Plus } from 'lucide-react';
 import { NODE_WIDTH, type TableRFNode } from '../lib/build-graph';
 
-const rowHandleStyle: React.CSSProperties = {
+const hiddenHandleStyle: React.CSSProperties = {
   width: 1,
   height: 1,
   minWidth: 1,
@@ -20,6 +25,16 @@ const rowHandleStyle: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   opacity: 0,
+};
+
+const connectableHandleStyle: React.CSSProperties = {
+  width: 8,
+  height: 8,
+  minWidth: 8,
+  minHeight: 8,
+  background: '#6366f1',
+  border: '1px solid #eef2ff',
+  opacity: 0.85,
 };
 
 export default function TableNode({ data, selected }: NodeProps<TableRFNode>) {
@@ -31,6 +46,8 @@ export default function TableNode({ data, selected }: NodeProps<TableRFNode>) {
   const fieldsEditable = Boolean(data.onEditField || data.onDeleteField);
   const disabled = Boolean(data.editDisabled);
   const disabledReason = data.editDisabledReason;
+  const handlesConnectable = Boolean(data.handlesConnectable);
+  const handleStyle = handlesConnectable ? connectableHandleStyle : hiddenHandleStyle;
 
   const handleRename = () => {
     if (disabled) return;
@@ -116,11 +133,12 @@ export default function TableNode({ data, selected }: NodeProps<TableRFNode>) {
             key={idx}
             className="relative flex justify-between px-4 py-1.5 text-zinc-300 hover:bg-zinc-800/50 transition-colors"
           >
-            {/* Field-level connection points (invisible) */}
-            <Handle id={`s-l-${idx}`} type="source" position={Position.Left} isConnectable={false} style={rowHandleStyle} />
-            <Handle id={`t-l-${idx}`} type="target" position={Position.Left} isConnectable={false} style={rowHandleStyle} />
-            <Handle id={`s-r-${idx}`} type="source" position={Position.Right} isConnectable={false} style={rowHandleStyle} />
-            <Handle id={`t-r-${idx}`} type="target" position={Position.Right} isConnectable={false} style={rowHandleStyle} />
+            {/* Field-level connection points: 1×1/invisible in view mode,
+                enlarged and connectable in edit mode (design D7). */}
+            <Handle id={`s-l-${idx}`} type="source" position={Position.Left} isConnectable={handlesConnectable} style={handleStyle} />
+            <Handle id={`t-l-${idx}`} type="target" position={Position.Left} isConnectable={handlesConnectable} style={handleStyle} />
+            <Handle id={`s-r-${idx}`} type="source" position={Position.Right} isConnectable={handlesConnectable} style={handleStyle} />
+            <Handle id={`t-r-${idx}`} type="target" position={Position.Right} isConnectable={handlesConnectable} style={handleStyle} />
 
             <span className={`flex items-center gap-1 ${field.isPk ? 'font-semibold text-white' : ''}`}>
               {field.isPk && '🔑 '}

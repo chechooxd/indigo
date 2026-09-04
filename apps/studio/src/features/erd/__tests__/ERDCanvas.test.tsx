@@ -22,13 +22,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react';
-import type { Node, NodeChange } from '@xyflow/react';
+import type { Connection, Node, NodeChange } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import type { TableNodeData } from '../lib/build-graph';
 
 const { capturedRef } = vi.hoisted(() => ({
   capturedRef: {
     onNodesChange: undefined as ((changes: NodeChange[]) => void) | undefined,
+    onConnect: undefined as ((connection: Connection) => void) | undefined,
     nodes: undefined as Node[] | undefined,
   },
 }));
@@ -39,10 +40,12 @@ vi.mock('@xyflow/react', async () => {
     ...actual,
     ReactFlow: (props: {
       onNodesChange?: (changes: NodeChange[]) => void;
+      onConnect?: (connection: Connection) => void;
       nodes?: Node[];
       children?: ReactNode;
     }) => {
       capturedRef.onNodesChange = props.onNodesChange;
+      capturedRef.onConnect = props.onConnect;
       capturedRef.nodes = props.nodes;
       // Renders `children` (unlike PR2's original bare-div stub) so
       // `<Panel>`'s toolbar buttons — including "Agregar tabla" — mount and
@@ -513,5 +516,155 @@ describe('ERDCanvas — field CRUD affordance wiring', () => {
     const data = findTableNodeData('User');
     expect(data.editDisabled).toBe(true);
     expect(data.editDisabledReason).toMatch(/read-only/i);
+  });
+});
+
+/**
+ * Relation drawing (Phase 6, tasks 6.5/6.6/6.9). `<ReactFlow>`'s `onConnect`
+ * prop is captured the same way `onNodesChange` is above — exercising
+ * `ERDCanvas`'s OWN `handleConnect`, not a re-implementation of React Flow's
+ * connection-resolution logic.
+ */
+describe('ERDCanvas — relation drawing (onConnect) wiring', () => {
+  const RELATION_NODES: CanvasNode[] = [
+    {
+      id: 'Post',
+      name: 'Post',
+      x: 0,
+      y: 0,
+      color: '#000',
+      fields: [
+        { name: 'id', type: 'Int', isPk: true, isUnique: false, isNullable: false },
+        { name: 'authorId', type: 'Int', isPk: false, isUnique: false, isNullable: false },
+      ],
+    },
+    {
+      id: 'User',
+      name: 'User',
+      x: 300,
+      y: 0,
+      color: '#000',
+      fields: [{ name: 'id', type: 'Int', isPk: true, isUnique: false, isNullable: false }],
+    },
+  ];
+
+  const CONNECTION: Connection = {
+    source: 'Post',
+    sourceHandle: 's-r-1',
+    target: 'User',
+    targetHandle: 't-l-0',
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchLayout).mockReset();
+    vi.mocked(applyErdEdit).mockReset();
+    capturedRef.onNodesChange = undefined;
+    capturedRef.onConnect = undefined;
+    capturedRef.nodes = undefined;
+    useAuthStore.setState({ schemaWritable: true, readOnly: false });
+  });
+
+  it('a completed connection between two field handles calls applyErdEdit with addRelation exactly once, using the correct from/fromField/to/toField', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({ ok: true, text: 'PATCHED_TEXT' });
+    const onDslChange = vi.fn();
+    const currentText = 'Table Post {\n  id Int @id\n  authorId Int\n}\n\nTable User {\n  id Int @id\n}\n';
+
+    await renderCanvas({ dslCode: currentText, onDslChange, parsedNodes: RELATION_NODES });
+
+    act(() => {
+      capturedRef.onConnect!(CONNECTION);
+    });
+
+    expect(applyErdEdit).toHaveBeenCalledTimes(1);
+    expect(applyErdEdit).toHaveBeenCalledWith(currentText, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+    expect(onDslChange).toHaveBeenCalledWith('PATCHED_TEXT');
+  });
+
+  it('a refused addRelation result surfaces the refusal message and does NOT call onDslChange', async () => {
+    vi.mocked(applyErdEdit).mockReturnValue({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Field "authorId" was not found on table "Post".',
+    });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    act(() => {
+      capturedRef.onConnect!(CONNECTION);
+    });
+
+    expect(onDslChange).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Field "authorId" was not found on table "Post".',
+      ),
+    );
+  });
+
+  it('an incomplete connection (missing a handle id) applies no edit', async () => {
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    act(() => {
+      capturedRef.onConnect!({ source: 'Post', sourceHandle: null, target: 'User', targetHandle: 't-l-0' });
+    });
+
+    expect(applyErdEdit).not.toHaveBeenCalled();
+    expect(onDslChange).not.toHaveBeenCalled();
+  });
+
+  it('RED/mutation: onConnect is gated on the SAME editDisabled flag as every other affordance — schemaWritable:false applies no edit', async () => {
+    useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    act(() => {
+      capturedRef.onConnect!(CONNECTION);
+    });
+
+    expect(applyErdEdit).not.toHaveBeenCalled();
+    expect(onDslChange).not.toHaveBeenCalled();
+  });
+
+  it('RED/mutation: onConnect is gated under global read-only mode too', async () => {
+    useAuthStore.setState({ schemaWritable: true, readOnly: true });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    act(() => {
+      capturedRef.onConnect!(CONNECTION);
+    });
+
+    expect(applyErdEdit).not.toHaveBeenCalled();
+    expect(onDslChange).not.toHaveBeenCalled();
+  });
+
+  it('every table node carries handlesConnectable in sync with editDisabled — true when writable and not read-only', async () => {
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    const postNode = capturedRef.nodes?.find(n => n.id === 'Post');
+    expect((postNode?.data as TableNodeData).handlesConnectable).toBe(true);
+  });
+
+  it('handlesConnectable is false when schemaWritable is false — the SAME gate as onConnect itself', async () => {
+    useAuthStore.setState({ schemaWritable: false, readOnly: false });
+    const onDslChange = vi.fn();
+
+    await renderCanvas({ onDslChange, parsedNodes: RELATION_NODES });
+
+    const postNode = capturedRef.nodes?.find(n => n.id === 'Post');
+    expect((postNode?.data as TableNodeData).handlesConnectable).toBe(false);
   });
 });

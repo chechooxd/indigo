@@ -700,6 +700,114 @@ describe('applyErdEdit — deleteField (5.5/5.6)', () => {
   });
 });
 
+describe('applyErdEdit — addRelation (6.1/6.2)', () => {
+  it('inserts a @relation attribute on the target field, appended after its existing line content', () => {
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe(
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int @relation(fields: [authorId], references: [id])\n}\n',
+    );
+  });
+
+  it('RED/byte-diff: addRelation on Post.ownerId leaves every other construct in the combined fixture byte-identical (mutation target: wrong anchor/off-by-one)', () => {
+    mockRealParse(COMBINED_FIXTURE);
+
+    const result = applyErdEdit(COMBINED_FIXTURE, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'ownerId',
+      to: 'ProjectedUser',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+
+    const expected = COMBINED_FIXTURE.replace(
+      '  ownerId Int\n  @@allow',
+      '  ownerId Int @relation(fields: [ownerId], references: [id])\n  @@allow',
+    );
+    expect(result.text).toBe(expected);
+
+    // Everything outside Post's `ownerId` line, including its own sibling
+    // `id String @id` line and every other construct, stays byte-unchanged.
+    expect(result.text).toContain('Table   Widget {');
+    expect(result.text).toContain('    id        Int     @id');
+    expect(result.text).toContain('\tlabel String');
+    expect(result.text).toContain('@@realtime(columns: [id, email])');
+    expect(result.text).toContain('TableGroup "Billing" {');
+    expect(result.text).toContain('  id      String @id\n  ownerId Int @relation');
+  });
+
+  it('preserves an existing attribute on the target field — the relation is appended, not a rewrite of the line', () => {
+    const source = 'Table Post {\n  id Int @id\n  authorId Int @default(0)\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toBe(
+      'Table Post {\n  id Int @id\n  authorId Int @default(0) @relation(fields: [authorId], references: [id])\n}\n',
+    );
+  });
+
+  it('addRelation refuses as anchor-missing when the source table is absent from the fresh parse', () => {
+    const source = 'Table Post {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'User',
+      fromField: 'id',
+      to: 'Post',
+      toField: 'id',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Table "User" was not found in the current buffer.',
+    });
+  });
+
+  it('addRelation refuses as anchor-missing when the source field is absent from the fresh parse', () => {
+    const source = 'Table Post {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'anchor-missing',
+      message: 'Field "authorId" was not found on table "Post".',
+    });
+  });
+});
+
 describe('patch module export surface (D3 enforceability guard)', () => {
   it('RED/mutation: exposes exactly applyEdits and applyErdEdit — no export returns a SpanIndex or span', async () => {
     const patchModule = await import('../patch');
