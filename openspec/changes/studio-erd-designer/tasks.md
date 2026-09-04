@@ -83,6 +83,19 @@ Chain strategy: stacked-to-main
 | 5 | Field CRUD | PR 5 | `pnpm --filter @indigodb/studio test -- patch` | `indigodb studio`, add/edit/delete field | revert; node CRUD (PR3/4) stays intact |
 | 6 | Relation drawing | PR 6 | `pnpm --filter @indigodb/studio test -- erd` | `indigodb studio`, draw relation end-to-end | revert; field CRUD (PR5) stays intact |
 
+### Standing obligation: every new `ErdEdit` kind (applies to Phase 6 and beyond)
+
+Phase 3 shipped `addTable` spec-silent; the instance was patched, but nothing obliged the
+next phase to do better, so Phase 5 shipped `editField`/`deleteField` the same way and verify
+raised the same WARNING again. A phase adding an `ErdEdit` kind is **not complete** until, for
+each kind it adds:
+
+1. `specs/studio-erd-editing/spec.md` carries a Requirement or Scenario naming that kind;
+2. every scenario written for it points at a test that exists — write no scenario you cannot
+   name a covering test for; and
+3. its UI affordance is gated on the shared `editDisabled` flag (`schemaWritable`/`readOnly`)
+   in `ERDCanvas.tsx`, not on a second gating path of its own.
+
 **Strict-TDD reminders:** test suites import compiled `dist/` — rebuild (`pnpm --filter <pkg> build`) before trusting a mutation result; `pnpm clean && pnpm build --force` when Turbo may have restored stale output. Studio lint is `tsc -b --noEmit` — do not drop `-b`.
 
 ## Phase 1: `ast-source-spans` (PR 1, depends on: none)
@@ -170,6 +183,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 6: Relation drawing (PR 6, depends on: Phase 5)
 
+`addRelation` is a new `ErdEdit` kind — the **Standing obligation** above applies to it in
+full, and 6.8/6.9 below discharge it.
+
 - [ ] 6.1 GREEN: implement `addRelation` edit constructor emitting `@relation(fields:[...], references:[...])` on the target field
 - [ ] 6.2 RED (vitest): `addRelation` patch inserts the attribute on the correct field only, rest of file byte-unchanged
 - [ ] 6.3 GREEN: enable connectable handles in edit mode (D7) — flip `isConnectable`, enlarge hit area (currently 1×1/`opacity:0`); `buildEdges`' handle IDs (`s-l-{idx}`) stay unchanged
@@ -177,4 +193,10 @@ Chain strategy: stacked-to-main
 - [ ] 6.5 GREEN: wire `onConnect` on `<ReactFlow>` to call `applyErdEdit` with `addRelation` on a successful connection
 - [ ] 6.6 RED: `onConnect` between two field handles triggers exactly one `addRelation` call with correct `from`/`fromField`/`to`/`toField`
 - [ ] 6.7 Manual E2E (recorded): add table → add field → draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a scratch project)
+- [ ] 6.8 Spec: add a Requirement (or Scenarios under an existing one) in
+      `specs/studio-erd-editing/spec.md` naming `addRelation`, each scenario mapped to one of
+      the tests above
+- [ ] 6.9 RED: the relation-drawing affordance is gated on the same `editDisabled` flag as
+      every other ERD edit affordance (mutation: enable it regardless of
+      `schemaWritable`/`readOnly`)
 </content>

@@ -607,6 +607,43 @@ describe('applyErdEdit — editField (5.3/5.4)', () => {
     expect(result.text).toContain('id Int @id\n}\n');
   });
 
+  it('RED/mutation: editField leaves the edited field\'s own attributes (@id, @default(...), @relation(...)) byte-untouched', () => {
+    const source =
+      'Table Post {\n' +
+      '  id Int @id @default(autoincrement())\n' +
+      '  authorId Int @relation(fields: [authorId], references: [id])\n' +
+      '}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'editField',
+      table: 'Post',
+      field: 'authorId',
+      name: 'ownerId',
+      fieldType: 'BigInt',
+      optional: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    // Only the name and type tokens move; the `?` lands between the type
+    // token and the space preceding `@relation`, so every attribute byte —
+    // on the edited line AND on the untouched `id` line — is carried
+    // through verbatim.
+    expect(result.text).toBe(
+      'Table Post {\n' +
+        '  id Int @id @default(autoincrement())\n' +
+        '  ownerId BigInt? @relation(fields: [authorId], references: [id])\n' +
+        '}\n',
+    );
+    // The mutation this guards against: replacing the whole `decl` span
+    // (name through end-of-line) instead of the `nameToken`/`typeToken`
+    // spans would drop `@relation(...)` entirely — asserted explicitly so
+    // the guarantee cannot be silently lost to a rewrite of the edit.
+    expect(result.text).toContain('@relation(fields: [authorId], references: [id])');
+    expect(result.text).toContain('@id @default(autoincrement())');
+  });
+
   it('editField refuses as anchor-missing when the field is absent from the fresh parse', () => {
     const source = 'Table User {\n  id Int @id\n}\n';
     mockRealParse(source);

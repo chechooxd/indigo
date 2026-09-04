@@ -231,4 +231,142 @@ name until relation-drawing tooling (or a manual edit) updates them.
 - AND `Post`'s `@relation(...)` attribute is byte-unchanged, still naming
   the pre-rename identifier — this is expected, not a defect, per this
   requirement's stated non-goal
+
+### Requirement: Editing a field replaces only the targeted tokens, never the whole declaration
+
+Editing a field from the ERD MUST replace only the tokens the edit actually
+changes — the field's name token, its type token, and the single `?`
+immediately following the type token — and MUST NOT rewrite the field's
+whole declaration line. Every other byte of that line MUST survive the edit
+verbatim, including the field's own attributes (`@id`, `@default(...)`,
+`@relation(...)`) and the whitespace separating them, and so must every
+other field in the same block. When the target table or the target field is
+absent from `applyErdEdit`'s internal fresh parse, the edit MUST be refused
+as `anchor-missing` with the buffer left untouched.
+
+#### Scenario: Renaming a field changes only its name token
+
+- GIVEN a `Table User { id Int @id; mail String }` block
+- WHEN the user renames `mail` to `email` via the ERD
+- THEN only the field's name token is rewritten, yielding `email String`
+- AND the type token and the rest of the line are byte-unchanged
+
+#### Scenario: Changing a field type changes only its type token
+
+- GIVEN a field `age String` on `User`
+- WHEN the user changes its type to `Int`
+- THEN the resulting line is `age Int`
+- AND the field's name token is byte-unchanged
+
+#### Scenario: Marking a field optional inserts a trailing "?" after the type
+
+- GIVEN a field `bio String` on `User`
+- WHEN the user marks it optional
+- THEN the resulting line is `bio String?`
+- AND no other byte of the line changes
+
+#### Scenario: Clearing an optional removes the trailing "?"
+
+- GIVEN a field `bio String?` on `User`
+- WHEN the user clears its optional flag
+- THEN the resulting line is `bio String`
+- AND no other byte of the line changes
+
+#### Scenario: A field edit leaves sibling fields and everything outside the block byte-unchanged
+
+- GIVEN a buffer with `Table User { id Int @id; mail String }` followed by
+  an unrelated `Table Post` block
+- WHEN the user renames `mail`, retypes it, and marks it optional in one
+  edit
+- THEN only that field's line changes
+- AND the `id Int @id` line and every byte outside the `User` block are
+  byte-identical before and after the edit
+
+#### Scenario: A field edit leaves the edited field's own attributes byte-untouched
+
+- GIVEN a field `authorId Int @relation(fields: [authorId], references: [id])`
+  on `Post`, in a block whose other field carries `@id @default(...)`
+- WHEN the user renames it, retypes it, and marks it optional in one edit
+- THEN the `@relation(...)` attribute on that same line is byte-identical
+  before and after the edit, because only the name and type tokens (and the
+  inserted `?`) were replaced
+- AND the sibling field's `@id @default(...)` attributes are byte-identical
+  too
+
+#### Scenario: Editing a field absent from the fresh parse refuses with anchor-missing
+
+- GIVEN the target field is not present in `applyErdEdit`'s internal fresh
+  parse of `currentText`
+- WHEN the user edits it via the ERD
+- THEN the result is `{ok: false, reason: 'anchor-missing', ...}` and the
+  buffer is left untouched
+
+### Requirement: Deleting a field removes exactly its own line, leaving no residue
+
+Deleting a field from the ERD MUST remove that field's entire line — its
+leading indentation through its trailing newline — and nothing else. No
+blank or indentation-only line MUST survive the deletion, and the lines
+immediately before and after the deleted field MUST be byte-identical
+before and after the edit. When the target table or field is absent from
+`applyErdEdit`'s internal fresh parse, the deletion MUST be refused as
+`anchor-missing` with the buffer left untouched.
+
+#### Scenario: Deleting a field removes exactly its own line
+
+- GIVEN a `Table User` block containing a field `mail String`
+- WHEN the user deletes `mail` from the ERD
+- THEN the `mail String` line is gone from the buffer
+- AND every other line of the block is byte-unchanged
+
+#### Scenario: Deleting the middle field of three leaves no blank or indentation-only residue
+
+- GIVEN a block whose body is three consecutive field lines
+- WHEN the user deletes the middle one
+- THEN the first and last field lines are exactly intact and now adjacent
+- AND no blank line and no indentation-only line is left where the deleted
+  field was
+
+#### Scenario: Deleting a field absent from the fresh parse refuses with anchor-missing
+
+- GIVEN the target field is not present in `applyErdEdit`'s internal fresh
+  parse of `currentText`
+- WHEN the user deletes it via the ERD
+- THEN the result is `{ok: false, reason: 'anchor-missing', ...}` and the
+  buffer is left untouched
+
+### Requirement: Every ERD edit affordance is gated on one shared writability flag
+
+Every affordance that can author an `ErdEdit` — the per-table rename and
+delete controls, the per-field edit/delete and add-field controls, AND the
+canvas toolbar's add-table button — MUST be disabled, with a stated reason,
+whenever the schema cannot be persisted: either the session has no writable
+`schemaPath` (`schemaWritable` is `false`) or the server is in global
+read-only mode. All of them MUST derive that state from the SAME computed
+flag and reason, so no affordance can drift out of the gate on its own. A
+gated affordance MUST surface its reason in place of its action label, and
+MUST apply no edit when activated.
+
+#### Scenario: Every affordance, including the toolbar add-table button, is disabled in read-only mode
+
+- GIVEN the server reports global read-only mode
+- WHEN the ERD canvas renders
+- THEN the per-table and per-field affordances are disabled and carry the
+  read-only reason
+- AND the toolbar's add-table button is disabled and carries the same
+  reason in place of its action label
+- AND activating it applies no edit to the buffer
+
+#### Scenario: Every affordance, including the toolbar add-table button, is disabled when the schema is not writable
+
+- GIVEN `schemaWritable` is `false` and the server is not read-only
+- WHEN the ERD canvas renders
+- THEN every edit affordance, the toolbar's add-table button included, is
+  disabled and carries the not-writable reason
+- AND activating the add-table button applies no edit to the buffer
+
+#### Scenario: Affordances are enabled in a writable, non-read-only session
+
+- GIVEN `schemaWritable` is `true` and the server is not read-only
+- WHEN the ERD canvas renders
+- THEN the edit affordances are enabled and carry their action labels
 </content>
