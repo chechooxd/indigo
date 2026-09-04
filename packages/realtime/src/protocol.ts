@@ -86,8 +86,9 @@ export interface RealtimeReady {
 }
 
 /**
- * A data-free SSE wake-up signal for `@@allow`-protected models (PR B wires
- * `dispatch()` to emit this — this PR only adds the type). Distinct from
+ * A data-free SSE wake-up signal, emitted for EVERY table over the SSE
+ * route — `@@allow` or not (fail-closed: the SSE transport is
+ * unauthenticated, so it never carries row data). Distinct from
  * `RealtimeEvent`: `pk`/`ts` are required there and
  * `realtime-delegate.ts` dereferences `event.pk` unconditionally, so a
  * wake-up frame — which by design carries no row data — cannot reuse that

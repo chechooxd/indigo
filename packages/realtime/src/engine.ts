@@ -11,8 +11,13 @@
  *
  * SSE contract (see protocol.ts): `GET <path>?tables=User,Post` (no param =
  * every realtime table). Frames: `event: ready` once on subscribe, then
- * `event: change` with a `RealtimeEvent` per row change (`id:` = per-connection
- * seq), with `:ping` heartbeats in between.
+ * `event: wake` with a data-free `RealtimeWakeEvent` per row change (`id:` =
+ * per-connection seq), with `:ping` heartbeats in between. The SSE route is
+ * unauthenticated, so it NEVER carries row data (`new`/`old`) for any
+ * table, `@@allow` or not — a wake frame only tells a subscriber to refetch.
+ * Row data is only ever served over the authenticated `GET ?handle&offset`
+ * log route (`handleLogRequest`); in-process listeners (`on("change")`)
+ * still receive the full `RealtimeEvent`, since they are not on the wire.
  */
 
 import type { IncomingMessage, ServerResponse, Server } from "node:http";
@@ -117,17 +122,6 @@ export class RealtimeEngine {
   private readonly heartbeatMs: number;
   private readonly onError: (error: Error) => void;
   private readonly realtimeModels: Set<string>;
-  /**
-   * Models carrying an `@@allow` block at all — ANY block, regardless of
-   * which actions it names (corrected predicate, `realtime-live-endpoint`
-   * spec fix, Engram #734/#735). `computeBuckets`
-   * (`@indigodb/migrator/postgres.ts`) returns `[]` (deny-all) for an
-   * `@@allow` block with no `read` rule, because the real table has RLS
-   * enabled and denies every read without a matching policy — so a
-   * create-only `@@allow` model must ALSO be scoped to wake-up-only SSE, not
-   * just models whose `@@allow` happens to include a `read` rule.
-   */
-  private readonly allowModels: Set<string>;
   private readonly subscribers = new Set<Subscriber>();
   private readonly listeners = new Set<(event: RealtimeEvent) => void>();
   private readonly maxBufferedBytes: number;
@@ -150,9 +144,6 @@ export class RealtimeEngine {
     this.onError = options.onError ?? ((err) => console.error("[indigodb realtime]", err.message));
     this.realtimeModels = new Set(
       options.schema.tables.filter((t) => t.realtime).map((t) => t.name),
-    );
-    this.allowModels = new Set(
-      options.schema.tables.filter((t) => t.allow !== undefined).map((t) => t.name),
     );
     this.injectedLogDb = options.logDb ?? null;
     this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
@@ -408,20 +399,22 @@ export class RealtimeEngine {
   }
 
   private dispatch(event: RealtimeEvent): void {
+    // In-process listeners (e.g. the Studio embedding this engine
+    // same-process) are NOT on the wire — they keep receiving the full,
+    // unscoped event regardless of `@@allow`.
     for (const listener of this.listeners) listener(event);
-    // Any `@@allow` block at all (not just one carrying a `read` rule) scopes
-    // SSE to a data-free wake-up signal — see `allowModels`'s doc comment.
-    const scoped = this.allowModels.has(event.table);
+    // SSE subscribers are unauthenticated (`handleRequest` performs zero
+    // authentication and sets `access-control-allow-origin: "*"`), so this
+    // route MUST NEVER carry row data — for ANY table, `@@allow` or not
+    // (fail-closed decision, `realtime-live-endpoint` spec fix). Every SSE
+    // subscriber gets a data-free wake-up frame; the authenticated
+    // `handleLogRequest` (`GET ?handle&offset`) is the sanctioned path for
+    // row data, gated behind a signed handle and RLS scoping.
     for (const sub of [...this.subscribers]) {
       if (sub.tables && !sub.tables.has(event.table)) continue;
       sub.seq += 1;
-      if (scoped) {
-        const wake: RealtimeWakeEvent = { table: event.table, op: event.op, lsn: event.lsn, seq: sub.seq };
-        this.send(sub, `id: ${sub.seq}\nevent: wake\ndata: ${JSON.stringify(wake)}\n\n`);
-        continue;
-      }
-      const payload: RealtimeEvent = { ...event, seq: sub.seq };
-      this.send(sub, `id: ${sub.seq}\nevent: change\ndata: ${JSON.stringify(payload)}\n\n`);
+      const wake: RealtimeWakeEvent = { table: event.table, op: event.op, lsn: event.lsn, seq: sub.seq };
+      this.send(sub, `id: ${sub.seq}\nevent: wake\ndata: ${JSON.stringify(wake)}\n\n`);
     }
   }
 

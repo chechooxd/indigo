@@ -32,11 +32,15 @@ export type Unsubscribe = () => void;
 export interface TransportHandlers {
   onEvent: (event: RealtimeEvent) => void;
   /**
-   * Data-free wake-up frame for `@@allow`-protected models
-   * (`realtime-live-endpoint` delta, `client-live-queries` spec). Optional —
-   * every pre-existing `TransportHandlers` consumer is unaffected; only
+   * Data-free wake-up frame, sent for EVERY table over SSE — the SSE
+   * transport is unauthenticated and never carries row data, `@@allow` or
+   * not (fail-closed decision, `realtime-live-endpoint` spec fix). Optional
+   * — every pre-existing `TransportHandlers` consumer is unaffected; only
    * `.live()` (via `RealtimeConnectionManager`'s `ChannelListener`) actually
-   * supplies it. `change` frames stay byte-identical either way.
+   * supplies it. `onEvent`/`change` frames no longer arrive over SSE at all
+   * — `RealtimeModelDelegate.subscribe()`'s push handlers (`onInsert`/
+   * `onUpdate`/`onDelete`) go dormant; only the authenticated
+   * `GET ?handle&offset` log route still delivers row data.
    */
   onWake?: () => void;
   /** Fired on every successful (re)connect, with `true` after the first. */

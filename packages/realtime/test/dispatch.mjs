@@ -10,12 +10,13 @@
  * out to a subscriber added via `handleRequest` against a fake
  * `ServerResponse` that records every `write()` call.
  *
- * The corrected predicate (Engram #734/#735, spec fix): wake-up-only SSE
- * applies whenever `ResolvedTable.allow !== undefined` — ANY `@@allow`
- * block — not "carries a `read` `AllowRule`". `computeBuckets` returns `[]`
- * (deny-all) for an `@@allow` block with no `read` rule, so a create-only
- * model must ALSO get wake-up-only treatment or it silently reopens the
- * leak the `@@realtime`+`@@allow` compiler guard existed to prevent.
+ * FAIL-CLOSED (SEVERE fix, Judgment Day): the SSE route (`handleRequest`) is
+ * completely unauthenticated and sets `access-control-allow-origin: "*"`, so
+ * it MUST NEVER carry row data — for ANY table, `@@allow` or not. Every SSE
+ * subscriber only ever gets a data-free `event: wake` frame now; the old
+ * "`@@allow` scopes to wake, no `@@allow` gets the full `event: change`
+ * payload" branch is gone. In-process listeners (`on("change")`) are NOT on
+ * the wire and are unaffected — they still get the full, unscoped event.
  */
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
 import { RealtimeEngine } from "../dist/index.js";
@@ -151,30 +152,88 @@ async function subscribeAndDispatch(engine, emit, event) {
   return written;
 }
 
-// ── B1.1(a) — no `allow` at all: unchanged full-payload `event: change` ────
+// ── B1.1(a) — REGRESSION GUARD: no `allow` at all still gets ONLY a
+//    data-free `event: wake` frame over SSE — row data must never reach an
+//    unauthenticated subscriber, `@@allow` or not (fail-closed) ───────────
 
-await check("B1.1a: model with no @@allow gets full-payload event: change, byte-identical shape", async () => {
-  const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
-  const event = {
-    table: "Post",
-    op: "INSERT",
-    pk: { id: "1" },
-    new: { id: "1", title: "hi" },
-    txid: "42",
-    ts: "2026-01-01T00:00:00.000Z",
-    lsn: "0/ABC",
-  };
-  const written = await subscribeAndDispatch(engine, emit, event);
-  const changeFrame = written.find((f) => f.includes("event: change"));
-  ok(changeFrame, `expected an event: change frame, got: ${written.join("|")}`);
-  ok(!written.some((f) => f.includes("event: wake")), "must not emit a wake frame for a non-allow model");
-  const dataLine = changeFrame.split("\n").find((l) => l.startsWith("data: "));
-  const payload = JSON.parse(dataLine.slice("data: ".length));
-  deepStrictEqual(
-    { table: payload.table, op: payload.op, pk: payload.pk, new: payload.new, txid: payload.txid, ts: payload.ts, lsn: payload.lsn },
-    { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1", title: "hi" }, txid: "42", ts: "2026-01-01T00:00:00.000Z", lsn: "0/ABC" },
-  );
-});
+await check(
+  "B1.1a (fail-closed regression guard): model with no @@allow gets a data-free event: wake frame, never event: change, and the frame carries no new/old/pk",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+    const event = {
+      table: "Post",
+      op: "INSERT",
+      pk: { id: "1" },
+      new: { id: "1", title: "hi" },
+      txid: "42",
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/ABC",
+    };
+    const written = await subscribeAndDispatch(engine, emit, event);
+    ok(!written.some((f) => f.includes("event: change")), `must NEVER emit event: change over SSE, allow or not — got: ${written.join("|")}`);
+    const wakeFrame = written.find((f) => f.includes("event: wake"));
+    ok(wakeFrame, `expected an event: wake frame for a non-allow model, got: ${written.join("|")}`);
+    const dataLine = wakeFrame.split("\n").find((l) => l.startsWith("data: "));
+    const payload = JSON.parse(dataLine.slice("data: ".length));
+    deepStrictEqual(payload, { table: "Post", op: "INSERT", lsn: "0/ABC", seq: 1 });
+    ok(!("pk" in payload), "wake frame must not carry pk");
+    ok(!("new" in payload), "wake frame must not carry new");
+    ok(!("old" in payload), "wake frame must not carry old");
+  },
+);
+
+// ── B1.1(a-listener) — the SAME event, over the in-process fan-out, is NOT
+//    scoped: `on("change")` listeners are never on the wire, so they keep
+//    receiving the full, unscoped `RealtimeEvent` regardless of `@@allow` ──
+
+await check(
+  "B1.1a-listener: in-process on(\"change\") listeners still receive the full event, unscoped, for a non-allow model",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+    const received = [];
+    engine.on("change", (e) => received.push(e));
+    const event = {
+      table: "Post",
+      op: "INSERT",
+      pk: { id: "1" },
+      new: { id: "1", title: "hi" },
+      txid: "42",
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/ABC",
+    };
+    await engine.start();
+    emit(event);
+    strictEqual(received.length, 1, "the in-process listener must receive exactly one event");
+    deepStrictEqual(received[0], event, "the in-process listener must receive the full, unmodified event");
+    await engine.stop();
+  },
+);
+
+// ── B1.1(b-listener) — same, for an @@allow model: in-process listeners are
+//    unaffected by the SSE wake-only scoping applied to that model ────────
+
+await check(
+  "B1.1b-listener: in-process on(\"change\") listeners still receive the full event for an @@allow model too",
+  async () => {
+    const { engine, emit } = makeEngine([{ name: "Order", realtime: true, allow: [readRule()] }]);
+    const received = [];
+    engine.on("change", (e) => received.push(e));
+    const event = {
+      table: "Order",
+      op: "UPDATE",
+      pk: { id: "7" },
+      new: { id: "7", status: "shipped" },
+      old: { id: "7", status: "pending" },
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/DEF",
+    };
+    await engine.start();
+    emit(event);
+    strictEqual(received.length, 1, "the in-process listener must receive exactly one event");
+    deepStrictEqual(received[0], event, "the in-process listener must receive the full, unmodified event, including new/old");
+    await engine.stop();
+  },
+);
 
 // ── B1.1(b) — `allow` present with a `read` rule: scoped `event: wake` ─────
 
@@ -259,8 +318,10 @@ await check("B1.2: composite-PK model's wake frame omits pk entirely, no partial
 //    projection): `dispatch()` never re-derives or re-widens `new`/`old`; it
 //    forwards whatever the source already narrowed (design decision 4/8) ──
 
-await check("RLE-1: dispatch() forwards a pre-projected event's new/old verbatim — the frame's data key set equals the allowlist", async () => {
+await check("RLE-1: dispatch() forwards a pre-projected event's new/old verbatim to in-process listeners — the frame's data key set equals the allowlist", async () => {
   const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+  const received = [];
+  engine.on("change", (e) => received.push(e));
   const event = {
     table: "Post",
     op: "INSERT",
@@ -271,17 +332,18 @@ await check("RLE-1: dispatch() forwards a pre-projected event's new/old verbatim
     ts: "2026-01-01T00:00:00.000Z",
     lsn: "0/ABC",
   };
-  const written = await subscribeAndDispatch(engine, emit, event);
-  const changeFrame = written.find((f) => f.includes("event: change"));
-  ok(changeFrame, `expected an event: change frame, got: ${written.join("|")}`);
-  const dataLine = changeFrame.split("\n").find((l) => l.startsWith("data: "));
-  const payload = JSON.parse(dataLine.slice("data: ".length));
-  deepStrictEqual(Object.keys(payload.new).sort(), ["id", "status"]);
-  ok(!("passwordHash" in payload.new), "dispatch() must not re-widen a projected new payload");
+  await engine.start();
+  emit(event);
+  strictEqual(received.length, 1, "the in-process listener must receive exactly one event");
+  deepStrictEqual(Object.keys(received[0].new).sort(), ["id", "status"]);
+  ok(!("passwordHash" in received[0].new), "dispatch() must not re-widen a projected new payload");
+  await engine.stop();
 });
 
-await check("RLE-3: column projection and @@allow row scoping compose — allow wins (wake-only), non-allow gets the narrowed frame", async () => {
-  // With @@allow: still wake-up-only, regardless of projection.
+await check("RLE-3: over SSE, a non-allow model gets wake-only too now (fail-closed) — column projection still applies verbatim to the in-process fan-out for both allow and non-allow models", async () => {
+  // Over SSE: both an @@allow model AND a non-allow model get wake-only,
+  // never a payload-carrying frame — projection is irrelevant to the wire
+  // now, since the wire never carries row data at all.
   {
     const { engine, emit } = makeEngine([{ name: "Order", realtime: true, allow: [readRule()] }]);
     const event = {
@@ -294,10 +356,9 @@ await check("RLE-3: column projection and @@allow row scoping compose — allow 
       lsn: "0/DEF",
     };
     const written = await subscribeAndDispatch(engine, emit, event);
-    ok(written.some((f) => f.includes("event: wake")), "an @@allow model must still get wake-only SSE, projection changes nothing");
+    ok(written.some((f) => f.includes("event: wake")), "an @@allow model must get wake-only SSE, projection changes nothing");
     ok(!written.some((f) => f.includes("event: change")), "must not additionally emit a full/change frame");
   }
-  // Without @@allow: the narrowed change frame passes through untouched.
   {
     const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
     const event = {
@@ -310,17 +371,37 @@ await check("RLE-3: column projection and @@allow row scoping compose — allow 
       lsn: "0/GHI",
     };
     const written = await subscribeAndDispatch(engine, emit, event);
-    const changeFrame = written.find((f) => f.includes("event: change"));
-    ok(changeFrame, "a non-allow projected model must get the narrowed event: change frame");
-    const dataLine = changeFrame.split("\n").find((l) => l.startsWith("data: "));
-    const payload = JSON.parse(dataLine.slice("data: ".length));
-    deepStrictEqual(Object.keys(payload.new).sort(), ["id", "status"]);
-    deepStrictEqual(Object.keys(payload.old).sort(), ["id", "status"]);
+    ok(written.some((f) => f.includes("event: wake")), "a non-allow model must ALSO get wake-only SSE now (fail-closed)");
+    ok(!written.some((f) => f.includes("event: change")), "must never emit event: change over SSE");
+  }
+  // In-process: the projected new/old still reach the listener verbatim,
+  // for both models, regardless of @@allow.
+  {
+    const { engine, emit } = makeEngine([{ name: "Post", realtime: true }]);
+    const received = [];
+    engine.on("change", (e) => received.push(e));
+    const event = {
+      table: "Post",
+      op: "UPDATE",
+      pk: { id: "1" },
+      new: { id: "1", status: "ok" },
+      old: { id: "1", status: "pending" },
+      ts: "2026-01-01T00:00:00.000Z",
+      lsn: "0/GHI",
+    };
+    await engine.start();
+    emit(event);
+    strictEqual(received.length, 1, "the in-process listener must receive exactly one event");
+    deepStrictEqual(Object.keys(received[0].new).sort(), ["id", "status"]);
+    deepStrictEqual(Object.keys(received[0].old).sort(), ["id", "status"]);
+    await engine.stop();
   }
 });
 
 // RCP-13 reachability guard: fails loudly if a case above is skipped/omitted.
-strictEqual(ran, 6, "expected exactly 6 check() cases to run in dispatch.mjs");
+// (was 6 before the fail-closed fix added 2 in-process-listener regression
+// checks — B1.1a-listener, B1.1b-listener.)
+strictEqual(ran, 8, "expected exactly 8 check() cases to run in dispatch.mjs so far");
 // ── RSC-14 — a rejected engine.start() resets the engine's started state,
 //    and a SECOND start() genuinely reaches source.start() again ─────────
 
@@ -414,7 +495,7 @@ await check(
     await engine.start();
     const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
     emit(event);
-    ok(!written.some((f) => f.includes("event: change")), `over-cap subscriber must not receive the change frame, got: ${written.join("|")}`);
+    ok(!written.some((f) => f.includes("event: wake")), `over-cap subscriber must not receive the wake frame, got: ${written.join("|")}`);
     ok(isEnded(), "over-cap subscriber's stream must be ended");
     strictEqual(engine["subscribers"].size, 0, "evicted subscriber must be removed from the registry");
     const writtenLengthAfterFirst = written.length;
@@ -479,9 +560,9 @@ await check(
     await engine.start();
     const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
     emit(event);
-    strictEqual(a.written.filter((f) => f.includes("event: change")).length, 1, "A must receive exactly one change frame");
-    strictEqual(c.written.filter((f) => f.includes("event: change")).length, 1, "C must receive exactly one change frame — must not be skipped as a side effect of B's eviction");
-    ok(!b.written.some((f) => f.includes("event: change")), "B must not receive the change frame");
+    strictEqual(a.written.filter((f) => f.includes("event: wake")).length, 1, "A must receive exactly one wake frame");
+    strictEqual(c.written.filter((f) => f.includes("event: wake")).length, 1, "C must receive exactly one wake frame — must not be skipped as a side effect of B's eviction");
+    ok(!b.written.some((f) => f.includes("event: wake")), "B must not receive the wake frame");
     ok(b.isEnded(), "B must be evicted");
     strictEqual(engine["subscribers"].size, 2, "only B is removed — A and C remain registered");
     await engine.stop();
@@ -538,8 +619,8 @@ await check(
     emit(event);
     // Synchrony regression guard: these must already be true the instant
     // emit() (→ dispatch()) returns, with no await in between.
-    ok(b.written.some((f) => f.includes("event: change")), "B must have its change frame immediately after emit() returns");
-    ok(!a.written.some((f) => f.includes("event: change")), "A must not have received the change frame");
+    ok(b.written.some((f) => f.includes("event: wake")), "B must have its wake frame immediately after emit() returns");
+    ok(!a.written.some((f) => f.includes("event: wake")), "A must not have received the wake frame");
     ok(a.isEnded(), "A must be evicted");
     strictEqual(engine["subscribers"].size, 1, "only B remains registered");
     await engine.stop();
@@ -572,7 +653,7 @@ await check(
     await engine.start();
     const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
     emit(event);
-    ok(written.some((f) => f.includes("event: change")), "a subscriber at cap - 1 must still receive the frame");
+    ok(written.some((f) => f.includes("event: wake")), "a subscriber at cap - 1 must still receive the frame");
     ok(!isEnded(), "a subscriber at cap - 1 must not be evicted");
     strictEqual(engine["subscribers"].size, 1, "subscriber at cap - 1 must remain registered");
     // Simulate the socket draining back to the same boundary before the next
@@ -584,7 +665,7 @@ await check(
     const writtenLengthAfterFirst = written.length;
     emit(event);
     strictEqual(written.length, writtenLengthAfterFirst + 1, "a second dispatch must also land for a non-evicted subscriber");
-    ok(written[written.length - 1].includes("event: change"), "the second landed frame must be the real change frame, not an overflow frame");
+    ok(written[written.length - 1].includes("event: wake"), "the second landed frame must be the real wake frame, not an overflow frame");
     ok(!isEnded(), "subscriber must still not be evicted after the second dispatch");
     await engine.stop();
   },
@@ -609,7 +690,7 @@ await check(
     await engine.start();
     const event = { table: "Post", op: "INSERT", pk: { id: "1" }, new: { id: "1" }, ts: "2026-01-01T00:00:00.000Z" };
     emit(event);
-    ok(written.some((f) => f.includes("event: change")), "a subscriber buffered at exactly the cap must still receive the frame");
+    ok(written.some((f) => f.includes("event: wake")), "a subscriber buffered at exactly the cap must still receive the frame");
     ok(!isEnded(), "a subscriber buffered at exactly the cap must not be evicted");
     strictEqual(engine["subscribers"].size, 1, "subscriber at exactly the cap must remain registered");
     await engine.stop();
@@ -648,10 +729,11 @@ await check(
 );
 
 // realtime-sse-backpressure reachability guard: fails loudly if a case
-// above is skipped/omitted. Counted from an actual run (18 total
-// `check()` calls in this file), not carried forward from provisional
-// design-phase arithmetic.
-strictEqual(ran, 18, "expected exactly 18 check() cases in dispatch.mjs");
+// above is skipped/omitted. Counted from an actual run (20 total
+// `check()` calls in this file — 18 pre-existing + 2 in-process-listener
+// regression checks added by the fail-closed SSE fix), not carried forward
+// from provisional design-phase arithmetic.
+strictEqual(ran, 20, "expected exactly 20 check() cases in dispatch.mjs");
 
 console.log(`\n${passed} check(s) passed.`);
 if (process.exitCode) {

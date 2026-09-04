@@ -631,7 +631,15 @@ async function withFakeFetch(frames, run) {
   }
 }
 
-await check("9.1: handleFrame parses a wake event distinctly from change; change stays byte-identical", async () => {
+// NOTE (fail-closed SSE fix): the SERVER (`@indigodb/realtime`'s
+// `dispatch()`) no longer ever emits `event: change` over SSE, for any
+// table — see `packages/realtime/test/dispatch.mjs`'s B1.1a. The `change`
+// half of the check below stays as a PARSER-LEVEL regression guard only:
+// `SseTransport.handleFrame` is a generic protocol parser and must keep
+// decoding a `change` frame correctly if one were ever received (e.g. a
+// future authenticated transport, or a mixed deployment during rollout) —
+// it is not a claim that the current server still sends one.
+await check("9.1: handleFrame parses a wake event distinctly from change; change stays byte-identical (parser-level, server no longer sends change over SSE)", async () => {
   const wakeFrame = `event: wake\ndata: ${JSON.stringify({ table: "Order", op: "UPDATE", lsn: "0/1" })}\n\n`;
   const changeEvent = { table: "Order", op: "INSERT", pk: { id: 1 }, new: { id: 1 }, ts: "2024-01-01T00:00:00Z" };
   const changeFrame = `event: change\ndata: ${JSON.stringify(changeEvent)}\n\n`;
@@ -658,6 +666,40 @@ await check("9.1: handleFrame parses a wake event distinctly from change; change
     assert(!errored, "a malformed wake frame must be skipped, not thrown");
   });
 });
+
+// ── 9.2 — REGRESSION GUARD (fail-closed SSE fix): a stream of ONLY wake
+//    frames — exactly what the real server now sends for every table,
+//    `@@allow` or not — never calls onEvent. `RealtimeModelDelegate.subscribe()`'s
+//    push handlers (onInsert/onUpdate/onDelete/onChange, wired through
+//    onEvent) go dormant over SSE by design; only onWake fires. ────────────
+
+await check(
+  "9.2 (fail-closed regression guard): a wake-only SSE stream (the real server's current shape) never triggers onEvent — subscribe()'s push handlers go dormant",
+  async () => {
+    const wakeFrames = [
+      `event: wake\ndata: ${JSON.stringify({ table: "Order", op: "INSERT", lsn: "0/1", seq: 1 })}\n\n`,
+      `event: wake\ndata: ${JSON.stringify({ table: "Order", op: "UPDATE", lsn: "0/2", seq: 2 })}\n\n`,
+      `event: wake\ndata: ${JSON.stringify({ table: "Order", op: "DELETE", lsn: "0/3", seq: 3 })}\n\n`,
+    ];
+
+    await withFakeFetch(wakeFrames, async (SseTransport) => {
+      const transport = new SseTransport("http://example.invalid");
+      const wakes = [];
+      const events = [];
+      const stop = transport.connect(["Order"], {
+        onEvent: (e) => events.push(e),
+        onWake: () => wakes.push(true),
+        onOpen: () => {},
+        onError: () => {},
+      });
+      await sleep(30);
+      stop();
+
+      assert(wakes.length === 3, `expected all 3 frames to fire onWake, got ${wakes.length}`);
+      assert(events.length === 0, `expected onEvent to never fire against a wake-only stream, got ${events.length} event(s)`);
+    });
+  },
+);
 
 await check("9.3/9.4: the last subscriber on a table closes the shared connection; a remaining subscriber keeps it open", () => {
   let closed = false;
