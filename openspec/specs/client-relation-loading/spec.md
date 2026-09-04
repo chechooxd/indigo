@@ -174,4 +174,3 @@ returned rows carry only their own scalar fields.
 - THEN exactly one query MUST be issued
 - AND returned rows MUST NOT contain a `posts` key
 - AND the SQL and row shape MUST be identical to the pre-`include` behavior
-</content>

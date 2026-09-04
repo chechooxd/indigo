@@ -136,4 +136,3 @@ call — no partial parent or child rows persist.
 - WHEN the call is executed
 - THEN the entire call MUST reject
 - AND neither the user row nor any post row MUST exist afterward
-</content>

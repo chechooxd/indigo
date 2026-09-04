@@ -104,7 +104,6 @@ direction of this route.
 `GET /api/schema` and `GET /api/schema/source`, and `GET /api/schema/source`
 was permitted to serve a snapshot computed once at startup rather than
 per-request.)
-</content>
 
 ### Requirement: Origin/Host validation
 
@@ -122,4 +121,3 @@ prevent cross-origin pages from reaching the API via the loopback bind.
   describing the rejection
 - AND no application logic (schema read, query, table read) executes for
   that request
-</content>

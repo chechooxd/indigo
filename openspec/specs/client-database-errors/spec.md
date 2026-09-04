@@ -60,4 +60,3 @@ the minimal taxonomy can still inspect the original failure.
 - WHEN the resulting `IndigoDatabaseError` is caught
 - THEN `error.code` MUST be `"UNKNOWN"`
 - AND the wrapper MUST still expose `"23503"` as the raw SQLSTATE value
-</content>

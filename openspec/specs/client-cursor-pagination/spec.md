@@ -70,4 +70,3 @@ identically to before this capability existed when `cursor` is not supplied.
 - GIVEN model `Post` with single-column primary key `id`
 - WHEN a caller calls `db.post.findMany({ take: 10 })` with no `cursor`
 - THEN behavior MUST be identical to pre-existing offset pagination
-</content>

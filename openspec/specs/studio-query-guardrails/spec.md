@@ -151,4 +151,3 @@ here; cancellation is deferred to a future `studio-query-cancellation` change.
 - GIVEN the SQL console is showing an in-flight query
 - WHEN the operator inspects the UI and the API surface
 - THEN no cancel button, cancel route, or `pg_cancel_backend` call is present
-</content>

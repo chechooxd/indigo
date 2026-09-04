@@ -309,4 +309,3 @@ going forward.
 - WHEN the fixture is run against a `select`-scoped `findMany` call
 - THEN excluded scalar fields MUST remain compile errors to access
 - AND this MUST hold with no change to `SelectedScalars`'s implementation
-</content>

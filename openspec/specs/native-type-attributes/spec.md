@@ -79,5 +79,3 @@ type override MUST omit this field (or resolve it to `undefined`/absent, not
 - GIVEN a field `name String`
 - WHEN the schema is resolved
 - THEN the corresponding `ResolvedColumn.nativeType` is absent
-</content>
-</invoke>

@@ -369,4 +369,3 @@ MUST apply no edit when activated.
 - GIVEN `schemaWritable` is `true` and the server is not read-only
 - WHEN the ERD canvas renders
 - THEN the edit affordances are enabled and carry their action labels
-</content>

@@ -129,4 +129,3 @@ change.)
 - WHEN a client sends `PUT /api/schema/layout`
 - THEN the response is `403` from the read-only gate, since that gate runs
   before route-specific `schemaPath` handling — the response is not `404`
-</content>

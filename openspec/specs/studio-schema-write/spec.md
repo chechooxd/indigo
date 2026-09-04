@@ -261,4 +261,3 @@ results, or disabled with a stated reason.
 - THEN the control is disabled and carries a tooltip explaining persistence
   is unavailable in this session
 - AND clicking it (if reachable) performs no request
-</content>

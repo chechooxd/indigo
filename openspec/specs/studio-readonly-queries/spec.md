@@ -131,4 +131,3 @@ free-form client input.
 - WHEN a client performs a write via `PATCH`/`POST`/`DELETE`
 - THEN `resolveWriteTarget` and the writable-pool code path are unchanged and unaffected by
   this addition
-</content>

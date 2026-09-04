@@ -69,4 +69,3 @@ explanation.
 - WHEN the ERD canvas would otherwise stop updating
 - THEN the diagnostics panel and/or editor markers visibly report the
   failure, and this is observable without opening the browser console
-</content>

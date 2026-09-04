@@ -80,4 +80,3 @@ returns.
 - GIVEN model `Tag` with no rows matching `name: "missing"`
 - WHEN a caller calls `db.tag.deleteMany({ where: { name: "missing" } })`
 - THEN it MUST resolve with `{ count: 0 }` and MUST NOT throw
-</content>

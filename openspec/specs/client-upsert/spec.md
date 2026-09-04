@@ -93,4 +93,3 @@ partial matches MUST be rejected the same as a wholly non-unique `where`.
 - WHEN a caller calls `db.membership.upsert({ where: { userId: 1 } as any, ... })`
 - THEN it MUST throw a typed error — `userId` alone does not match the
   declared composite unique group
-</content>

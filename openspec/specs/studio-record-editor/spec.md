@@ -73,4 +73,3 @@ editor and MUST NOT be included as an editable field on UPDATE.
 - WHEN the Record Inspector renders that row
 - THEN the primary key field is presented as read-only
 - AND attempting to change it has no effect on the edit buffer
-</content>

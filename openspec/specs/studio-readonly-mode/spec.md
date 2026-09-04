@@ -160,7 +160,6 @@ identical in shape across every route in the write-route set.
 (Previously: this requirement scoped the gate to the `/api/rows/` prefix
 only, which would not have covered a new write route added under a different
 path — as the schema-write route now proves.)
-</content>
 
 ### Requirement: Read routes unaffected by read-only mode
 

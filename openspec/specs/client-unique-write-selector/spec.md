@@ -118,4 +118,3 @@ for that model — the same limitation `upsert` already imposes.
 - WHEN a caller calls `db.log.updateMany({ where: { level: "error" }, data: { level: "warn" } })`
 - THEN this MUST type-check and execute normally, since `updateMany` uses
   the full `WhereInput<Row>`, unaffected by this capability
-</content>

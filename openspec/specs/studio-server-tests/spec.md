@@ -154,4 +154,3 @@ script MUST be reachable through the root `pnpm test` (Turborepo) run.
 - WHEN `pnpm test` is run from the repo root
 - THEN `packages/cli`'s new test suite executes and its results are reported
 - AND a failing scenario in this suite fails the overall `pnpm test` run
-</content>

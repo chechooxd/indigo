@@ -239,4 +239,3 @@ useful information.
   `outcome: "ok"`) is unchanged from before this change, since widening
   `AuditOp` and making `table` optional does not alter the existing
   row-write entries, which continue to always include `table`
-</content>

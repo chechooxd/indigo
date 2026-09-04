@@ -79,4 +79,3 @@ There MUST NOT be a standalone `distinct()` method on `ModelDelegate`.
 - GIVEN model `Order` with multiple rows sharing the same `status`
 - WHEN a caller calls `db.order.findMany({ distinct: ["status"] })`
 - THEN the result MUST contain at most one row per distinct `status` value
-</content>

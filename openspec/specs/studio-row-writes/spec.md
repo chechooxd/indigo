@@ -68,7 +68,6 @@ including any database-generated primary key or default values.
 - WHEN a client sends `DELETE` for one row's primary key
 - THEN that row no longer exists
 - AND all other rows remain unchanged
-</content>
 
 ### Requirement: Each successful write emits its own audit log entry
 

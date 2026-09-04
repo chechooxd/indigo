@@ -91,4 +91,3 @@ not gated.)
 - THEN the response is `403` from the read-only gate, not `404` from the
   route's own `schemaPath`-presence check — proving gate ordering places
   the shared read-only refusal before any route-specific dispatch logic
-</content>

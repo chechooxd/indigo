@@ -51,4 +51,3 @@ Satisfying only one of the two conditions MUST NOT be sufficient.
 - GIVEN Safe Updates is disabled
 - WHEN the user confirms the delete dialog
 - THEN the `DELETE` request is sent for that row's primary key
-</content>

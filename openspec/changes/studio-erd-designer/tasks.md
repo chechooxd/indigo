@@ -199,4 +199,3 @@ full, and 6.8/6.9 below discharge it.
 - [ ] 6.9 RED: the relation-drawing affordance is gated on the same `editDisabled` flag as
       every other ERD edit affordance (mutation: enable it regardless of
       `schemaWritable`/`readOnly`)
-</content>

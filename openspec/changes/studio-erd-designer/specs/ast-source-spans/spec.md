@@ -142,4 +142,3 @@ delivered on a new export.
 - THEN every fixture's error/success outcome (pass/fail, diagnostic
   messages, line/column of diagnostics) reported by `parse`/`resolve`/
   `validate`/`compile` is unchanged
-</content>
