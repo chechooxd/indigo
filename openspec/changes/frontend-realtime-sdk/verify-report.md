@@ -1,5 +1,137 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:a81245f10efa6e3354dfc74c9c9ea023ba583ce22177c954e26bee903aa36a67
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 4/4
+scenarios: 4/4
+test_command: node packages/client/test/readme-contract.mjs && pnpm exec turbo test --filter=@indigodb/client --force
+test_exit_code: 0
+test_output_hash: sha256:7dff1891cb58b2ede4de092a8fe25a2b05863305ca4feb806ea85bf20f40db17
+build_command: pnpm exec turbo build lint --filter=@indigodb/client --force
+build_exit_code: 0
+build_output_hash: sha256:5d379b6635e328cdd01ad82a0798891ca8a941af1007dff140c40afcf4563adc
+```
+
+## Verification Report — Phase 4
+
+**Change**: frontend-realtime-sdk
+**Phase**: 4 of 6 (Slice 4 — Docs: README, TanStack recipe, non-goals)
+**Commit**: `4aef7dc` on `docs/client-browser-usage`, off `main` @ `c5ebe83`
+**Mode**: Strict TDD
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 4) | 6 |
+| Tasks complete | 6 |
+| Tasks incomplete | 0 |
+
+All 6 checkboxes (4.1–4.6) confirmed `[x]` in `openspec/changes/frontend-realtime-sdk/tasks.md` at `4aef7dc`, verified against `git diff main..HEAD -- openspec/changes/frontend-realtime-sdk/tasks.md`.
+
+### Build & Tests Execution
+**Build**: ✅ Passed
+```text
+pnpm exec turbo build lint --filter=@indigodb/client --force
+Tasks: 8 successful, 8 total (cache bypass, all fresh)
+```
+
+**Tests**: ✅ 4/4 readme-contract checks passed; full `@indigodb/client` chain green
+```text
+node packages/client/test/readme-contract.mjs
+  ok   browser section names the @indigodb/client/realtime entry point
+  ok   browser section states the wake-only, no-row-data contract
+  ok   browser section states the query non-goal and points to the app's own backend
+  ok   TanStack recipe calls createLiveSubscription with onWake invalidating queries
+all readme-contract checks passed
+
+pnpm exec turbo test --filter=@indigodb/client --force
+Tasks: 8 successful, 8 total (0 cached, all fresh)
+```
+Ran via `pnpm exec turbo test --force` directly (never bare `pnpm test --force`, which the harness caveat correctly warns silently no-ops because `test` is a `&&` chain and the flag lands on the last command). No Postgres-gated SKIP was misreported as a pass — this run's tail included the full realtime/live suite chain and finished exit 0.
+
+**Coverage**: not measured — no coverage tool configured in this package; consistent with prior phases.
+
+### Spec Compliance Matrix
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| README names the browser entry point | README mentions browser subpath | `readme-contract.mjs > browser section names the @indigodb/client/realtime entry point` | ✅ COMPLIANT |
+| README states the wake-only contract | README states wake-only, no-row-data explicitly | `readme-contract.mjs > browser section states the wake-only, no-row-data contract` | ✅ COMPLIANT |
+| README states the query non-goal | README states the query non-goal | `readme-contract.mjs > browser section states the query non-goal and points to the app's own backend` | ✅ COMPLIANT |
+| README includes a worked TanStack Query recipe | README's recipe invalidates via onWake | `readme-contract.mjs > TanStack recipe calls createLiveSubscription with onWake invalidating queries` | ✅ COMPLIANT |
+
+**Compliance summary**: 4/4 scenarios compliant, all covered by a real, executed check (not prose-only).
+
+### Correctness (Static Evidence) — accuracy audit of every factual README claim
+
+This phase's deliverable is documentation; its correctness bar is factual accuracy against the code at `c5ebe83`, verified independently (not taken from the apply report):
+
+| Claim | Verified against | Result |
+|-------|-------------------|--------|
+| `@indigodb/client/realtime`'s closure imports nothing Node-only | `packages/client/src/realtime.ts` (only `type` import from `@indigodb/realtime`, value re-export from `@indigodb/realtime/protocol`; `live.ts` imports nothing) | ✅ Accurate |
+| Root entry statically imports `pg` and `node:async_hooks`; `ModelDelegate` alone drags in `async_hooks` via `delegate.ts` → `context.ts` | `src/adapters/pg.ts:13` (`import pg from "pg"`), `src/client.ts:10` and `src/context.ts:17` (`import { AsyncLocalStorage } from "node:async_hooks"`), `delegate.ts:38` imports `./context.js` | ✅ Accurate, line numbers match |
+| SSE stream is wake-only for every table (no `@@allow`-scoped exception) | `git show 9798f9c` — "dispatch() now sends every SSE subscriber a data-free wake frame for every table, regardless of @@allow — the old allowModels-scoped branch is gone" | ✅ Accurate |
+| Generated client imports the root entry and cannot be bundled for a browser | `packages/generator`'s emitted client imports `@indigodb/client` (root), which in turn imports `pg`/`node:async_hooks` transitively | ✅ Accurate (consistent with the package's own architecture note in CLAUDE.md) |
+| `createLiveSubscription`'s documented signature/return shape | `packages/client/src/realtime.ts:467-488` — interface `LiveSubscription` has exactly `getStatus`, `getError`, `subscribe`, `retry`, `close` (5 members); `options.onWake?: () => void` (arity 0) | ✅ Accurate — README's code sample calls `getStatus()`/`subscribe()`; it does not claim an exhaustive 5-key list in prose but nothing it states is false or incomplete-to-the-point-of-misleading |
+
+No factual claim in the new section was found to misstate the code.
+
+### TanStack Query recipe — runnable and correctly framed
+- `useQueryClient()` and `queryClient.invalidateQueries({ queryKey: [...] })` are real, current TanStack Query v5 APIs used with the correct signature shape.
+- The recipe wires `onWake` strictly as a cache-invalidation trigger (`queryClient.invalidateQueries`), never as a data source — matches `LiveSubscriptionOptions.onWake`'s contract (`() => void`, no payload) and the spec's requirement that the SDK never present itself as a data feed.
+- `useOrders()` in the surrounding prose is described as an ordinary `useQuery` hook that still fetches from the app's own backend — the SDK is never framed as replacing it.
+
+### Suite strength assessment — confirming the orchestrator's reproduction
+
+Independently reproduced with a second, different mutation than the orchestrator's (which reworded `own backend` → `application server`): replaced the wake-only heading's sentence with one that keeps the required keywords (`wake`, `no row data`) but **inverts the claim's meaning** ("it is a lie that it carries no row data, it actually streams full rows on every wake"). Result: **all 4 checks still passed.**
+
+This confirms the honest characterization of `readme-contract.mjs`:
+- **What it guarantees**: the required facts are stated *somewhere inside the correctly-scoped section* (via `extractSection()`, anchored on a `## `-level heading matched by `/browser/i` and bounded to the next `## ` heading). This does catch deletion, and it does catch relocation out of the browser section — both were independently confirmed (the orchestrator's reproduction on check 4.3, and the section-boundary logic reviewed directly).
+- **What it does NOT guarantee**: semantic correctness. Because checks 4.1–4.3 are keyword/regex presence checks (`includes()`, `/no row data/i`, `/wake/i`, `/own backend/i`), a sentence containing the right words but asserting the *opposite* fact passes. Check 4.4 is meaningfully stronger than 4.1–4.3: it additionally asserts a structural/negative constraint (`onWake` callback body must call `invalidateQueries` and must NOT call `refetch()` inside the same callback), so a wrong-but-keyword-matching recipe is more likely (though not guaranteed) to trip the `refetch()` exclusion — but a rewrite that calls a third method (neither `invalidateQueries` nor `refetch()`) inside `onWake` while some other unrelated code block also happens to contain both keywords would still be caught by the `find()` step requiring both `createLiveSubscription` and `invalidateQueries` in the *same* code block, which is a real (if narrow) structural check.
+- **Verdict on strength**: 4.1–4.3 are **weaker than their scenario names imply** — they prove presence, not truth. 4.4 is comparatively stronger due to its structural code-block + negative-assertion design, but is still a static-text check, not a functional test that actually executes the recipe. None of the four executes the documented code sample; a copy-paste error in the recipe that still contained both substrings would not be caught.
+- This is a known, acceptable limitation for prose-verification suites (the suite's own header comment states this candidly: "the 'code' under test is prose"), but it means **the suite cannot be relied on to catch a future contributor who fixes a bug by editing the code without updating the README's now-incorrect explanation**, as long as the old keywords survive the edit.
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| Doc-only Phase 4 scope, no code changes outside `README.md`/test/package.json wiring | ✅ Yes | `git diff main..HEAD --stat` confirms exactly 4 files: `README.md`, `test/readme-contract.mjs` (new), `package.json` (1-line test-chain wiring), `tasks.md` |
+| Design's File Changes table row for `packages/client/README.md` | ✅ Yes | Browser section, wake-only contract, non-goals, TanStack recipe — all present |
+
+### TDD Compliance
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Found in apply-progress, all 4 RED tasks with mutation description |
+| All tasks have tests | ✅ | 4/4 doc-assertion tasks (4.1–4.4) map to `readme-contract.mjs`'s 4 `check()` blocks |
+| RED confirmed (tests exist) | ✅ | `readme-contract.mjs` exists at `4aef7dc`, contains exactly 4 `check()` calls matching 4.1–4.4 |
+| GREEN confirmed (tests pass) | ✅ | 4/4 pass on fresh execution at `4aef7dc` |
+| Triangulation adequate | ➖ | Single check per scenario — appropriate; each scenario names one distinct assertion, not multiple cases |
+| Safety Net for modified files | ✅ | `README.md` and `package.json` were pre-existing, modified files; the full `@indigodb/client` chain (pre-existing 28+ tests) ran green alongside the new suite |
+
+**TDD Compliance**: 6/6 checks passed
+
+### Assertion Quality
+No tautologies, no ghost loops over possibly-empty collections, no assertions divorced from the artifact under test (all 4 checks read the real `README.md` file and assert against real content). The suite is honestly self-scoped to prose/content assertions (documented in its own header comment) rather than disguised as behavioral tests.
+
+**Assertion quality**: ✅ No CRITICAL issues. One WARNING carried forward from the strength assessment above (semantic-inversion blind spot on checks 4.1–4.3).
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `readme-contract.mjs` checks 4.1–4.3 are literal keyword/regex presence checks, not semantic checks. A section-scoped rewrite that keeps the required keywords while stating the opposite fact (independently reproduced: inverting the wake-only/no-row-data claim) still passes all 4 checks. This is a real, if narrow, coverage gap for future silent doc drift — not a defect in this phase's delivered scope, but a property future contributors should know about before trusting "the suite is green" as proof the README is still accurate.
+
+**SUGGESTION**:
+1. Consider strengthening 4.1–4.3 with a light negation guard (e.g., assert absence of an adjacent negation like `not`/`false`/`lie` near the matched phrase) or, longer-term, replace the wake-only/query-non-goal checks with an assertion that inspects the actual `LiveSubscriptionOptions.onWake` doc comment / `dispatch()` behavior rather than free-text prose, closing the semantic-inversion gap identified above. Not blocking — the current suite still catches the two failure modes it was designed for (deletion and relocation).
+
+### Verdict
+**PASS WITH WARNINGS** — all 6 tasks complete, all 4 spec scenarios compliant with real passing tests, build/lint/test all green, and every factual claim in the new README section independently verified true against the code at `c5ebe83`. One WARNING: the content-assertion suite's presence-only checks (4.1–4.3) do not guard against semantically-wrong-but-keyword-matching prose, a real but narrow and non-blocking gap.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:100d6b3f01cc5ac1c3de638d1ca608b66e8be0ccdd879504c83a020053b3a62d
 verdict: pass_with_warnings
 blockers: 0
