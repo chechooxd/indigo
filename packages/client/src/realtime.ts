@@ -164,6 +164,17 @@ export class SseTransport implements RealtimeTransport {
 interface TableChannel {
   close: () => void;
   listeners: Set<ChannelListener>;
+  /** Mirrors the transport's own lifecycle — see `ChannelListener.onOpen`
+   * and D1's replay contract below. Starts `"connecting"`: no `onOpen`/
+   * `onError` has landed yet for this channel. */
+  state: "connecting" | "live" | "error";
+  /** True once this channel has observed at least one successful open —
+   * kept alongside `state` for future diagnostics; `state` alone drives
+   * today's replay decision. */
+  everOpened: boolean;
+  /** The most recent transport error, replayed (same instance) to a
+   * listener that joins while the channel is in `"error"` state. */
+  lastError: Error | null;
 }
 
 export interface ChannelListener {
@@ -171,6 +182,20 @@ export interface ChannelListener {
   /** Data-free wake-up trigger — see `TransportHandlers.onWake`'s doc
    * comment. Optional; `.subscribe()` never supplies it. */
   onWake?: () => void;
+  /**
+   * Fired on every successful (re)connect the listener observes, including
+   * the FIRST one (design.md D1 — the earlier `if (!reconnected) return;`
+   * swallowed the first open entirely). Also replayed synchronously,
+   * INSIDE `subscribe()`, to a listener joining an already-`"live"`
+   * channel — always with `reconnected: false` in that replay case, since
+   * a late joiner has fetched nothing yet and has no gap to fill.
+   * Optional; `.live()` supplies no `onOpen` and observes zero behavior
+   * change from this addition.
+   */
+  onOpen?: (reconnected: boolean) => void;
+  /** Unchanged trigger condition (design.md D1): fires only when the
+   * transport reports a genuine reconnect (`reconnected === true`), never
+   * on a late-subscriber replay. */
   onResync?: () => void;
   onError?: (error: Error) => void;
 }
@@ -188,7 +213,14 @@ export class RealtimeConnectionManager {
     let channel = this.channels.get(table);
     if (!channel) {
       const listeners = new Set<ChannelListener>();
-      const close = this.transport.connect([table], {
+      const newChannel: TableChannel = {
+        close: () => {},
+        listeners,
+        state: "connecting",
+        everOpened: false,
+        lastError: null,
+      };
+      newChannel.close = this.transport.connect([table], {
         onEvent: (event) => {
           for (const l of listeners) l.onEvent(event);
         },
@@ -196,18 +228,48 @@ export class RealtimeConnectionManager {
           for (const l of listeners) l.onWake?.();
         },
         onOpen: (reconnected) => {
-          if (!reconnected) return;
-          for (const l of listeners) l.onResync?.();
+          newChannel.state = "live";
+          newChannel.everOpened = true;
+          newChannel.lastError = null;
+          // Snapshot the listener set — a listener added mid-callback by
+          // one of these handlers must not be double-invoked.
+          for (const l of [...listeners]) {
+            l.onOpen?.(reconnected);
+            // Unchanged trigger condition (design.md D1): the earlier
+            // `if (!reconnected) return;` becomes this inner guard so
+            // `onResync`'s firing rule stays bit-for-bit what it was.
+            if (reconnected) l.onResync?.();
+          }
         },
         onError: (error) => {
-          for (const l of listeners) l.onError?.(error);
+          newChannel.state = "error";
+          newChannel.lastError = error;
+          for (const l of [...listeners]) l.onError?.(error);
         },
       });
-      channel = { close, listeners };
+      channel = newChannel;
       this.channels.set(table, channel);
     }
 
-    channel.listeners.add(listener);
+    const activeChannel = channel;
+    activeChannel.listeners.add(listener);
+
+    // Replay on subscribe (design.md D1): a snapshot of state/lastError
+    // taken AFTER the listener is added but BEFORE any replay callback
+    // runs, so a late joiner on an already-open or already-errored
+    // channel is told so synchronously, before `subscribe()` returns.
+    // Replay NEVER calls `onResync` — a late joiner has fetched nothing
+    // yet, so its own bootstrap covers it; firing `onResync` would inject
+    // a phantom refetch.
+    const snapshotState = activeChannel.state;
+    const snapshotError = activeChannel.lastError;
+    if (snapshotState === "live") {
+      listener.onOpen?.(false);
+    } else if (snapshotState === "error" && snapshotError) {
+      listener.onError?.(snapshotError);
+    }
+    // snapshotState === "connecting" → nothing to replay.
+
     return () => {
       const ch = this.channels.get(table);
       if (!ch) return;

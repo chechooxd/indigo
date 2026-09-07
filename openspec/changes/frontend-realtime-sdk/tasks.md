@@ -188,15 +188,15 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 2 — Slice 2: RealtimeConnectionManager open-state fix (D1) [PR 2/6, M1] — parallel with Phase 1
 
-- [ ] 2.1 RED `packages/client/test/realtime-manager.mjs`: first `onOpen(false)` reaches all listeners (T8). Mutation: restore `if (!reconnected) return;`; listener call-count assertion must fail.
-- [ ] 2.2 RED same file: subscribing to an already-open channel replays `onOpen(false)` synchronously before `subscribe()` returns (T9). Mutation: skip replay on subscribe; timing/count assertion must fail.
-- [ ] 2.3 RED same file: replay never invokes `onResync` (T10). Mutation: fire `onResync` during replay; resync-count assertion must fail.
-- [ ] 2.4 RED same file: a genuine reconnect fires `onOpen(true)` and exactly one `onResync` per listener (T11). Mutation: fire `onResync` on every open, not just `reconnected===true`; count assertion must fail.
-- [ ] 2.5 RED same file: a listener joining an `"error"` channel is replayed the stored `Error` instance, same identity (T12). Mutation: construct a new `Error` on replay; identity assertion must fail.
-- [ ] 2.6 RED same file: refcount unchanged — one `connect` for N listeners, `close` only on the last unsubscribe (T13). Mutation: call `connect` per listener; count assertion must fail.
-- [ ] 2.7 GREEN `packages/client/src/realtime.ts`: add `TableChannel.state/everOpened/lastError`, `ChannelListener.onOpen`, subscribe-time replay. Make 2.1–2.6 pass.
-- [ ] 2.8 Regression: run `packages/client/test/live.mjs` **unmodified** — must stay green (T14). Verification-only, no code change.
-- [ ] 2.9 Verify: `pnpm --filter @indigodb/client build && pnpm --filter @indigodb/client test`; confirm `live.mjs` has a zero-line diff.
+- [x] 2.1 RED `packages/client/test/realtime-manager.mjs`: first `onOpen(false)` reaches all listeners (T8). Mutation: restore `if (!reconnected) return;`; listener call-count assertion must fail.
+- [x] 2.2 RED same file: subscribing to an already-open channel replays `onOpen(false)` synchronously before `subscribe()` returns (T9). Mutation: skip replay on subscribe; timing/count assertion must fail.
+- [x] 2.3 RED same file: replay never invokes `onResync` (T10). Mutation: fire `onResync` during replay; resync-count assertion must fail.
+- [x] 2.4 RED same file: a genuine reconnect fires `onOpen(true)` and exactly one `onResync` per listener (T11). Mutation: fire `onResync` on every open, not just `reconnected===true`; count assertion must fail.
+- [x] 2.5 RED same file: a listener joining an `"error"` channel is replayed the stored `Error` instance, same identity (T12). Mutation: construct a new `Error` on replay; identity assertion must fail.
+- [x] 2.6 RED same file: refcount unchanged — one `connect` for N listeners, `close` only on the last unsubscribe (T13). Mutation: call `connect` per listener; count assertion must fail.
+- [x] 2.7 GREEN `packages/client/src/realtime.ts`: add `TableChannel.state/everOpened/lastError`, `ChannelListener.onOpen`, subscribe-time replay. Make 2.1–2.6 pass.
+- [x] 2.8 Regression: run `packages/client/test/live.mjs` **unmodified** — must stay green (T14). Verification-only, no code change.
+- [x] 2.9 Verify: `pnpm --filter @indigodb/client build && pnpm --filter @indigodb/client test`; confirm `live.mjs` has a zero-line diff.
 
 ## Phase 3 — Slice 3: createLiveSubscription + terminal classification (D2/D3/D6) [PR 3/6, M1] — depends on Phase 2
 
