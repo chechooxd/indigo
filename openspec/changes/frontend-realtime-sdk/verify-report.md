@@ -1,5 +1,320 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:0ef0d06cd1434517eb3c05870f874535921f14967dfe76022ca65104dce416fa
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 4/4
+test_command: "node packages/client/test/realtime-manager.mjs"
+test_exit_code: 0
+test_output_hash: sha256:761bc7eb3b08ea9c1735e3f1078c5ce59e87b8455a11aa960361b00112312773
+build_command: "pnpm --filter @indigodb/client build"
+build_exit_code: 0
+build_output_hash: sha256:89948fcb7a1c622191f596a88e2f8925842e3151dbf40d8c548de4a41fe13738
+```
+
+# Verification Report — frontend-realtime-sdk (Phase 2)
+
+## Verification Report
+
+**Change**: `frontend-realtime-sdk`
+**Phase scored**: Phase 2 only (Slice 2 — `RealtimeConnectionManager` open-state fix, D1), tasks 2.1–2.9.
+**Commit**: `5b4af4b` on `feat/realtime-manager-open-state`, off `main` @ `ee4d652` (Phase 1 merged, verified PASS).
+**Mode**: Strict TDD. Phase 1 is merged and previously verified PASS (preserved below, not re-audited).
+Phases 3–6 are unimplemented and are **not** scored here.
+**Skills loaded**: `vercel-react-best-practices` (paths-injected) — not directly applicable to this
+phase's scope (`packages/client/src/realtime.ts`, no React/JSX code), consulted for completeness only.
+
+---
+
+### Task Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 2) | 9 |
+| Tasks complete | 9 |
+| Tasks incomplete | 0 |
+
+All 9 checkboxes (2.1–2.9) are `[x]` in `tasks.md` and land in commit `5b4af4b` with real
+substance — confirmed by direct `git show 5b4af4b -- packages/client/src/realtime.ts` inspection,
+not by trusting the checkbox alone.
+
+### Scenario → T-row → Task Mapping (Phase 2 slice)
+
+| Scenario | T-row | Task | Covering test | Result |
+|---|---|---|---|---|
+| First open no longer swallowed | T8 | 2.1 | `realtime-manager.mjs > 2.1` | ✅ COMPLIANT |
+| Late join on open channel → onOpen(false) | T9 | 2.2 | `realtime-manager.mjs > 2.2` | ✅ COMPLIANT |
+| Replay never fires onResync | T10 | 2.3 | `realtime-manager.mjs > 2.3` | ✅ COMPLIANT |
+| Genuine reconnect → onOpen(true) + resync | T11 | 2.4 | `realtime-manager.mjs > 2.4` | ✅ COMPLIANT |
+
+The mapping table's Phase 2 rows hold exactly as written: all four `client-live-queries` scenarios
+resolve to a task, each task resolves to exactly one covering test, and each test passed at
+runtime (re-run fresh below, not replayed from the apply report). `client-live-queries/spec.md`
+contains exactly **1 Requirement / 4 Scenarios** — the entirety of Phase 2's spec surface — and all
+four are compliant.
+
+Tasks 2.5 (error-channel replay, T12) and 2.6 (refcount invariant, T13) carry no spec scenario of
+their own — they are D1-mandated scaffolding/regression proofs, correctly listed among the tasks
+document's declared "13 T-rows kept as design-mandated scaffolding with no spec scenario." Both are
+real, load-bearing behavior (verified below), not invented tasks.
+
+---
+
+### Build & Tests Execution
+
+**Build**: ✅ Passed
+```text
+$ pnpm --filter @indigodb/client build
+> @indigodb/client@0.0.1 build
+> tsc
+(exit 0, no output)
+```
+
+**Tests**: ✅ 6 passed / 0 failed / 0 skipped (`realtime-manager.mjs`)
+```text
+$ node packages/client/test/realtime-manager.mjs
+@indigodb/client: RealtimeConnectionManager open-state (D1)
+  ok   2.1: first onOpen(false) reaches all listeners (no longer swallowed)
+  ok   2.2: subscribing to an already-open channel replays onOpen(false) synchronously before subscribe() returns
+  ok   2.3: replaying an already-open channel to a late subscriber never fires onResync
+  ok   2.4: a genuine reconnect fires onOpen(true) and exactly one onResync per listener
+  ok   2.5: a listener joining an errored channel is replayed the exact same stored Error instance
+  ok   2.6: refcount unchanged — one connect for N listeners, close only on the last unsubscribe
+
+All checks passed.
+```
+
+**Regression** (`live.mjs`, must stay green and unmodified): ✅ 37 passed / 0 failed / 1 skipped
+(14.1, `INDIGODB_TEST_DATABASE_URL` unset → correctly reported `skip`, never counted as pass).
+Confirmed `git diff ee4d652..HEAD -- packages/client/test/live.mjs` is **zero lines** — byte-identical
+to Phase 1's merged base, independently re-confirmed in this verify pass (not only accepted from the
+orchestrator's prior finding).
+
+Also re-ran (regression, unaffected by this change):
+- `node packages/client/test/realtime-entry.mjs` — 3/3 pass (browser-safety import-graph guard).
+- `pnpm --filter @indigodb/client lint` (`tsc --noEmit`) — clean, 0 errors.
+
+**Coverage**: ➖ Not available — no coverage tool configured in this package (plain-Node
+`node test/*.mjs`, no c8/nyc/istanbul wired into `package.json`).
+
+---
+
+### Spec Compliance Matrix
+
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| `RealtimeConnectionManager` replays current channel state to a listener joining an already-open channel | A listener joining an already-open channel is told it is live without waiting for a reconnect | `realtime-manager.mjs > 2.2` | ✅ COMPLIANT |
+| (same Requirement) | The first subscriber on a fresh channel now receives its own open signal | `realtime-manager.mjs > 2.1` | ✅ COMPLIANT |
+| (same Requirement) | A genuine reconnect still reports reconnected=true to every listener | `realtime-manager.mjs > 2.4` | ✅ COMPLIANT |
+| (same Requirement) | onOpen replay is additive and does not trigger onResync | `realtime-manager.mjs > 2.3` | ✅ COMPLIANT |
+
+**Compliance summary**: 4/4 scenarios compliant (1/1 Requirement, `client-live-queries` spec —
+the only spec delta Phase 2 touches).
+
+---
+
+### D1 Conformance — Detailed
+
+| D1 element | Required | Implemented | Verdict |
+|---|---|---|---|
+| `TableChannel` state model | `state: "connecting"\|"live"\|"error"`, `everOpened: boolean`, `lastError: Error \| null` | `realtime.ts:164-178` — exact three fields, exact three-state union | ✅ Match |
+| `ChannelListener.onOpen` | Optional `onOpen?(reconnected: boolean)` | `realtime.ts:195` — optional, correct signature | ✅ Match |
+| `onOpen` fan-out no longer early-returns | `if (!reconnected) return;` becomes an **inner** guard immediately before `l.onResync?.()`, not deleted | `realtime.ts:236-242`: loop calls `l.onOpen?.(reconnected)` unconditionally for every listener, then `if (reconnected) l.onResync?.()` | ✅ Match |
+| `onError` fan-out | Sets `state="error"`, `lastError=error`, fans out unchanged | `realtime.ts:244-248` | ✅ Match |
+| Replay on subscribe | Listener added **first**, then a snapshot of `state`/`lastError` taken **before** any callback runs is replayed synchronously; `live`→`onOpen(false)`, `error`→`onError(lastError)`, `connecting`→nothing; **never** `onResync` | `realtime.ts:254-271`: `activeChannel.listeners.add(listener)` precedes the snapshot; snapshot taken once, replay branches match exactly; no `onResync` call anywhere in the replay path | ✅ Match |
+| `reconnected: false` on replay | Deliberate — no gap to fill for a late joiner | `listener.onOpen?.(false)` at `realtime.ts:267` | ✅ Match |
+| Refcount / channel-key / `close()` semantics | Unchanged | `subscribe()`'s `if (!channel)` creation guard and the unsubscribe closure's `listeners.size === 0` → `close()` + `channels.delete(table)` are untouched from the pre-`5b4af4b` shape | ✅ Match |
+| `.live()` observes zero behavior change | `test/live.mjs` must stay green, unmodified | Confirmed zero-line diff + fresh green re-run (see above) | ✅ Match |
+
+**`onResync`'s trigger condition, old vs. new — explicit comparison** (D1's central promise):
+
+*Before (`ee4d652`, `git show ee4d652:packages/client/src/realtime.ts` around the `onOpen` handler):*
+```ts
+onOpen: (reconnected) => {
+  if (!reconnected) return;
+  for (const l of listeners) l.onResync?.();
+},
+```
+*After (`5b4af4b`):*
+```ts
+onOpen: (reconnected) => {
+  newChannel.state = "live";
+  newChannel.everOpened = true;
+  newChannel.lastError = null;
+  for (const l of [...listeners]) {
+    l.onOpen?.(reconnected);
+    if (reconnected) l.onResync?.();
+  }
+},
+```
+The old code's `if (!reconnected) return;` filtered out the whole handler body (including the
+`onResync` fan-out AND the — nonexistent at the time — `onOpen` fan-out) for a non-reconnect open.
+The new code cannot reuse an early return because `onOpen` must now fire unconditionally, so the
+exact same boolean test (`reconnected === true`) becomes an inline `if` immediately guarding only
+the `l.onResync?.()` call. The predicate is bit-for-bit unchanged (`reconnected === true` fires
+`onResync`, `reconnected === false` does not); only its syntactic form (guard clause → inline
+conditional) changed, which is exactly what design.md D1 promises. This is the reason `.live()` —
+which supplies no `onOpen` — is provably unaffected: the only branch it can ever observe
+(`onResync`) still fires under precisely the same condition as before.
+
+---
+
+### Mutation Reproduction (surgical, independent of the apply report)
+
+Per the orchestrator's pre-verified findings (adding `onResync?.()` to the live-snapshot replay
+path fails exactly test 2.3 while test 2.4 stays green — reproduced and accepted, not re-run here
+to avoid duplicate work), this verify pass independently reproduced **one additional** mutation the
+apply agent itself flagged as insufficiently isolated: task 2.6's original RED mutation (forcing
+channel recreation on every `subscribe()` call) broke 2.1/2.2/2.5 as well as its own target, because
+recreating the channel object also resets the replay-state snapshot those tests depend on — that is
+a genuine shared-code-path effect, not a flaw in the mutation's design, but it does mean 2.6's
+original proof was not evidence-isolated on its own.
+
+A narrower, isolated re-mutation was constructed for this verify pass instead: changed the
+unsubscribe closure's `ch.listeners.size === 0` guard to `ch.listeners.size <= 1` (closes one
+unsubscribe too early, touching only the close-refcount half of 2.6's claim, with zero change to
+`onOpen`/replay logic):
+
+```text
+Mutated:  if (ch.listeners.size <= 1) { ch.close(); this.channels.delete(table); }
+Result:   realtime-manager.mjs → FAIL 2.6 only, on its own assertion:
+          "expected the connection to stay open while a listener remains"
+          2.1/2.2/2.3/2.4/2.5 stayed green.
+```
+
+This mutation *did* also fail `live.mjs`'s scenario 9.3/9.4 ("the last subscriber on a table closes
+the shared connection; a remaining subscriber keeps it open") — on its own assertion, not a crash.
+This is the correct, expected outcome, not evidence of over-broad test coupling: 9.3/9.4 and 2.6
+exercise the exact same shared refcount logic in `RealtimeConnectionManager`, which both `.live()`
+and the raw manager legitimately depend on. A real regression in that logic should — and does —
+break both suites; this is the cross-consumer regression fence working as designed (see below).
+Mutation reverted; `git diff` confirmed clean before this report was written.
+
+**Assertion quality**: ✅ All 6 assertions in `realtime-manager.mjs` verify real behavior — no
+tautologies, no assertion-free production calls, no ghost loops, no ambient smoke tests. Every
+`check()` calls `manager.subscribe(...)` (real production code) and asserts a specific observed
+value (call count, boolean, or the *exact* `Error` instance for 2.5's identity check) rather than a
+type-only or existence-only predicate.
+
+---
+
+### Late-subscriber semantics
+
+| Joining state | Expected | Verified by | Result |
+|---|---|---|---|
+| `live` | Replayed `onOpen(false)` synchronously before `subscribe()` returns | `2.2` | ✅ |
+| `error` | Replayed `onError(lastError)` with the exact stored `Error` instance | `2.5` | ✅ |
+| `connecting` | No callback until the real transport transition | `2.1` (both listeners subscribe pre-`fireOpen`; only the transport event, not the subscribe call, produces the single observed `onOpen(false)`) | ✅ (implicit but real coverage) |
+| `closed` | — | N/A | ➖ Not a coverage hole |
+
+`TableChannel.state` is a strict `"connecting" | "live" | "error"` union — confirmed by direct read
+of `realtime.ts:164-178` — there is no fourth `"closed"` state anywhere in this model. On the last
+unsubscribe, the channel object is deleted from the `Map` outright (`realtime.ts:273-281`), not
+transitioned to a persisted "closed" state; a subsequent `subscribe()` for the same table builds a
+brand-new channel starting at `"connecting"`. A "closed"-state replay scenario is therefore
+structurally inapplicable to this design, not an untested case.
+
+---
+
+### Cross-consumer regression (`.live()`)
+
+`.live()` supplies no `onOpen` handler (confirmed: `rg -n "onOpen" packages/client/src/live.ts`
+returns no match), so the new `onOpen` fan-out and replay branches are entirely inert from its
+perspective — it cannot observe a callback it never registered. The two code paths `.live()` *does*
+depend on are unchanged in trigger condition (`onResync`, proven bit-for-bit above) and structurally
+untouched (refcount open-on-first/close-on-last, channel key = table name). The mutation
+reproduction above independently confirms a real regression in the shared refcount path is caught
+by `.live()`'s own suite (9.3/9.4), not just by the new manager suite — i.e., `.live()` gained
+*more* protection from this change (a second suite exercising the same shared class), not a new
+observable behavior. No `.live()` code path can newly observe a state change it could not observe
+before this commit; this is safe.
+
+---
+
+### Correctness (Static Evidence)
+
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| `TableChannel.state/everOpened/lastError` | ✅ Implemented | `realtime.ts:164-178`, exact D1 shape |
+| `ChannelListener.onOpen?(reconnected)` | ✅ Implemented | `realtime.ts:180-201`, optional, documented |
+| Replay-on-subscribe (live/error/connecting) | ✅ Implemented | `realtime.ts:254-271` |
+| `onResync` trigger condition preserved | ✅ Implemented | Explicit before/after comparison above |
+| Refcount / close semantics preserved | ✅ Implemented | `realtime.ts:207-282`, untouched structure |
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| D1 — corrected open-state model | ✅ Yes | All eight D1 elements matched line-for-line above |
+| D1 "what must not move" | ✅ Yes | `onResync` condition, refcount, channel key, `close()` all unchanged; `live.mjs` zero-diff |
+
+---
+
+### TDD Compliance
+
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Full RED/GREEN/TRIANGULATE table found in `apply-progress` for 2.1–2.6 |
+| All tasks have tests | ✅ | 6/6 RED tasks (2.1–2.6) have a dedicated `check()` case in `realtime-manager.mjs` |
+| RED confirmed (tests exist) | ✅ | `realtime-manager.mjs` exists, 189 lines, 6 checks, verified by direct read |
+| GREEN confirmed (tests pass) | ✅ | 6/6 pass on fresh re-run in this verify pass |
+| Triangulation adequate | ✅ | Each task has its own dedicated scenario/assertion set — no shared single-case coverage across distinct behaviors |
+| Safety net for modified files | ✅ | `live.mjs` (pre-existing, unmodified) re-run fresh and green as the safety net for the shared `realtime.ts` |
+
+**TDD Compliance**: 6/6 checks passed
+
+### Test Layer Distribution (Phase 2)
+
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 6 | 1 (`realtime-manager.mjs`) | plain Node, fake transport (no framework) |
+| Integration | 0 | 0 | — |
+| E2E | 0 | 0 | — |
+| **Total** | **6** | **1** | |
+
+Informational only (per strict-TDD verify rules) — a fake-transport unit suite is the correct layer
+for this pure state-machine class; no SUGGESTION raised.
+
+### Assertion Quality
+
+✅ All assertions verify real behavior (see Mutation Reproduction section above for the detailed
+audit).
+
+### Quality Metrics
+
+**Linter**: ✅ No errors (`pnpm --filter @indigodb/client lint` → `tsc --noEmit`, exit 0)
+**Type Checker**: ✅ No errors (same command; this package's lint IS its type check)
+
+---
+
+### Issues Found
+
+**CRITICAL**: None
+**WARNING**: None
+**SUGGESTION**: None
+
+---
+
+### Verdict
+
+**PASS**
+
+All 9 Phase 2 tasks complete with real substance in `5b4af4b`; all 4 `client-live-queries`
+scenarios compliant against a fresh test run; D1 conformance verified line-by-line including the
+bit-for-bit `onResync` trigger-condition proof; `live.mjs` independently reconfirmed zero-diff and
+green; a surgical, isolated mutation reproduction confirms task 2.6's refcount claim on its own
+assertion, and its cross-suite failure in `live.mjs` is the expected, correct behavior of a shared
+regression fence rather than a test-isolation defect; late-subscriber semantics for `live`/`error`/
+`connecting` are all covered, and the absence of a `closed`-state test is confirmed structurally
+inapplicable rather than a coverage hole.
+
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:0348a957d97cd1be45d67696fd55c0bb1e6e35534efdf69180e69c7fb8b643c2
 verdict: pass
 blockers: 0
