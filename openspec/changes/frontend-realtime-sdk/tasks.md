@@ -248,12 +248,12 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 4 — Slice 4: Docs (README, TanStack recipe, non-goals) [PR 4/6, M1] — depends on Phase 3
 
-- [ ] 4.1 RED `packages/client/test/readme-contract.mjs` (new): literal string `@indigodb/client/realtime` in a browser-usage section. Mutation: keep the string but rename/move the heading out of that section; scoping assertion must fail.
-- [ ] 4.2 RED same file: browser section states wake-only/no-row-data explicitly. Mutation: omit the required phrase; string-match assertion must fail.
-- [ ] 4.3 RED same file: browser section states the query non-goal and "own backend". Mutation: omit the "own backend" clause; assertion must fail.
-- [ ] 4.4 RED same file: TanStack recipe calls `createLiveSubscription` with `onWake` invoking `queryClient.invalidateQueries` — closes the coverage hole where T41 alone couldn't prove this scenario. Mutation: recipe calls `refetch()` instead; code-sample assertion must fail.
-- [ ] 4.5 GREEN `packages/client/README.md`: write the browser section, wake-only contract, non-goals, worked TanStack recipe. Make 4.1–4.4 pass.
-- [ ] 4.6 Verify: `node packages/client/test/readme-contract.mjs`; `pnpm --filter @indigodb/client test`.
+- [x] 4.1 RED `packages/client/test/readme-contract.mjs` (new): literal string `@indigodb/client/realtime` in a browser-usage section. Mutation: keep the string but rename/move the heading out of that section; scoping assertion must fail.
+- [x] 4.2 RED same file: browser section states wake-only/no-row-data explicitly. Mutation: omit the required phrase; string-match assertion must fail.
+- [x] 4.3 RED same file: browser section states the query non-goal and "own backend". Mutation: omit the "own backend" clause; assertion must fail.
+- [x] 4.4 RED same file: TanStack recipe calls `createLiveSubscription` with `onWake` invoking `queryClient.invalidateQueries` — closes the coverage hole where T41 alone couldn't prove this scenario. Mutation: recipe calls `refetch()` instead; code-sample assertion must fail.
+- [x] 4.5 GREEN `packages/client/README.md`: write the browser section, wake-only contract, non-goals, worked TanStack recipe. Make 4.1–4.4 pass.
+- [x] 4.6 Verify: `node packages/client/test/readme-contract.mjs`; `pnpm --filter @indigodb/client test`.
 
 ## Phase 5a — Slice 5a: `@indigodb/react` skeleton + guards (D8) [PR 5a/6, M2] — depends on Phase 3
 
