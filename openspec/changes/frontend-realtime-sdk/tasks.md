@@ -257,12 +257,12 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 5a — Slice 5a: `@indigodb/react` skeleton + guards (D8) [PR 5a/6, M2] — depends on Phase 3
 
-- [ ] 5a.1 Create `packages/react/package.json` (`@indigodb/react@0.0.1`, ESM, `peerDependencies:{react:">=18.0.0"}`, `files:["dist"]`), `tsconfig.json`, `src/index.ts` stub.
-- [ ] 5a.2 Scaffold vitest + jsdom + `@testing-library/react` devDependencies, `vitest.config.ts` — first such renderer setup outside `apps/studio`; own verification step, not folded into 5b.
-- [ ] 5a.3 RED `packages/react/test/browser-safety.mjs`: reachable-specifier scan, `FORBIDDEN=["pg", /^node:/]`, over `packages/react`'s import graph (T37). Mutation: value-import root `@indigodb/realtime` instead of `/protocol`; scan must fail.
-- [ ] 5a.4 GREEN: `src/index.ts` imports only `@indigodb/client/realtime`. Make 5a.3 pass.
-- [ ] 5a.5 Verify: `scripts/check-pack-contents.mjs` against `packages/react` — packs only `dist`, ships `main` (T38). No script change.
-- [ ] 5a.6 Verify: `pnpm --filter @indigodb/react build && pnpm --filter @indigodb/react lint && pnpm --filter @indigodb/react test` green with an empty/stub hook.
+- [x] 5a.1 Create `packages/react/package.json` (`@indigodb/react@0.0.1`, ESM, `peerDependencies:{react:">=18.0.0"}`, `files:["dist"]`), `tsconfig.json`, `src/index.ts` stub.
+- [x] 5a.2 Scaffold vitest + jsdom + `@testing-library/react` devDependencies, `vitest.config.ts` — first such renderer setup outside `apps/studio`; own verification step, not folded into 5b.
+- [x] 5a.3 RED `packages/react/test/browser-safety.mjs`: reachable-specifier scan, `FORBIDDEN=["pg", /^node:/]`, over `packages/react`'s import graph (T37). Mutation: value-import root `@indigodb/realtime` instead of `/protocol`; scan must fail.
+- [x] 5a.4 GREEN: `src/index.ts` imports only `@indigodb/client/realtime`. Make 5a.3 pass.
+- [x] 5a.5 Verify: `scripts/check-pack-contents.mjs` against `packages/react` — packs only `dist`, ships `main` (T38). No script change.
+- [x] 5a.6 Verify: `pnpm --filter @indigodb/react build && pnpm --filter @indigodb/react lint && pnpm --filter @indigodb/react test` green with an empty/stub hook.
 
 ## Phase 5b — Slice 5b: `useLiveTable` hook (D4/D5) [PR 5b/6, M2] — depends on Phase 5a
 
