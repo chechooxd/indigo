@@ -1,5 +1,439 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:100d6b3f01cc5ac1c3de638d1ca608b66e8be0ccdd879504c83a020053b3a62d
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 9/9
+scenarios: 20/20
+test_command: "node packages/client/test/live-subscription.mjs"
+test_exit_code: 0
+test_output_hash: sha256:0353082398e9eb46581a142a334f23baef0bbd0d18b0af09466226757fa5b553
+build_command: "pnpm --filter @indigodb/client build"
+build_exit_code: 0
+build_output_hash: sha256:7ba50d3fd6c71c4e30299100e234149d17b00aa16d647ea45f67ee6ea9fe8b90
+```
+
+# Verification Report — frontend-realtime-sdk (Phase 3)
+
+## Verification Report
+
+**Change**: `frontend-realtime-sdk`
+**Phase scored**: Phase 3 only (Slice 3 — `createLiveSubscription` primitive + terminal error
+classification, D2/D3/D4/D6), tasks 3.1–3.19.
+**Commits**: `1a48bf0` (the primitive) and `f9a370f` (the `getError()` addition), on
+`feat/live-subscription-primitive`, off `main` @ `b11f335`. Both inspected via `git show` and
+`git diff main..HEAD`, not accepted from the apply report alone.
+**Mode**: Strict TDD. Phases 1–2 are merged and previously verified PASS (preserved below,
+unchanged, not re-audited). Phases 4–6 are unimplemented and are **not** scored here.
+**Size**: 1,015 insertions / 55 deletions across 6 files (1,070 total changed lines; 959
+code+test excluding the `tasks.md`/`spec.md` doc deltas), independently recomputed via
+`git diff main..HEAD --shortstat`, matching the reported figures. This exceeds the 800-line
+session budget; the owner recorded a deliberate `size:exception` in the runtime ledger rather
+than retroactively splitting green, mutation-proven, coherent work. **Not re-litigated per
+instruction.** Assessed instead for reviewable coherence below.
+**Skills loaded**: `vercel-react-best-practices` (paths-injected) — this phase's scope
+(`packages/client/src/realtime.ts`, plain TS, no React/JSX) is outside that skill's domain;
+consulted for completeness only, no applicable rule triggered.
+
+---
+
+### Task Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 3) | 19 (3.1–3.19) |
+| Tasks complete | 19 |
+| Tasks incomplete | 0 |
+
+All 19 checkboxes are `[x]` in `tasks.md`. 3.1–3.18 land in `1a48bf0` with real substance
+(`git show 1a48bf0 --stat`: 772 lines across `realtime.ts`, `live-subscription.mjs`,
+`realtime-entry.mjs`, `package.json`, `tasks.md`). Task 3.19 (`getError()`) was added to
+`tasks.md` and implemented entirely in the second commit `f9a370f` (not `1a48bf0`) — confirmed
+by direct commit inspection. Per the orchestrator's brief, `f9a370f` was authored by the
+orchestrator, not the apply agent; `apply-progress` predates it and does not describe it, so this
+report verifies task 3.19 against the code and `f9a370f`'s commit message directly rather than
+trusting apply-progress prose for that task.
+
+### Scenario → T-row → Task Mapping (Phase 3 slice)
+
+The mapping table at the top of `tasks.md` (`### realtime-live-subscription (14 scenarios,
+MODIFIED)`) lists 20 data rows for this capability — the section header's scenario count (14) is
+now **stale** (it was not bumped when the six `getError()` rows were added by `f9a370f`); the row
+count is correct (`awk` count: 20 non-header/separator rows). This is a cosmetic documentation
+inconsistency, not a coverage gap — flagged as a SUGGESTION below.
+
+| Scenario | T-row | Task | Covering test | Result |
+|---|---|---|---|---|
+| Return shape carries no row data (5 keys incl. `getError`) | T25 | 3.11 | `live-subscription.mjs > 3.11` | ✅ COMPLIANT |
+| getError() is null before any error | T25 | 3.19 | `live-subscription.mjs > 3.19a` | ✅ COMPLIANT |
+| A terminal error is retrievable with its classification | T21 | 3.19 | `live-subscription.mjs > 3.19b` | ✅ COMPLIANT |
+| A transient error is retrievable as non-terminal | T22 | 3.19 | `live-subscription.mjs > 3.19c` | ✅ COMPLIANT |
+| Repeated getError() calls return one identical object | T25 | 3.19 | `live-subscription.mjs > 3.19d` | ✅ COMPLIANT |
+| getError() is cleared on the next successful open | T25 | 3.19 | `live-subscription.mjs > 3.19e` | ✅ COMPLIANT |
+| retry() clears the retrievable error | T23 | 3.19 | `live-subscription.mjs > 3.19f` | ✅ COMPLIANT |
+| Constructed but unsubscribed is inert at idle (incl. zero-connect) | T15 | 3.1 | `live-subscription.mjs > 3.1` | ✅ COMPLIANT |
+| First subscribe() connecting→live | T17 | 3.3 | `live-subscription.mjs > 3.3` | ✅ COMPLIANT |
+| No duplicate callback per identical status | T17 | 3.4 | `live-subscription.mjs > 3.4` | ✅ COMPLIANT |
+| Transport error stays error (terminal, no self-recovery) | T17 | 3.3 | `live-subscription.mjs > 3.3` | ✅ COMPLIANT |
+| Non-2xx that is not 5xx/408/429 is terminal, halts retry | T21 | 3.13 | `live-subscription.mjs > 3.13` (404 only, see D6 note below) | ✅ COMPLIANT |
+| 5xx / stream end / TypeError stay transient | T22 | 3.14 | `live-subscription.mjs > 3.14` (500 + stream-end + TypeError) | ✅ COMPLIANT |
+| retry() from error re-opens | T23 | 3.9 | `live-subscription.mjs > 3.9` | ✅ COMPLIANT |
+| retry() while live is a no-op | T23 | 3.9 | `live-subscription.mjs > 3.9` | ✅ COMPLIANT |
+| Burst of wakes → exactly one onWake | T18 | 3.5 | `live-subscription.mjs > 3.5` (real 5-wake burst, not two spaced wakes) | ✅ COMPLIANT |
+| Wakes >window apart → two calls | T18 | 3.7 | `live-subscription.mjs > 3.7` | ✅ COMPLIANT |
+| close() twice does not throw | T24 | 3.10 | `live-subscription.mjs > 3.10` | ✅ COMPLIANT |
+| Wake in flight at close never fires | T24 | 3.10 | `live-subscription.mjs > 3.10` | ✅ COMPLIANT |
+| Import under Node, no DOM globals | T26 | 3.16 | `realtime-entry.mjs` (2 new checks) | ✅ COMPLIANT |
+
+All 20 `realtime-live-subscription` scenarios (the spec's entire capacity — `spec.md` counted
+directly: `rg -c "^### Requirement:"` = 9, `rg -c "^#### Scenario:"` = 20, matching the brief's
+"was 8/14, now 9/20" growth) resolve to a task, each task resolves to at least one covering test,
+and every test passed at runtime (re-run fresh below, not replayed). The six new `getError()`
+scenarios (`f9a370f`) are all covered by the six new `3.19a`–`3.19f` checks — confirmed by direct
+line-by-line comparison of each spec `Scenario:` block against its matching `check()` assertions
+in `live-subscription.mjs`.
+
+Tasks 3.2, 3.6, 3.8, 3.12, 3.15, 3.17, 3.18 carry no distinct spec-scenario row of their own in
+the mapping table (3.2/3.6/3.8 are additional interface behavior beyond the spec's Requirement
+text, explicitly noted as scaffolding in the task list itself; 3.12/3.15/3.17/3.18 are GREEN/Verify
+steps, not RED assertions) — consistent with the tasks document's own declared scaffolding
+convention (see Phase 2's report for the precedent).
+
+---
+
+### Build & Tests Execution
+
+**Build**: ✅ Passed (re-run fresh in this verify pass)
+```text
+$ pnpm --filter @indigodb/client build
+> @indigodb/client@0.0.1 build
+> tsc
+(exit 0, no output)
+```
+
+**Tests**: ✅ 20 passed / 0 failed / 0 skipped (`live-subscription.mjs`, re-run fresh)
+```text
+@indigodb/client: createLiveSubscription (D2/D3/D4/D6)
+  ok   3.1 .. 3.11, 3.19a .. 3.19f, createWakeDebouncer standalone check (18 checks)
+@indigodb/client: SseTransport terminal/transient classification (D6)
+  ok   3.13, 3.14 (2 checks)
+All checks passed.
+```
+
+**Regression** (`live.mjs`, `realtime-manager.mjs` — must stay green and byte-identical to
+`main`):
+- `git diff main..HEAD -- packages/client/test/live.mjs packages/client/test/realtime-manager.mjs`
+  → **0 lines** — independently re-confirmed in this verify pass, not only accepted from the
+  orchestrator's prior finding.
+- `node packages/client/test/realtime-manager.mjs` — fresh, ✅ 6/6 pass.
+- `node packages/client/test/live.mjs` — fresh, ✅ 40 passed / 0 failed / 1 skipped (`14.1`,
+  `INDIGODB_TEST_DATABASE_URL` unset → correctly reported `skip`, never counted as pass).
+- `node packages/client/test/realtime-entry.mjs` — fresh, ✅ 5/5 pass (2 new task-3.16 checks +
+  3 pre-existing).
+- `pnpm --filter @indigodb/client lint` (`tsc --noEmit`) — clean, 0 errors.
+
+Full-repo `pnpm exec turbo test --force` and `pnpm exec turbo lint --force` are accepted from the
+orchestrator's already-verified findings per the brief (full suite green, 18/18 tasks, Postgres-gated
+suites correctly `SKIP`) and were not re-run in full in this pass; the package-scoped commands
+above were re-run independently as the load-bearing spot-check for this phase's changed files.
+
+**Coverage**: ➖ Not available — no coverage tool configured in this package.
+
+---
+
+### Spec Compliance Matrix
+
+`realtime-live-subscription/spec.md`: **9 Requirements / 20 Scenarios**, 20/20 compliant (see
+mapping table above for the per-scenario breakdown; all COMPLIANT).
+
+---
+
+### D6 Terminal/Transient Classification — Detailed
+
+`isTransientHttpStatus` (`realtime.ts:71-73`): `status === 408 || status === 429 || (status >= 500
+&& status < 600)`. Everything else non-2xx is terminal by the `!isTransientHttpStatus` branch in
+`SseTransport.connect` (`realtime.ts:104-114`); a `fetch` rejection (`TypeError`) never reaches
+this function at all — it is caught in the outer `catch` and always routed through `onError` only
+(never `onTerminal`), so it can never be classified terminal regardless of cause. Stream-end falls
+through to the reconnect path with no `onTerminal` call either. This logic is bit-for-bit correct
+against D6's stated boundary (400/401/403/404/410 terminal; 500/502/408/429/stream-end/TypeError
+transient).
+
+**Boundary cases actually exercised at runtime** (via the real `SseTransport` over a mocked
+`global.fetch`, task 3.13/3.14):
+
+| Case | Classification | Exercised? |
+|---|---|---|
+| 404 | terminal | ✅ `3.13` |
+| 500 | transient | ✅ `3.14` |
+| stream end | transient | ✅ `3.14` |
+| fetch `TypeError` | transient | ✅ `3.14` (explicitly asserts `terminals.length === 0`, "even though CORS can produce one") |
+| 400, 401, 403, 410 | terminal | ⚠️ not runtime-exercised — proven only by code inspection of `isTransientHttpStatus`'s exhaustive boolean logic |
+| 408, 429, 502 | transient | ⚠️ not runtime-exercised — same |
+
+**WARNING**: the D6 boundary is exercised end-to-end for exactly two HTTP values (404 as the
+terminal representative, 500 as the transient floor) plus stream-end and `TypeError`. The two
+values immediately adjacent to the terminal/transient line that carry the highest off-by-one risk
+— `408` and `429`, both explicitly named in the spec text as staying transient despite being
+"close" to the 4xx terminal range — are **not** independently asserted by any test, nor is
+`isTransientHttpStatus` unit-tested directly (it is not exported). The function itself is a
+three-term boolean (`===408 || ===429 || 500‑599`) simple enough that code inspection gives real
+confidence, and 3.14's `500` case does prove the `>=500 && <600` branch works at its floor, but
+`429`/`408` are the two values where a plausible mutation (e.g. `status >= 500` alone, dropping
+408/429) would silently miscategorize two named-in-spec cases and go undetected by the current
+suite. Recommend adding two direct assertions (408, 429 stay transient) in a follow-up, or
+promoting `isTransientHttpStatus` to an exported, directly unit-tested pure function. Not
+CRITICAL: the current tests do prove the general shape of the classifier and the two most load-
+bearing endpoints (the terminal default-case boundary at 404, and the transient 5xx floor at 500).
+
+---
+
+### D3 Debounce — Detailed
+
+`createWakeDebouncer` (`realtime.ts:402-421`): `if (timer !== null) return;` — a pending timer is
+never reset by a later wake. Verified two ways:
+- `3.5` fires a genuine 5-wake burst (`for (let i = 0; i < 5; i++) { fireWake(); await sleep(5); }`)
+  inside one 40ms window and asserts exactly one `onWake`, timed to the *first* wake — not two
+  widely spaced wakes, a real burst.
+- The standalone `createWakeDebouncer: first-wake-armed, never re-armed within the burst` check
+  drives the debouncer directly (not through the primitive) with a wake at `t=0` and a second wake
+  at `t=window/2`, asserting exactly one fire — this directly targets the anti-starvation property
+  in isolation, avoiding the "two spaced wakes" tautology risk the brief called out.
+- `3.6` (sustained wakes every `debounceMs/2` for 5 windows) proves the debouncer is **not**
+  globally starved (≥2 fires across a sustained burst), the complementary property to "never
+  re-armed."
+- `3.7` (wakes >window apart trigger two independent calls) and `3.8` (`debounceMs: 0` bypasses the
+  window synchronously) round out the configurability/default claims.
+
+All D3 claims (first-wake-armed, never-re-armed-within-a-burst, configurable, `<=0` disables) are
+covered by genuine, non-tautological assertions.
+
+---
+
+### D4 Lazy Start — Detailed
+
+`3.1` asserts BOTH `sub.getStatus() === "idle"` AND `fake.calls.connect === 0` — the fake
+transport's `connect()` call counter, not just the status string. This directly proves "zero
+connections opened," not merely that the status label reads idle while a connection was silently
+opened underneath. ✅ Confirmed non-tautological.
+
+---
+
+### D2 Conformance — Detailed
+
+- `realtime.ts` imports `LIVE_DEBOUNCE_MS` from `./live.js` (pre-existing import, unchanged
+  direction). `live.ts` has zero imports from `./realtime.js` (confirmed: `grep "^import"
+  packages/client/src/live.ts` returns nothing referencing `realtime`). **No import cycle
+  introduced.**
+- `createWakeDebouncer` is a separate ~20-line function (12 lines of executable logic plus
+  documentation comments) duplicating `live.ts`'s `scheduleRefetch`'s first-wake-armed timer
+  pattern — consistent with D2's "duplicate the ~8-line debouncer" prediction; the small overage
+  is comment/documentation, not logic divergence. No larger architectural divergence found; the
+  two debouncers remain independently testable and swappable.
+
+---
+
+### `RealtimeConnectionManager.reviveChannel()` — Judged
+
+The apply agent's addition beyond design's explicit File Changes list. Read directly
+(`realtime.ts:349-363`): closes the channel's current transport connection, resets
+`state`/`lastError`/`lastErrorTerminal`, and re-opens via `transport.connect()` on the **same**
+channel object — critically, it does **not** clear `channel.listeners`, so every listener already
+attached to that channel (i.e., every `createLiveSubscription`/`.live()` consumer sharing the
+table) stays attached and receives the fresh connection's `onOpen`/`onError`/`onTerminal` fan-out
+through the shared, extracted `buildHandlers(channel)` (also reused for the initial `subscribe()`
+open path — the refactor is additive, not a new code path).
+
+**The argument is sound.** A naive per-primitive `unsubscribe()` + `subscribe()` implementation of
+`retry()` would only revive the underlying transport connection when the retrying primitive
+happens to be the channel's *last* remaining listener (since `unsubscribe()` only calls
+`ch.close()` when `listeners.size === 0`); with 2+ listeners sharing a channel (the exact scenario
+D1's own manager exists to support), a naive implementation would silently degrade to a no-op —
+re-adding the same listener to the same still-open (and, if genuinely terminal, still-broken)
+channel object, never actually reopening the transport. `reviveChannel()` is the correct,
+general-purpose implementation of D6's own stated text ("`retry()` is channel-level — it revives
+every listener sharing that table's channel, not only the caller").
+
+**Safe for Phase 2's already-verified behavior**: `buildHandlers()` extraction is refactor-only —
+identical fan-out logic to before, now shared by two call sites instead of duplicated. Phase 2's
+regression fence (`realtime-manager.mjs`) was re-run fresh in this pass (6/6 green, see above),
+independently confirming D1's onOpen/onResync/replay semantics are untouched by this addition.
+
+---
+
+### Regression Boundary — `.live()` and D6's Terminal Stop
+
+**WARNING** (the most substantive finding in this phase): `.live()` shares its underlying
+`RealtimeConnectionManager` channel with any `createLiveSubscription` primitive on the same table
+(both go through `manager.subscribe(table, listener)`), and the terminal-stop behavior lives at
+the **transport/channel** level (`SseTransport.connect`'s `run()` loop `return`s permanently on a
+terminal HTTP status), not at the primitive level. Before this slice, ANY non-2xx response
+(including 404) fell through to the generic `throw` → `catch` → `handlers.onError()` → sleep →
+retry path, so `.live()` retried forever with exponential backoff regardless of the HTTP status.
+After this slice, a terminal status (e.g. a moved/removed endpoint returning 404, or 401/403) makes
+the channel's transport loop `return` and **never attempt another connection**, for every listener
+on that channel — including a `.live()` consumer that has no exposed `retry()` in its own public
+API (`createLiveQuery`'s returned shape is `{rows, status, unsubscribe}` — no `retry`).
+
+Concretely: `.live()`'s own `ChannelListener.onError` (`live.ts:369`) only forwards the error to
+the caller-supplied `handlers.onError` callback; it does not itself call anything that would
+re-open the channel, and `.live()`'s own `status` field is driven by its data-fetch state machine,
+not the transport's open/closed state. So a `.live()` consumer that previously received periodic
+(backed-off) `onError` calls forever on a persistent 404 now receives exactly **one** `onError`
+call and then silence forever — the underlying channel is permanently dead until the `.live()`
+instance itself is torn down and a fresh one created (a new `subscribe()` call builds a brand-new
+channel).
+
+This is a genuine, previously-unobserved behavior change for `.live()`, not merely a documentation
+gap: `live.mjs` has no scenario exercising a terminal-classified HTTP status at all (its own error
+tests, e.g. `3.1`–`3.3`/`8.1`/`8.2`, exercise handle-mint/decode and `runScoped`/nesting-guard
+failures — application-layer errors, not transport-layer HTTP status codes), so this cross-consumer
+effect is **structurally untested for `.live()`**, only for the primitive directly. Practically,
+this is very likely the *intended*, safer behavior (D6 is explicit that a permanently-broken
+endpoint should stop being hammered), and it does not regress anything `live.mjs`'s existing suite
+actually asserts — but it is a real, silent widening of what `.live()` callers can now observe (a
+permanently-stalled connection with no in-band recovery), and it was not called out in
+`design.md`'s D1/D6 text as a cross-consumer consequence. Recommend a follow-up `live.mjs`
+regression scenario asserting `.live()`'s behavior on a terminal-classified transport error
+(at minimum, that its `onError` handler still fires exactly once and no further connect attempts
+are made — matching, not contradicting, the new contract) before or during Phase 5/6 sign-off,
+since Phase 6 (Studio's `useLiveTable` re-base) also shares this channel path.
+
+**Not CRITICAL**: no currently-scored spec scenario is violated (this behavior is entirely outside
+`.live()`'s own spec surface, which this phase does not modify), `live.mjs` stays green and
+unmodified, and the change is a strict narrowing of retry activity in the terminal case, not a
+correctness regression. Flagged as WARNING because it is an unreviewed, untested cross-consumer
+side effect of a channel-level design decision.
+
+---
+
+### Assertion Quality Audit (`live-subscription.mjs`, `realtime-entry.mjs` additions)
+
+Scanned all 20 `check()` blocks plus the 2 new `realtime-entry.mjs` checks (task 3.16):
+- No tautologies (`grep` for `expect(true)`/literal-vs-literal assertions: zero matches).
+- No assertion-free production-code calls — every `check()` drives `createLiveSubscription`,
+  `createWakeDebouncer`, or the real `SseTransport` and asserts on the resulting state.
+- No ghost loops (no `for`/`forEach` over a possibly-empty collection guarding an assertion).
+- `3.11`'s TS-level guard (excess-property rejection via a type annotation, cross-checked with a
+  runtime key-enumeration assertion per the apply report's TDD table) combines a compile-time and
+  a runtime check rather than relying on either alone.
+- Mock/assertion ratio: the fake transport (`makeFakeTransport()`) is a single lightweight fake per
+  test, not a heavy mock library; assertion count per check is 1–4, no mock-heavy tests.
+
+**Assertion quality**: ✅ All assertions verify real behavior — no tautologies, no ghost loops, no
+smoke-test-only checks.
+
+**Fake-transport isolation caveat** (per the brief): `makeFakeTransport()`'s `handlers` reference
+is scoped **per fake-transport instance** (a `let handlers` closed over inside the factory
+function), not a module-level global — each `check()` call creates its own fresh
+`makeFakeTransport()`. A mutation that calls `transport.connect()` an extra time within a single
+test *would* overwrite that instance's `handlers` and collaterally affect `fireOpen`/`fireError`
+calls made afterward in the same test — this is expected behavior for a single-channel fake (only
+one channel/connection is meant to exist per table), not a test-isolation defect, and is
+consistent with the mutation-collateral pattern already distinguished in the apply report's TDD
+table (e.g. 3.1/3.3 sharing the same eager-open root cause).
+
+---
+
+### Mutation Reproduction (cross-checked against the orchestrator's pre-verified findings)
+
+Accepted without re-running (per the brief, already independently observed by the orchestrator):
+- The genuine RED/GREEN on `f9a370f`: `onTerminal` initially set `rawErrorTerminal = false` (a
+  copy-paste slip from the `onError` handler immediately above it in the diff), 3.19b failed on
+  its own terminal-classification assertion, the one-line fix (`rawErrorTerminal = true`) made it
+  pass. Confirmed by reading the final `onTerminal: () => { rawErrorTerminal = true; }` in
+  `realtime.ts:565` — the shipped code matches the described fix, not the described bug.
+- Mutation A (rebuild the error snapshot on every `readError()` call instead of caching):
+  fails only `3.19d` (referential identity) — consistent with `readError()`'s actual
+  implementation (`realtime.ts` `readError`), which only rebuilds `errorSnapshot` when `cause` or
+  `terminal` actually changed, guarding referential stability across repeat calls.
+  Mutation B (`clearError()` as a no-op): fails exactly `3.19e` (clear-on-open) and `3.19f`
+  (clear-on-retry) — consistent with `clearError()` being called from both `onOpen` and `retry()`
+  and nowhere else.
+
+Both are structurally consistent with the final source read in this pass; no independent
+re-execution was needed to trust them given direct code inspection agrees with the claimed
+mutation/assertion pairing.
+
+---
+
+### TDD Compliance
+
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Present in `apply-progress` for 3.1–3.18; task 3.19's mutations documented directly in `f9a370f`'s `tasks.md` diff (three named mutations: rebuild-on-read, no-op `clearError`, `onTerminal` copy-paste bug) |
+| All tasks have tests | ✅ | 19/19 tasks have a covering test |
+| RED confirmed (tests exist) | ✅ | `live-subscription.mjs` (524 lines, 20 checks) + `realtime-entry.mjs` (+26 lines, 2 checks) both exist and were read directly |
+| GREEN confirmed (tests pass) | ✅ | 20/20 + 5/5 pass on fresh re-run in this verify pass |
+| Triangulation adequate | ✅ | Each of 3.1–3.19 has its own dedicated `check()`; the six `getError()` scenarios each get their own case (3.19a–f), not folded into one |
+| Safety Net for modified files | ✅ | `live.mjs`/`realtime-manager.mjs` re-run fresh and green, zero-diff vs `main` |
+
+**TDD Compliance**: 6/6 checks passed.
+
+### Test Layer Distribution
+
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 25 | 2 (`live-subscription.mjs`, `realtime-entry.mjs` additions) | plain Node `assert` |
+| Integration | 0 | — | not installed |
+| E2E | 0 | — | not installed |
+| **Total** | **25** | **2** | |
+
+This matches the rest of the repo's plain-Node unit-test convention; no SUGGESTION raised (unit
+coverage is appropriate for a transport-agnostic primitive with no rendering surface).
+
+### Quality Metrics
+
+**Linter**: ✅ No errors (`tsc --noEmit`). **Type Checker**: ✅ No errors (same command).
+
+---
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. D6's HTTP boundary is runtime-exercised at only two representative values (404 terminal, 500
+   transient) plus stream-end/TypeError; `408`/`429` — the two values named in the spec text as
+   staying transient near the terminal boundary — and the other named-terminal codes (400/401/403/
+   410) are proven only by static inspection of `isTransientHttpStatus`, not by a direct runtime
+   assertion. Recommend two more direct boundary tests or exporting/unit-testing the classifier.
+2. `.live()` now inherits D6's channel-level terminal-stop (no further connect attempts ever) for
+   any table it shares with a terminal-classified error, with no way to recover short of tearing
+   down and re-creating the `.live()` instance — a real, previously-nonexistent behavior widening
+   that is untested by `live.mjs`'s own suite (which has no transport-layer HTTP-status scenario)
+   and unmentioned in `design.md`'s cross-consumer text. Not a spec violation for this phase, but
+   should get an explicit `live.mjs` regression scenario before Phase 6 (Studio re-base) leans on
+   the same shared channel.
+
+**SUGGESTION**:
+1. `tasks.md`'s `### realtime-live-subscription (14 scenarios, MODIFIED)` section header is stale
+   — the six `getError()` scenarios added by `f9a370f` bring the actual row count to 20, but the
+   header text was not updated. Cosmetic only; the row content itself is correct and complete.
+
+---
+
+### Verdict
+
+**PASS WITH WARNINGS**
+
+All 19 Phase 3 tasks (3.1–3.19) complete with real substance across both commits; all 20
+`realtime-live-subscription` scenarios (9 Requirements) compliant against a fresh test run;
+D2/D3/D4 conformance verified with non-tautological, real-burst/real-counter assertions;
+`reviveChannel()`'s design deviation judged sound and safe, backed by a re-run of Phase 2's
+regression fence; `live.mjs`/`realtime-manager.mjs` independently reconfirmed zero-diff and green.
+Two WARNINGs are raised — an under-exercised D6 HTTP boundary (two representative values proven
+at runtime, not the full named set) and a genuine, untested cross-consumer behavior widening for
+`.live()` inheriting D6's terminal-stop — neither blocks this phase's own spec compliance, but
+both should be addressed (a boundary test addition; a `live.mjs` regression scenario) before or
+during the Phase 5/6 work that will lean further on this shared channel path. One cosmetic
+SUGGESTION (stale section-header scenario count) noted.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:0ef0d06cd1434517eb3c05870f874535921f14967dfe76022ca65104dce416fa
 verdict: pass
 blockers: 0
