@@ -20,7 +20,7 @@
     "build": "tsc",
     "clean": "rm -rf dist .turbo",
     "lint": "tsc --noEmit",
-    "test": "node test/wal-source.mjs && node test/source-contract.mjs && node test/readiness-no-db-env-guard.mjs && node test/pg-harness.mjs && node test/parity.mjs && node test/resume.mjs && node test/log.mjs && node test/buckets.mjs && node test/handle.mjs && node test/endpoint.mjs && node test/dispatch.mjs"
+    "test": "node test/wal-source.mjs && node test/source-contract.mjs && node test/readiness-no-db-env-guard.mjs && node test/pg-harness.mjs && node test/parity.mjs && node test/resume.mjs && node test/log.mjs && node test/buckets.mjs && node test/handle.mjs && node test/endpoint.mjs && node test/dispatch.mjs && node test/origin-allowlist.mjs"
   },
   "dependencies": {
     "@indigodb/core": "workspace:*",

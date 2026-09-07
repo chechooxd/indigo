@@ -380,6 +380,23 @@ export function resolveStudioAuditLog(option: boolean | undefined, env: string |
 }
 
 /**
+ * D7 origin allowlist resolution (`realtime-origin-allowlist`, task 1.8):
+ * `--allow-origin` (repeatable) MERGES with the comma-separated
+ * `INDIGODB_REALTIME_ALLOWED_ORIGINS` into ONE array — neither source
+ * overwrites the other, unlike every other resolver in this file (flag >
+ * env precedence). Both `indigodb realtime` and `indigodb studio` share
+ * this resolver, so an operator can combine a persistent env-configured
+ * allowlist with a one-off flag addition. Flag entries come first, then env
+ * entries (each trimmed, empty segments dropped), de-duplicated overall.
+ * Both absent ⇒ `[]`, which `RealtimeEngine` treats as closed by default.
+ */
+export function resolveAllowedOrigins(flagValues: string[] | undefined, env: string | undefined): string[] {
+  const fromFlag = flagValues ?? [];
+  const fromEnv = env ? env.split(",").map((o) => o.trim()).filter(Boolean) : [];
+  return [...new Set([...fromFlag, ...fromEnv])];
+}
+
+/**
  * Op/outcome/reason closed sets for `StudioAuditEntry` — see below.
  *
  * `"schema-write"` (added for `PUT /api/schema/source`, PR #1b) and

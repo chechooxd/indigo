@@ -77,6 +77,12 @@ function fakeSubscriber(urlPath = "/", { writableLength = 0, refuse = false, hwm
   let closeListener = null;
   const req = {
     url: urlPath,
+    // D7 origin allowlist reads `req.headers.origin` — the real
+    // `IncomingMessage` always carries a `headers` object, so the fake must
+    // too. No `Origin` header here ⇒ every dispatch.mjs subscriber is an
+    // originless request, always allowed by D7 regardless of any configured
+    // allowlist (this suite never constructs an engine with `allowedOrigins`).
+    headers: {},
     on(eventName, listener) {
       if (eventName === "close") closeListener = listener;
     },

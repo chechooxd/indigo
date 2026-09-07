@@ -172,19 +172,19 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 1 — Slice 1: Origin allowlist (engine + CLI/Studio wiring) [PR 1/6, M1]
 
-- [ ] 1.1 RED `packages/realtime/test/origin-allowlist.mjs`: unconfigured engine + any `Origin` ⇒ 403, no CORS header (T2/T4). Mutation: default `allowedOrigins ?? []` → `?? ["*"]`; 403 assertion must fail.
-- [ ] 1.2 RED same file: no `Origin` header ⇒ 200 + `text/event-stream` regardless of config (T1). Mutation: remove the no-origin early-allow branch; status assertion must fail.
-- [ ] 1.3 RED same file: configured `["https://app.example.com"]` + matching Origin ⇒ exact echo, `vary: origin`, never `*` (T3). Mutation: hardcode `"*"`; exact-string assertion must fail.
-- [ ] 1.4 RED same file: mismatched Origin ⇒ 403, no CORS header, incl. prefix/suffix negative case from the threat matrix (T2). Mutation: use `.startsWith()` instead of exact equality; suffix-attack case must fail.
-- [ ] 1.5 RED same file: `handleLogRequest` obeys the identical gate (T5). Mutation: skip the gate in `handleLogRequest` only; that route's assertion must fail while `handleRequest` still passes.
-- [ ] 1.6 RED same file: `OPTIONS` ⇒ 204 allowed / 403 rejected on both paths (T6). Mutation: return 200 instead of 204; status-code assertion must fail.
-- [ ] 1.7 GREEN `packages/realtime/src/engine.ts`: implement `allowedOrigins`, gate in `handleRequest`+`handleLogRequest`, `OPTIONS` handling, replace `"*"` at `:243`. Make 1.1–1.6 pass.
-- [ ] 1.8 RED CLI arg/env test: `--allow-origin` (repeatable) + `INDIGODB_REALTIME_ALLOWED_ORIGINS` merge into one array (T7). Mutation: overwrite instead of merge; array-contents assertion must fail.
-- [ ] 1.9 GREEN `packages/cli/src/index.ts`, `packages/cli/src/studio-server.ts`: wire flag/env to the engine. Make 1.8 pass.
-- [ ] 1.10 RED `packages/realtime/test/origin-allowlist.mjs`: dispatched wake frame (`{table,op,lsn,seq}`, no `pk`/`new`/`old`) is unchanged for an allowed-origin request — closes the `realtime-live-endpoint` MODIFIED-scenario gap. Mutation: leak `new`/`old` when origin is allowed; payload-shape assertion must fail.
-- [ ] 1.11 GREEN: confirm 1.10 passes with no `dispatch()` change — this is a regression proof, not new production code.
-- [ ] 1.12 Regression: run the existing realtime dispatch/wake-only suite (landed `9798f9c`) unmodified — `realtime-live-endpoint` scenarios 1–3/5 must stay green with zero new tasks.
-- [ ] 1.13 Verify: `pnpm --filter @indigodb/realtime build && pnpm --filter @indigodb/realtime test`; `pnpm --filter @indigodb/cli test`; `pnpm lint` clean.
+- [x] 1.1 RED `packages/realtime/test/origin-allowlist.mjs`: unconfigured engine + any `Origin` ⇒ 403, no CORS header (T2/T4). Mutation: default `allowedOrigins ?? []` → `?? ["*"]`; 403 assertion must fail.
+- [x] 1.2 RED same file: no `Origin` header ⇒ 200 + `text/event-stream` regardless of config (T1). Mutation: remove the no-origin early-allow branch; status assertion must fail.
+- [x] 1.3 RED same file: configured `["https://app.example.com"]` + matching Origin ⇒ exact echo, `vary: origin`, never `*` (T3). Mutation: hardcode `"*"`; exact-string assertion must fail.
+- [x] 1.4 RED same file: mismatched Origin ⇒ 403, no CORS header, incl. prefix/suffix negative case from the threat matrix (T2). Mutation: use `.startsWith()` instead of exact equality; suffix-attack case must fail.
+- [x] 1.5 RED same file: `handleLogRequest` obeys the identical gate (T5). Mutation: skip the gate in `handleLogRequest` only; that route's assertion must fail while `handleRequest` still passes.
+- [x] 1.6 RED same file: `OPTIONS` ⇒ 204 allowed / 403 rejected on both paths (T6). Mutation: return 200 instead of 204; status-code assertion must fail.
+- [x] 1.7 GREEN `packages/realtime/src/engine.ts`: implement `allowedOrigins`, gate in `handleRequest`+`handleLogRequest`, `OPTIONS` handling, replace `"*"` at `:243`. Make 1.1–1.6 pass.
+- [x] 1.8 RED CLI arg/env test: `--allow-origin` (repeatable) + `INDIGODB_REALTIME_ALLOWED_ORIGINS` merge into one array (T7). Mutation: overwrite instead of merge; array-contents assertion must fail.
+- [x] 1.9 GREEN `packages/cli/src/index.ts`, `packages/cli/src/studio-server.ts`: wire flag/env to the engine. Make 1.8 pass.
+- [x] 1.10 RED `packages/realtime/test/origin-allowlist.mjs`: dispatched wake frame (`{table,op,lsn,seq}`, no `pk`/`new`/`old`) is unchanged for an allowed-origin request — closes the `realtime-live-endpoint` MODIFIED-scenario gap. Mutation: leak `new`/`old` when origin is allowed; payload-shape assertion must fail.
+- [x] 1.11 GREEN: confirm 1.10 passes with no `dispatch()` change — this is a regression proof, not new production code.
+- [x] 1.12 Regression: run the existing realtime dispatch/wake-only suite (landed `9798f9c`) unmodified — `realtime-live-endpoint` scenarios 1–3/5 must stay green with zero new tasks. NOTE: `dispatch.mjs`'s fake `IncomingMessage` needed one added field (`headers: {}`) since `handleRequest` now reads `req.headers.origin` — no assertion touched; see apply-progress deviations.
+- [x] 1.13 Verify: `pnpm --filter @indigodb/realtime build && pnpm --filter @indigodb/realtime test`; `pnpm --filter @indigodb/cli test`; `pnpm lint` clean.
 
 ## Phase 2 — Slice 2: RealtimeConnectionManager open-state fix (D1) [PR 2/6, M1] — parallel with Phase 1
 

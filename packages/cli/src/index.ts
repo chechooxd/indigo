@@ -29,6 +29,7 @@ import {
   resolveQueryRowCap,
   resolveStudioEnvironment,
   resolveStudioAuditLog,
+  resolveAllowedOrigins,
 } from "./util.js";
 import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
@@ -235,7 +236,16 @@ program
   .description("Serve realtime change events (SSE) for @@realtime tables.")
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
   .option("-p, --port <port>", "Port", "4477")
-  .action(async (options: { schema: string; port: string }) => {
+  .option(
+    "--allow-origin <origin>",
+    "Allowed CORS origin for the SSE and log routes (repeatable). Merges with " +
+      "INDIGODB_REALTIME_ALLOWED_ORIGINS (comma-separated). Omitted/empty ⇒ closed: no " +
+      "cross-origin browser access at all — a request with no Origin header (curl, an " +
+      "operator proxy) is always allowed regardless.",
+    (value: string, previous: string[]) => previous.concat([value]),
+    [] as string[],
+  )
+  .action(async (options: { schema: string; port: string; allowOrigin: string[] }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     if (!resolved.tables.some((t) => t.realtime)) {
@@ -249,7 +259,8 @@ program
     // when it will actually be used.
     assertRealtimeSecretPresent(resolved, process.env.INDIGODB_REALTIME_SECRET);
     const connectionString = resolveConnectionString(resolved);
-    const engine = new RealtimeEngine({ connectionString, schema: resolved });
+    const allowedOrigins = resolveAllowedOrigins(options.allowOrigin, process.env.INDIGODB_REALTIME_ALLOWED_ORIGINS);
+    const engine = new RealtimeEngine({ connectionString, schema: resolved, allowedOrigins });
     const port = Number(options.port);
 
     const server = createServer((req, res) => {
@@ -331,6 +342,16 @@ program
       "name) shown in the Studio badge and status probe. Purely informational — gates " +
       "nothing. Defaults to INDIGODB_ENV, or unset.",
   )
+  .option(
+    "--allow-origin <origin>",
+    "Allowed CORS origin for the embedded realtime SSE/log routes (repeatable). Merges " +
+      "with INDIGODB_REALTIME_ALLOWED_ORIGINS (comma-separated). Only relevant when the " +
+      "schema has @@realtime tables. Omitted/empty ⇒ closed: no cross-origin browser " +
+      "access at all — a request with no Origin header is always allowed regardless, " +
+      "which is why the Studio's own embedded engine needs no configuration here.",
+    (value: string, previous: string[]) => previous.concat([value]),
+    [] as string[],
+  )
   // Declared in THIS order — `--audit-log` before `--no-audit-log` —
   // deliberately: declaring the negated flag first would make commander
   // force a `true` default, which collapses the flag>env>default tri-state
@@ -355,6 +376,7 @@ program
       queryRowCap?: string;
       env?: string;
       auditLog?: boolean;
+      allowOrigin: string[];
     }) => {
       loadEnv();
       const password = process.env.INDIGODB_STUDIO_PASSWORD;
@@ -396,6 +418,13 @@ program
         process.exit(1);
       }
 
+      // D7: pure, never throws — resolved outside the try/catch above,
+      // unlike the guardrail resolvers, which all validate and can fail.
+      const allowedOrigins = resolveAllowedOrigins(
+        options.allowOrigin,
+        process.env.INDIGODB_REALTIME_ALLOWED_ORIGINS,
+      );
+
       const { resolved, path: schemaPath } = loadSchema(options.schema);
       const connectionString = resolveConnectionString(resolved);
       await startStudio({
@@ -412,6 +441,7 @@ program
         queryRowCap,
         environment,
         auditLog,
+        allowedOrigins,
       });
     },
   );

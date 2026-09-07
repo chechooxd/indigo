@@ -37,6 +37,18 @@ import { verifyHandle } from "./handle.js";
 export interface RealtimeEngineOptions {
   connectionString: string;
   schema: ResolvedSchema;
+  /**
+   * Exact origins (`scheme://host[:port]`) permitted to read the SSE
+   * (`handleRequest`) and log replay (`handleLogRequest`) routes.
+   * Omitted or empty ⇒ CLOSED: no cross-origin browser access at all — this
+   * is the default (D7). A request with NO `Origin` header at all is
+   * ALWAYS allowed regardless of this setting: this is what keeps the
+   * `indigodb realtime` CLI daemon, curl, an operator proxy, and the
+   * Studio's own same-origin embedded engine working unchanged. Matching is
+   * exact string equality on the lowercase-normalized origin — never a
+   * prefix, suffix, or substring test.
+   */
+  allowedOrigins?: string[];
   /** Event source override — defaults to `WalSource`. `PgNotifySource` (v1) remains constructible. */
   source?: RealtimeSource;
   /** SSE heartbeat interval. Default 25s (under common 30s proxy idle cuts). */
@@ -92,8 +104,8 @@ export interface RealtimeLogDb {
 /** Byte-identical across every failure cause — no distinguishing detail. */
 const OPAQUE_401_BODY = JSON.stringify({ error: "Unauthorized" });
 
-function sendOpaque401(res: ServerResponse): void {
-  res.writeHead(401, { "content-type": "application/json" });
+function sendOpaque401(res: ServerResponse, extraHeaders: Record<string, string> = {}): void {
+  res.writeHead(401, { "content-type": "application/json", ...extraHeaders });
   res.end(OPAQUE_401_BODY);
 }
 
@@ -122,6 +134,8 @@ export class RealtimeEngine {
   private readonly heartbeatMs: number;
   private readonly onError: (error: Error) => void;
   private readonly realtimeModels: Set<string>;
+  /** Lowercase-normalized exact-match set (D7). Empty ⇒ closed by default. */
+  private readonly allowedOrigins: Set<string>;
   private readonly subscribers = new Set<Subscriber>();
   private readonly listeners = new Set<(event: RealtimeEvent) => void>();
   private readonly maxBufferedBytes: number;
@@ -145,6 +159,7 @@ export class RealtimeEngine {
     this.realtimeModels = new Set(
       options.schema.tables.filter((t) => t.realtime).map((t) => t.name),
     );
+    this.allowedOrigins = new Set((options.allowedOrigins ?? []).map((o) => o.toLowerCase()));
     this.injectedLogDb = options.logDb ?? null;
     this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
   }
@@ -208,10 +223,48 @@ export class RealtimeEngine {
   }
 
   /**
+   * D7 admission decision for a request's `Origin` header. A missing
+   * header is ALWAYS allowed (undefined here means "no header", not "empty
+   * string"); a present header is checked by exact, lowercase-normalized
+   * string equality — never a prefix/suffix/substring test.
+   */
+  private isOriginAllowed(origin: string | undefined): boolean {
+    if (origin === undefined) return true;
+    return this.allowedOrigins.has(origin.toLowerCase());
+  }
+
+  /** CORS response headers for an admitted request — `{}` when there was no
+   * `Origin` header to begin with (nothing to grant, nothing to vary on). */
+  private corsHeaders(origin: string | undefined): Record<string, string> {
+    if (origin === undefined) return {};
+    return { "access-control-allow-origin": origin, vary: "origin" };
+  }
+
+  /** Uniform 403 for a present-but-not-allowed `Origin` — no CORS header,
+   * `text/plain` body, readable by operators and curl; a browser sees an
+   * opaque network failure via the missing CORS header regardless. */
+  private rejectOrigin(res: ServerResponse): void {
+    res.writeHead(403, { "content-type": "text/plain" });
+    res.end("realtime: origin not allowed");
+  }
+
+  /**
    * Serves one SSE subscription request. Routes are the caller's job — pair
    * with `attach()` for bare servers or call directly from a router.
    */
   handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    const origin = req.headers.origin;
+    if (!this.isOriginAllowed(origin)) {
+      this.rejectOrigin(res);
+      return;
+    }
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, this.corsHeaders(origin));
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", "http://localhost");
     const tablesParam = url.searchParams.get("tables");
     let tables: Set<string> | null = null;
@@ -220,7 +273,7 @@ export class RealtimeEngine {
       const requested = tablesParam.split(",").map((t) => t.trim()).filter(Boolean);
       const unknown = requested.filter((t) => !this.realtimeModels.has(t));
       if (unknown.length > 0) {
-        res.writeHead(404, { "content-type": "application/json" });
+        res.writeHead(404, { "content-type": "application/json", ...this.corsHeaders(origin) });
         res.end(JSON.stringify({ error: `Not a realtime table: ${unknown.join(", ")}` }));
         return;
       }
@@ -231,7 +284,7 @@ export class RealtimeEngine {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
-      "access-control-allow-origin": "*",
+      ...this.corsHeaders(origin),
       "x-accel-buffering": "no",
     });
 
@@ -306,8 +359,23 @@ export class RealtimeEngine {
    * read-only query.
    */
   async handleLogRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // D7 origin gate — applied identically to `handleRequest`, and BEFORE
+    // handle verification: a rejected origin must never reach (or leak
+    // anything about the validity of) a handle, valid or not.
+    const origin = req.headers.origin;
+    if (!this.isOriginAllowed(origin)) {
+      this.rejectOrigin(res);
+      return;
+    }
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, this.corsHeaders(origin));
+      res.end();
+      return;
+    }
+
     if (req.method !== "GET") {
-      res.writeHead(405, { "content-type": "application/json" });
+      res.writeHead(405, { "content-type": "application/json", ...this.corsHeaders(origin) });
       res.end(JSON.stringify({ error: "Method not allowed" }));
       return;
     }
@@ -322,12 +390,12 @@ export class RealtimeEngine {
     const secret = process.env.INDIGODB_REALTIME_SECRET;
     const verified = secret && handleParam ? verifyHandle(handleParam, secret) : null;
     if (!verified) {
-      sendOpaque401(res);
+      sendOpaque401(res, this.corsHeaders(origin));
       return;
     }
 
     if (!this.realtimeModels.has(verified.table)) {
-      res.writeHead(404, { "content-type": "application/json" });
+      res.writeHead(404, { "content-type": "application/json", ...this.corsHeaders(origin) });
       res.end(JSON.stringify({ error: `Not a realtime table: ${verified.table}` }));
       return;
     }
@@ -338,7 +406,7 @@ export class RealtimeEngine {
     // Number.MAX_SAFE_INTEGER, so this stays a string, never a JS number.
     const offsetParam = url.searchParams.get("offset") ?? "0";
     if (!/^\d{1,19}$/.test(offsetParam)) {
-      res.writeHead(400, { "content-type": "application/json" });
+      res.writeHead(400, { "content-type": "application/json", ...this.corsHeaders(origin) });
       res.end(JSON.stringify({ error: "Invalid offset" }));
       return;
     }
@@ -363,7 +431,7 @@ export class RealtimeEngine {
     } catch {
       // Never surface DB error text upstream — defense in depth for the
       // secret-handling threat and general error-oracle hygiene.
-      res.writeHead(500, { "content-type": "application/json" });
+      res.writeHead(500, { "content-type": "application/json", ...this.corsHeaders(origin) });
       res.end(JSON.stringify({ error: "Internal error" }));
       return;
     }
@@ -394,6 +462,7 @@ export class RealtimeEngine {
     res.writeHead(200, {
       "content-type": "application/json",
       "cache-control": sealed ? "public, max-age=31536000, immutable" : "no-store",
+      ...this.corsHeaders(origin),
     });
     res.end(JSON.stringify(page));
   }
@@ -404,8 +473,9 @@ export class RealtimeEngine {
     // unscoped event regardless of `@@allow`.
     for (const listener of this.listeners) listener(event);
     // SSE subscribers are unauthenticated (`handleRequest` performs zero
-    // authentication and sets `access-control-allow-origin: "*"`), so this
-    // route MUST NEVER carry row data — for ANY table, `@@allow` or not
+    // authentication; CORS is gated by the D7 origin allowlist, never a
+    // wildcard), so this route MUST NEVER carry row data — for ANY table,
+    // `@@allow` or not
     // (fail-closed decision, `realtime-live-endpoint` spec fix). Every SSE
     // subscriber gets a data-free wake-up frame; the authenticated
     // `handleLogRequest` (`GET ?handle&offset`) is the sanctioned path for

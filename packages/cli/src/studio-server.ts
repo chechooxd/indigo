@@ -117,6 +117,15 @@ export interface StudioOptions {
    * becomes `if (auditLog)` false, never even building the correlator.
    */
   auditLog?: boolean;
+  /**
+   * D7 origin allowlist for the embedded realtime engine's SSE/log routes
+   * (only constructed when the schema has `@@realtime` tables). `undefined`
+   * or `[]` (the default, matching `resolveAllowedOrigins`'s own default)
+   * keeps the engine closed by default — the Studio's own embedded browser
+   * client is unaffected either way, since its same-origin SSE `GET` never
+   * carries an `Origin` header, and D7 always admits an originless request.
+   */
+  allowedOrigins?: string[];
 }
 
 /**
@@ -1086,7 +1095,7 @@ export async function startStudio(
   // Embedded realtime engine: with @@realtime tables the Studio gets live
   // change events on the same port, no separate `indigodb realtime` needed.
   const engine = resolved.tables.some((t) => t.realtime)
-    ? new RealtimeEngine({ connectionString, schema: resolved })
+    ? new RealtimeEngine({ connectionString, schema: resolved, allowedOrigins: options.allowedOrigins })
     : null;
   // A rejected start is NOT fatal here, unlike `indigodb realtime`: the
   // schema, table and query routes need no replication stream, so refusing
