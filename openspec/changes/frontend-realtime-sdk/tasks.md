@@ -15,6 +15,12 @@ spec patch that closed Conflicts 1–3 below; each maps to a task that already e
 | Scenario | T-row | Task | Note |
 |---|---|---|---|
 | Return shape carries no rows | T25 | 3.11 | |
+| + getError() is null before any error | T25 | 3.19 | getError gap RESOLVED |
+| + A terminal error is retrievable with its classification | T21 | 3.19 | getError gap RESOLVED |
+| + A transient error is retrievable as non-terminal | T22 | 3.19 | getError gap RESOLVED |
+| + Repeated getError() calls return one identical object | T25 | 3.19 | getError gap RESOLVED |
+| + getError() is cleared on the next successful open | T25 | 3.19 | getError gap RESOLVED |
+| + retry() clears the retrievable error | T23 | 3.19 | getError gap RESOLVED |
 | + Constructed but unsubscribed is inert at idle | T15 | 3.1 | Conflict 1 RESOLVED |
 | First subscribe() connecting→live | T17 | 3.3 | Conflict 1 RESOLVED — reworded |
 | No duplicate callback per identical status | T17 | 3.4 | |
@@ -218,6 +224,14 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 - [x] 3.16 RED `packages/client/test/realtime-entry.mjs` (extend): bare-Node import with no DOM globals doesn't throw, opens no connection (T26); `browserTransport()` throws a named error when `typeof window === "undefined"` (T27 — D5 scaffolding, no spec scenario); closure stays free of `pg`/`node:async_hooks` (T28, existing scan, unchanged). Mutation: reference `window.location` at module scope; import must throw.
 - [x] 3.17 GREEN: export `browserTransport`, keep the entry side-effect-free. Make 3.16 pass.
 - [x] 3.18 Verify: `pnpm --filter @indigodb/client build && pnpm --filter @indigodb/client test`; rerun `live.mjs` — still green, untouched by this slice.
+- [x] 3.19 RED/GREEN: `getError()` on the returned primitive — `LiveSubscriptionError {message, terminal, cause}`,
+      a referentially stable identity while unchanged, cleared on the next successful open and by `retry()`,
+      with `terminal` reflecting D6. Closes the spec/design contradiction where the spec fixed the return
+      shape at four keys while design.md:255 and D4's hook both require `getError()` (a `useSyncExternalStore`
+      snapshot must be a pull, so the hook cannot read the error from `subscribe(cb)`'s push callback).
+      Mutations: (a) rebuild the snapshot on every read — fails the referential-identity check only;
+      (b) make `clearError()` a no-op — fails both the clear-on-open and clear-on-retry checks;
+      (c) leave `onTerminal` setting `rawErrorTerminal = false` — fails the terminal-classification check.
 
 ## Phase 4 — Slice 4: Docs (README, TanStack recipe, non-goals) [PR 4/6, M1] — depends on Phase 3
 

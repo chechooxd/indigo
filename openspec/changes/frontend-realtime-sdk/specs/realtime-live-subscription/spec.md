@@ -9,17 +9,68 @@ fetches data and never holds rows; it composes with an app's own data library vi
 
 ## Requirements
 
-### Requirement: The primitive returns status and control, never rows
+### Requirement: The primitive returns status, error, and control, never rows
 
-`createLiveSubscription()` MUST return exactly `{getStatus(), subscribe(cb), retry(), close()}`.
-Its public API MUST NOT expose row data, `RealtimeEvent` payloads, or any table content; `onWake`
-is the only data-shaped input, and it is caller-supplied.
+`createLiveSubscription()` MUST return exactly
+`{getStatus(), getError(), subscribe(cb), retry(), close()}`. Its public API MUST NOT expose row
+data, `RealtimeEvent` payloads, or any table content; `onWake` is the only data-shaped input, and
+it is caller-supplied. `getError()` is a diagnostic of the transport failure only — a message and
+its classification — and MUST NOT carry table content either.
 
 #### Scenario: Return shape carries no row data
 
 - GIVEN a call to `createLiveSubscription({table, transport, onWake})`
 - WHEN the returned object's own enumerable keys are inspected
-- THEN only `getStatus`, `subscribe`, `retry`, and `close` are present
+- THEN only `getStatus`, `getError`, `subscribe`, `retry`, and `close` are present
+- AND no key exposes rows, `RealtimeEvent` payloads, or any other table content
+
+### Requirement: The triggering error is retrievable via getError() with a stable identity
+
+`getError()` MUST return `LiveSubscriptionError { message, terminal, cause }` for the error that
+put the primitive in `"error"` status, and `null` when there is none. It MUST return `null` before
+any error has occurred. While the underlying error and its classification are unchanged, repeated
+calls MUST return a **referentially identical** object — the React binding reads it as a
+`useSyncExternalStore` snapshot (design.md D4), and a freshly allocated object per call tears.
+`terminal` MUST match the transport's classification in the Requirement below. The error MUST be
+cleared to `null` on the next successful open, and by `retry()`.
+
+#### Scenario: getError() is null before any error
+
+- GIVEN a subscription that has never seen a transport error, whether unsubscribed, connecting,
+  or `"live"`
+- WHEN `getError()` is called
+- THEN it returns `null`
+
+#### Scenario: A terminal error is retrievable with its classification
+
+- GIVEN a subscribed primitive whose transport reports an error classified terminal
+- WHEN `getError()` is called
+- THEN it returns an object whose `message` is the error's message, whose `terminal` is `true`,
+  and whose `cause` is the original error
+
+#### Scenario: A transient error is retrievable as non-terminal
+
+- GIVEN a subscribed primitive whose transport reports an error that is not classified terminal
+- WHEN `getError()` is called
+- THEN it returns an object whose `terminal` is `false`
+
+#### Scenario: Repeated getError() calls return one identical object while unchanged
+
+- GIVEN a subscription holding an error
+- WHEN `getError()` is called several times with no new error, open, or `retry()` in between
+- THEN every call returns the very same object reference
+
+#### Scenario: getError() is cleared to null on the next successful open
+
+- GIVEN a subscription holding an error
+- WHEN the channel opens successfully again
+- THEN `getError()` returns `null`
+
+#### Scenario: retry() clears the retrievable error
+
+- GIVEN a subscription in `"error"` status holding an error
+- WHEN `retry()` is called
+- THEN `getError()` returns `null` while the channel re-opens
 
 ### Requirement: Status machine is idle → connecting → live, with error and closed, exposed via getStatus() and subscribe()
 

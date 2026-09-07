@@ -78,6 +78,11 @@ function makeFakeTransport() {
     fireError(error) {
       handlers.onError(error);
     },
+    /** Terminal classification signal — the transport fires this right
+     * AFTER `onError` with the same instance (design.md D6). */
+    fireTerminal(error) {
+      handlers.onTerminal?.(error);
+    },
     fireWake() {
       handlers.onWake?.();
     },
@@ -303,16 +308,96 @@ await check("3.10: close() twice does not throw; a pending timer never fires onW
 
 // ─── 3.11: return shape carries no row data ─────────────────────────────────
 
-await check("3.11: return shape is exactly {getStatus,subscribe,retry,close} — no rows field, onWake arity 0", () => {
+await check("3.11: return shape is exactly {getStatus,getError,subscribe,retry,close} — no rows field, onWake arity 0", () => {
   const fake = makeFakeTransport();
   const sub = createLiveSubscription({ table: "Order", transport: fake.transport, manager: new RealtimeConnectionManager(fake.transport) });
 
   const keys = Object.keys(sub).sort();
   assert(
-    keys.length === 4 && keys.join(",") === "close,getStatus,retry,subscribe",
-    `expected exactly {getStatus,subscribe,retry,close}, got [${keys.join(", ")}]`,
+    keys.length === 5 && keys.join(",") === "close,getError,getStatus,retry,subscribe",
+    `expected exactly {getStatus,getError,subscribe,retry,close}, got [${keys.join(", ")}]`,
   );
   assert(sub.rows === undefined, "expected no `rows` property on the returned object");
+  // The core promise survives the fifth key: getError() is a transport
+  // diagnostic, never a carrier of rows or RealtimeEvent payloads.
+  const err = sub.getError();
+  assert(err === null, `expected getError() to hold nothing before an error, got ${JSON.stringify(err)}`);
+});
+
+// ─── 3.19: getError() (D4/D6) ────────────────────────────────────────────────
+
+/** Drives a subscription to "error" and returns the handle + the raw error. */
+function subscribedWithError(terminal) {
+  const fake = makeFakeTransport();
+  const manager = new RealtimeConnectionManager(fake.transport);
+  const sub = createLiveSubscription({ table: "Order", transport: fake.transport, manager });
+  sub.subscribe(() => {});
+  fake.fireOpen(false);
+  const raw = new Error("realtime subscribe failed: HTTP 404");
+  fake.fireError(raw);
+  if (terminal) fake.fireTerminal(raw); // transport order: onError, then onTerminal
+  return { fake, sub, raw };
+}
+
+await check("3.19a: getError() is null before any error — unsubscribed, connecting, and live", () => {
+  const fake = makeFakeTransport();
+  const manager = new RealtimeConnectionManager(fake.transport);
+  const sub = createLiveSubscription({ table: "Order", transport: fake.transport, manager });
+
+  assert(sub.getError() === null, `expected null while unsubscribed, got ${JSON.stringify(sub.getError())}`);
+  sub.subscribe(() => {});
+  assert(sub.getError() === null, `expected null while "connecting", got ${JSON.stringify(sub.getError())}`);
+  fake.fireOpen(false);
+  assert(sub.getError() === null, `expected null while "live", got ${JSON.stringify(sub.getError())}`);
+});
+
+await check("3.19b: a terminal error is retrievable as {message, terminal: true, cause}", () => {
+  const { sub, raw } = subscribedWithError(true);
+
+  const err = sub.getError();
+  assert(err !== null, "expected getError() to return the triggering error, got null");
+  assert(err.message === raw.message, `expected message "${raw.message}", got "${err.message}"`);
+  assert(err.terminal === true, `expected terminal === true after a terminal classification, got ${err.terminal}`);
+  assert(err.cause === raw, "expected cause to be the original Error instance");
+});
+
+await check("3.19c: an unclassified (transient) error is retrievable as terminal: false", () => {
+  const { sub } = subscribedWithError(false);
+
+  const err = sub.getError();
+  assert(err !== null, "expected getError() to return the triggering error, got null");
+  assert(err.terminal === false, `expected terminal === false with no terminal signal, got ${err.terminal}`);
+});
+
+await check("3.19d: repeated getError() calls return a referentially identical object while unchanged", () => {
+  const { sub } = subscribedWithError(true);
+
+  const first = sub.getError();
+  const second = sub.getError();
+  const third = sub.getError();
+  assert(first !== null, "sanity: an error is held");
+  assert(
+    first === second && second === third,
+    "expected one stable object identity across repeated getError() calls (a fresh object per call tears useSyncExternalStore)",
+  );
+});
+
+await check("3.19e: getError() is cleared to null on the next successful open", () => {
+  const { fake, sub } = subscribedWithError(true);
+  assert(sub.getError() !== null, "sanity: an error is held before the reopen");
+
+  fake.fireOpen(true); // the channel opens again
+  assert(sub.getStatus() === "live", `sanity: expected "live" after the reopen, got "${sub.getStatus()}"`);
+  assert(sub.getError() === null, `expected getError() cleared to null on the next successful open, got ${JSON.stringify(sub.getError())}`);
+});
+
+await check("3.19f: retry() clears the retrievable error while the channel re-opens", () => {
+  const { sub } = subscribedWithError(true);
+  assert(sub.getError() !== null, "sanity: an error is held before retry()");
+
+  sub.retry();
+  assert(sub.getStatus() === "connecting", `sanity: expected "connecting" after retry(), got "${sub.getStatus()}"`);
+  assert(sub.getError() === null, `expected retry() to clear the error, got ${JSON.stringify(sub.getError())}`);
 });
 
 // ─── createWakeDebouncer, exercised directly (support for 3.5-3.8 above) ────

@@ -211,6 +211,11 @@ interface TableChannel {
   /** The most recent transport error, replayed (same instance) to a
    * listener that joins while the channel is in `"error"` state. */
   lastError: Error | null;
+  /** D6 classification of `lastError`: `true` once the transport has
+   * reported it TERMINAL (the retry loop stopped). Replayed alongside
+   * `lastError` so a late joiner is not told a hopeless channel is merely
+   * transiently down. Reset with `lastError`. */
+  lastErrorTerminal: boolean;
 }
 
 export interface ChannelListener {
@@ -234,6 +239,14 @@ export interface ChannelListener {
    * on a late-subscriber replay. */
   onResync?: () => void;
   onError?: (error: Error) => void;
+  /**
+   * Fired after `onError` with the SAME error instance when the transport
+   * classified the failure TERMINAL (design.md D6) — the retry loop has
+   * stopped and no further connect attempt will be made. Also replayed,
+   * right after the `onError` replay, to a listener joining a channel whose
+   * last error was terminal. Optional; `.live()`/`.subscribe()` supply none.
+   */
+  onTerminal?: (error: Error) => void;
 }
 
 /**
@@ -263,6 +276,7 @@ export class RealtimeConnectionManager {
         channel.state = "live";
         channel.everOpened = true;
         channel.lastError = null;
+        channel.lastErrorTerminal = false;
         // Snapshot the listener set — a listener added mid-callback by
         // one of these handlers must not be double-invoked.
         for (const l of [...channel.listeners]) {
@@ -276,7 +290,14 @@ export class RealtimeConnectionManager {
       onError: (error) => {
         channel.state = "error";
         channel.lastError = error;
+        // A fresh error is transient until the transport says otherwise;
+        // `onTerminal` follows synchronously when it is not (design.md D6).
+        channel.lastErrorTerminal = false;
         for (const l of [...channel.listeners]) l.onError?.(error);
+      },
+      onTerminal: (error) => {
+        channel.lastErrorTerminal = true;
+        for (const l of [...channel.listeners]) l.onTerminal?.(error);
       },
     };
   }
@@ -290,6 +311,7 @@ export class RealtimeConnectionManager {
         state: "connecting",
         everOpened: false,
         lastError: null,
+        lastErrorTerminal: false,
       };
       newChannel.close = this.transport.connect([table], this.buildHandlers(newChannel));
       channel = newChannel;
@@ -308,10 +330,14 @@ export class RealtimeConnectionManager {
     // a phantom refetch.
     const snapshotState = activeChannel.state;
     const snapshotError = activeChannel.lastError;
+    const snapshotTerminal = activeChannel.lastErrorTerminal;
     if (snapshotState === "live") {
       listener.onOpen?.(false);
     } else if (snapshotState === "error" && snapshotError) {
       listener.onError?.(snapshotError);
+      // Same order as the live path (onError, then onTerminal), so a late
+      // joiner classifies a hopeless channel exactly as an early one did.
+      if (snapshotTerminal) listener.onTerminal?.(snapshotError);
     }
     // snapshotState === "connecting" → nothing to replay.
 
@@ -340,6 +366,7 @@ export class RealtimeConnectionManager {
     channel.close();
     channel.state = "connecting";
     channel.lastError = null;
+    channel.lastErrorTerminal = false;
     channel.close = this.transport.connect([table], this.buildHandlers(channel));
   }
 
@@ -401,6 +428,18 @@ export function createWakeDebouncer(debounceMs: number, onFire: () => void): Wak
  * timer, or otherwise leave `"idle"` on its own. */
 export type LiveSubscriptionStatus = "idle" | "connecting" | "live" | "error" | "closed";
 
+/**
+ * The triggering transport error, flattened for a snapshot reader
+ * (design.md D4/D6). `terminal` is D6's classification: `true` once the
+ * transport has stopped retrying, so a UI knows to offer `retry()` rather
+ * than wait. `cause` is the original `Error`.
+ */
+export interface LiveSubscriptionError {
+  message: string;
+  terminal: boolean;
+  cause?: unknown;
+}
+
 export interface LiveSubscriptionOptions {
   table: string;
   /** Explicit — no origin-inferring default (design.md D5). Use
@@ -421,13 +460,21 @@ export interface LiveSubscriptionOptions {
 
 /**
  * Framework-agnostic, browser-safe, SSR-inert status-only subscription
- * (`realtime-live-subscription` spec). Returns EXACTLY these four members —
+ * (`realtime-live-subscription` spec). Returns EXACTLY these five members —
  * never row data, never a `RealtimeEvent` payload: composing with an app's
  * own data library happens entirely through the caller-supplied `onWake`.
  */
 export interface LiveSubscription {
   /** Pure, allocation-free, safe to call before `subscribe()`. */
   getStatus(): LiveSubscriptionStatus;
+  /**
+   * The current error, or `null` when there is none. The SECOND
+   * `useSyncExternalStore` source of the React binding (design.md D4), so
+   * the returned identity is STABLE while the underlying error is
+   * unchanged — a fresh object per call would tear. Cleared to `null` on
+   * the next successful open and by `retry()`.
+   */
+  getError(): LiveSubscriptionError | null;
   /** First call starts the underlying channel (design.md D4 — lazy start);
    * last unsubscribe stops it. Invoked once per STATUS TRANSITION, never for
    * a repeated identical status. */
@@ -458,12 +505,35 @@ export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSu
 
   let status: LiveSubscriptionStatus = "idle";
   let unsubscribeChannel: Unsubscribe | null = null;
+  // Raw error + its D6 class, kept apart from the flattened snapshot below
+  // so `getError()` can hand back ONE stable identity for as long as
+  // neither changes (design.md D4: `useSyncExternalStore` tears on a fresh
+  // object per call). The snapshot is (re)built lazily, on read — never
+  // eagerly — so the terminal upgrade that lands synchronously right after
+  // `onError` is already folded in by the time any reader pulls it.
+  let rawError: Error | null = null;
+  let rawErrorTerminal = false;
+  let errorSnapshot: LiveSubscriptionError | null = null;
   const changeListeners = new Set<() => void>();
 
   const notify = (): void => {
     // Snapshot — a listener added/removed mid-callback must not be
     // double-invoked or skipped.
     for (const cb of [...changeListeners]) cb();
+  };
+
+  const readError = (): LiveSubscriptionError | null => {
+    if (rawError === null) return null;
+    if (errorSnapshot === null || errorSnapshot.cause !== rawError || errorSnapshot.terminal !== rawErrorTerminal) {
+      errorSnapshot = { message: rawError.message, terminal: rawErrorTerminal, cause: rawError };
+    }
+    return errorSnapshot;
+  };
+
+  const clearError = (): void => {
+    rawError = null;
+    rawErrorTerminal = false;
+    errorSnapshot = null;
   };
 
   const setStatus = (next: LiveSubscriptionStatus): void => {
@@ -481,8 +551,23 @@ export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSu
   const channelListener: ChannelListener = {
     onEvent: () => {},
     onWake: () => debouncer.wake(),
-    onOpen: () => setStatus("live"),
-    onError: () => setStatus("error"),
+    onOpen: () => {
+      clearError(); // cleared on the next successful open (design.md D6)
+      setStatus("live");
+    },
+    onError: (error) => {
+      rawError = error;
+      // Transient until the transport's `onTerminal` says otherwise; that
+      // call follows this one synchronously, before any snapshot is read.
+      rawErrorTerminal = false;
+      setStatus("error");
+    },
+    onTerminal: () => {
+      // D6: the transport stopped retrying. Upgrade the already-recorded
+      // error in place; no status change, so no notify — the snapshot is
+      // built lazily on read, so any reader pulls the upgraded value.
+      rawErrorTerminal = true;
+    },
   };
 
   const releaseChannel = (): void => {
@@ -492,6 +577,8 @@ export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSu
 
   return {
     getStatus: () => status,
+
+    getError: () => readError(),
 
     subscribe(onChange) {
       changeListeners.add(onChange);
@@ -515,6 +602,7 @@ export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSu
 
     retry() {
       if (status !== "error") return; // no-op outside error (design.md D6)
+      clearError(); // retry() clears lastError (design.md D6)
       setStatus("connecting");
       manager.reviveChannel(table);
     },
