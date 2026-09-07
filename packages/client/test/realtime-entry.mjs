@@ -106,6 +106,32 @@ await check("root `.` entry point exports are unaffected", async () => {
   assert(typeof mod.LIVE_DEBOUNCE_MS === "number", "LIVE_DEBOUNCE_MS export missing from root entry");
 });
 
+// ─── tasks.md 3.16: SSR-inert entry + browserTransport() (design.md D5) ─────
+
+await check("importing the entry under bare Node (no DOM globals) does not throw and opens no connection", async () => {
+  assert(typeof globalThis.window === "undefined", "sanity: this bare Node process has no `window` global");
+  const mod = await import("@indigodb/client/realtime");
+  assert(typeof mod.createLiveSubscription === "function", "createLiveSubscription export missing");
+  assert(typeof mod.browserTransport === "function", "browserTransport export missing");
+  // The import itself must be side-effect-free — nothing above threw, and
+  // merely resolving the module never calls `fetch` or opens a channel.
+});
+
+await check("browserTransport() throws a named error when `window` is undefined (server-side)", async () => {
+  const mod = await import("@indigodb/client/realtime");
+  let thrown = null;
+  try {
+    mod.browserTransport();
+  } catch (err) {
+    thrown = err;
+  }
+  assert(thrown instanceof Error, "expected browserTransport() to throw an Error server-side");
+  assert(
+    /browser environment/i.test(thrown.message),
+    `expected a named, descriptive error message, got: ${thrown.message}`,
+  );
+});
+
 if (failures > 0) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

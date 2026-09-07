@@ -200,24 +200,24 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 3 — Slice 3: createLiveSubscription + terminal classification (D2/D3/D6) [PR 3/6, M1] — depends on Phase 2
 
-- [ ] 3.1 RED `packages/client/test/live-subscription.mjs`: constructing without subscribing ⇒ zero `connect` calls, `getStatus()` is `"idle"` (T15). See Conflict 1 — implements design's 5-state contract.
-- [ ] 3.2 RED same file: first `subscribe()` opens, last `unsubscribe` closes (T16). Mutation: open on construction; connect-count assertion must fail.
-- [ ] 3.3 RED same file: full sequence `idle→connecting→live`, `live⇄error` (T17). Mutation: skip the `"connecting"` interim state; sequence assertion must fail.
-- [ ] 3.4 RED same file: subscribed callback fires once per transition, not for a repeated identical status. Mutation: call listeners unconditionally on every transport event; call-count assertion must fail.
-- [ ] 3.5 RED same file: burst of 5 wakes in one window ⇒ exactly one `onWake`, timed to the first wake (T18). Mutation: re-arm the timer per wake; timing/count assertion must fail.
-- [ ] 3.6 RED same file: sustained wakes every `debounceMs/2` still deliver on schedule, never starved (T19). Mutation: same re-arm bug; delivery-timing assertion must fail.
-- [ ] 3.7 RED same file: wakes >`debounceMs` apart ⇒ two separate `onWake` calls. Mutation: coalesce across windows; call-count assertion must fail.
-- [ ] 3.8 RED same file: `debounceMs: 0` delivers every wake immediately (T20 — real interface behavior, not in the spec's Requirement text; kept as scaffolding). Mutation: floor to 1ms instead of the documented bypass; timing assertion must fail.
-- [ ] 3.9 RED same file: `retry()` from `"error"` re-opens (`connecting→live`); no-op while `"live"`/`"connecting"` (T23). Mutation: allow reopen while `"live"`; connect-count assertion must fail.
-- [ ] 3.10 RED same file: `close()` twice does not throw; a pending timer at close-time never fires `onWake`; `retry()` after `close()` is a no-op (T24). Mutation: clear the timer but still fire the pending `onWake`; call-count assertion must fail.
-- [ ] 3.11 RED same file: return shape is exactly `{getStatus,subscribe,retry,close}`, `onWake` arity 0, no `rows` field; `tsc --noEmit` fixture rejects a `rows` property (T25). Mutation: add `getRows()`; key-enumeration assertion must fail.
-- [ ] 3.12 GREEN `packages/client/src/realtime.ts`: implement `createLiveSubscription`, `createWakeDebouncer`. Make 3.1–3.11 pass.
-- [ ] 3.13 RED same file: a 404/401 response classifies `terminal:true` and stops the retry loop (T21 — **spec gap**, see Conflict 2). Mutation: classify 404 as transient; "no second attempt" assertion must fail.
-- [ ] 3.14 RED same file: 5xx / stream-end / `TypeError` classify `terminal:false`, keep retrying (T22). Mutation: classify 5xx as terminal; retry-occurred assertion must fail.
-- [ ] 3.15 GREEN `packages/client/src/realtime.ts`: `SseTransport` terminal/transient classification, `TransportHandlers.onTerminal`. Make 3.13–3.14 pass.
-- [ ] 3.16 RED `packages/client/test/realtime-entry.mjs` (extend): bare-Node import with no DOM globals doesn't throw, opens no connection (T26); `browserTransport()` throws a named error when `typeof window === "undefined"` (T27 — D5 scaffolding, no spec scenario); closure stays free of `pg`/`node:async_hooks` (T28, existing scan, unchanged). Mutation: reference `window.location` at module scope; import must throw.
-- [ ] 3.17 GREEN: export `browserTransport`, keep the entry side-effect-free. Make 3.16 pass.
-- [ ] 3.18 Verify: `pnpm --filter @indigodb/client build && pnpm --filter @indigodb/client test`; rerun `live.mjs` — still green, untouched by this slice.
+- [x] 3.1 RED `packages/client/test/live-subscription.mjs`: constructing without subscribing ⇒ zero `connect` calls, `getStatus()` is `"idle"` (T15). See Conflict 1 — implements design's 5-state contract.
+- [x] 3.2 RED same file: first `subscribe()` opens, last `unsubscribe` closes (T16). Mutation: open on construction; connect-count assertion must fail.
+- [x] 3.3 RED same file: full sequence `idle→connecting→live`, `live⇄error` (T17). Mutation: skip the `"connecting"` interim state; sequence assertion must fail.
+- [x] 3.4 RED same file: subscribed callback fires once per transition, not for a repeated identical status. Mutation: call listeners unconditionally on every transport event; call-count assertion must fail.
+- [x] 3.5 RED same file: burst of 5 wakes in one window ⇒ exactly one `onWake`, timed to the first wake (T18). Mutation: re-arm the timer per wake; timing/count assertion must fail.
+- [x] 3.6 RED same file: sustained wakes every `debounceMs/2` still deliver on schedule, never starved (T19). Mutation: same re-arm bug; delivery-timing assertion must fail.
+- [x] 3.7 RED same file: wakes >`debounceMs` apart ⇒ two separate `onWake` calls. Mutation: coalesce across windows; call-count assertion must fail.
+- [x] 3.8 RED same file: `debounceMs: 0` delivers every wake immediately (T20 — real interface behavior, not in the spec's Requirement text; kept as scaffolding). Mutation: floor to 1ms instead of the documented bypass; timing assertion must fail.
+- [x] 3.9 RED same file: `retry()` from `"error"` re-opens (`connecting→live`); no-op while `"live"`/`"connecting"` (T23). Mutation: allow reopen while `"live"`; connect-count assertion must fail.
+- [x] 3.10 RED same file: `close()` twice does not throw; a pending timer at close-time never fires `onWake`; `retry()` after `close()` is a no-op (T24). Mutation: clear the timer but still fire the pending `onWake`; call-count assertion must fail.
+- [x] 3.11 RED same file: return shape is exactly `{getStatus,subscribe,retry,close}`, `onWake` arity 0, no `rows` field; `tsc --noEmit` fixture rejects a `rows` property (T25). Mutation: add `getRows()`; key-enumeration assertion must fail.
+- [x] 3.12 GREEN `packages/client/src/realtime.ts`: implement `createLiveSubscription`, `createWakeDebouncer`. Make 3.1–3.11 pass.
+- [x] 3.13 RED same file: a 404/401 response classifies `terminal:true` and stops the retry loop (T21 — **spec gap**, see Conflict 2). Mutation: classify 404 as transient; "no second attempt" assertion must fail.
+- [x] 3.14 RED same file: 5xx / stream-end / `TypeError` classify `terminal:false`, keep retrying (T22). Mutation: classify 5xx as terminal; retry-occurred assertion must fail.
+- [x] 3.15 GREEN `packages/client/src/realtime.ts`: `SseTransport` terminal/transient classification, `TransportHandlers.onTerminal`. Make 3.13–3.14 pass.
+- [x] 3.16 RED `packages/client/test/realtime-entry.mjs` (extend): bare-Node import with no DOM globals doesn't throw, opens no connection (T26); `browserTransport()` throws a named error when `typeof window === "undefined"` (T27 — D5 scaffolding, no spec scenario); closure stays free of `pg`/`node:async_hooks` (T28, existing scan, unchanged). Mutation: reference `window.location` at module scope; import must throw.
+- [x] 3.17 GREEN: export `browserTransport`, keep the entry side-effect-free. Make 3.16 pass.
+- [x] 3.18 Verify: `pnpm --filter @indigodb/client build && pnpm --filter @indigodb/client test`; rerun `live.mjs` — still green, untouched by this slice.
 
 ## Phase 4 — Slice 4: Docs (README, TanStack recipe, non-goals) [PR 4/6, M1] — depends on Phase 3
 

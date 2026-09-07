@@ -24,6 +24,7 @@
 
 import type { RealtimeEvent } from "@indigodb/realtime";
 export { REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime/protocol";
+import { LIVE_DEBOUNCE_MS } from "./live.js";
 export { LIVE_DEBOUNCE_MS } from "./live.js";
 export type { LiveStatus } from "./live.js";
 
@@ -46,6 +47,29 @@ export interface TransportHandlers {
   /** Fired on every successful (re)connect, with `true` after the first. */
   onOpen: (reconnected: boolean) => void;
   onError: (error: Error) => void;
+  /**
+   * Fired instead of a further reconnect attempt when the connect failure
+   * is classified TERMINAL (design.md D6): a non-2xx HTTP response that is
+   * not 5xx/408/429. `onError` still fires first with the same error — this
+   * is an ADDITIONAL signal, not a replacement — so the retry loop can stop
+   * cleanly without every existing caller having to opt in. Optional;
+   * `.live()` and `.subscribe()` (`RealtimeConnectionManager`) supply none
+   * today and simply observe the transport stop retrying a hopeless URL.
+   */
+  onTerminal?: (error: Error) => void;
+}
+
+/**
+ * D6 classification: TRUE for the statuses whose retry loop keeps going
+ * with backoff (5xx, 408 Request Timeout, 429 Too Many Requests). Every
+ * other non-2xx (400, 401, 403, 404, 410, …) is TERMINAL — the loop stops.
+ * A `fetch` rejection (`TypeError`: offline, DNS, and CORS — indistinguishable
+ * in a browser) never reaches this function; it is caught below and always
+ * stays transient, deliberately, since a cross-origin rejection would
+ * otherwise strand a user who merely went through a tunnel.
+ */
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status < 600);
 }
 
 /** Streaming transport seam — SSE today, anything delivering RealtimeEvents tomorrow. */
@@ -77,8 +101,20 @@ export class SseTransport implements RealtimeTransport {
             signal: controller.signal,
             headers: { accept: "text/event-stream" },
           });
-          if (!res.ok || !res.body) {
-            throw new Error(`realtime subscribe failed: HTTP ${res.status}`);
+          if (!res.ok) {
+            const httpError = new Error(`realtime subscribe failed: HTTP ${res.status}`);
+            if (!isTransientHttpStatus(res.status)) {
+              // Terminal (D6): stop the loop entirely, never schedule
+              // another connect attempt. `onError` still fires so every
+              // pre-existing caller keeps seeing the failure.
+              handlers.onError(httpError);
+              handlers.onTerminal?.(httpError);
+              return;
+            }
+            throw httpError; // transient HTTP status — falls to the backoff retry below
+          }
+          if (!res.body) {
+            throw new Error("realtime subscribe failed: empty response body");
           }
           retryMs = 1_000;
           handlers.onOpen(everConnected);
@@ -209,44 +245,53 @@ export class RealtimeConnectionManager {
 
   constructor(private readonly transport: RealtimeTransport) {}
 
+  /**
+   * Builds the `TransportHandlers` that fan a single transport connection
+   * out to every listener currently on `channel`. Shared by the initial
+   * open (`subscribe()`) and a channel-level revival (`reviveChannel()`,
+   * design.md D6) so both paths wire the exact same fan-out semantics.
+   */
+  private buildHandlers(channel: TableChannel): TransportHandlers {
+    return {
+      onEvent: (event) => {
+        for (const l of channel.listeners) l.onEvent(event);
+      },
+      onWake: () => {
+        for (const l of channel.listeners) l.onWake?.();
+      },
+      onOpen: (reconnected) => {
+        channel.state = "live";
+        channel.everOpened = true;
+        channel.lastError = null;
+        // Snapshot the listener set — a listener added mid-callback by
+        // one of these handlers must not be double-invoked.
+        for (const l of [...channel.listeners]) {
+          l.onOpen?.(reconnected);
+          // Unchanged trigger condition (design.md D1): the earlier
+          // `if (!reconnected) return;` becomes this inner guard so
+          // `onResync`'s firing rule stays bit-for-bit what it was.
+          if (reconnected) l.onResync?.();
+        }
+      },
+      onError: (error) => {
+        channel.state = "error";
+        channel.lastError = error;
+        for (const l of [...channel.listeners]) l.onError?.(error);
+      },
+    };
+  }
+
   subscribe(table: string, listener: ChannelListener): Unsubscribe {
     let channel = this.channels.get(table);
     if (!channel) {
-      const listeners = new Set<ChannelListener>();
       const newChannel: TableChannel = {
         close: () => {},
-        listeners,
+        listeners: new Set<ChannelListener>(),
         state: "connecting",
         everOpened: false,
         lastError: null,
       };
-      newChannel.close = this.transport.connect([table], {
-        onEvent: (event) => {
-          for (const l of listeners) l.onEvent(event);
-        },
-        onWake: () => {
-          for (const l of listeners) l.onWake?.();
-        },
-        onOpen: (reconnected) => {
-          newChannel.state = "live";
-          newChannel.everOpened = true;
-          newChannel.lastError = null;
-          // Snapshot the listener set — a listener added mid-callback by
-          // one of these handlers must not be double-invoked.
-          for (const l of [...listeners]) {
-            l.onOpen?.(reconnected);
-            // Unchanged trigger condition (design.md D1): the earlier
-            // `if (!reconnected) return;` becomes this inner guard so
-            // `onResync`'s firing rule stays bit-for-bit what it was.
-            if (reconnected) l.onResync?.();
-          }
-        },
-        onError: (error) => {
-          newChannel.state = "error";
-          newChannel.lastError = error;
-          for (const l of [...listeners]) l.onError?.(error);
-        },
-      });
+      newChannel.close = this.transport.connect([table], this.buildHandlers(newChannel));
       channel = newChannel;
       this.channels.set(table, channel);
     }
@@ -281,6 +326,23 @@ export class RealtimeConnectionManager {
     };
   }
 
+  /**
+   * Channel-level revival (design.md D6): closes the table's current
+   * transport connection, if any, and re-opens a fresh one, keeping every
+   * existing listener attached — `createLiveSubscription.retry()` is
+   * deliberately channel-level, reviving every listener sharing that
+   * table's channel, not only the caller. No-op if no channel is open for
+   * `table` (nothing to revive).
+   */
+  reviveChannel(table: string): void {
+    const channel = this.channels.get(table);
+    if (!channel) return;
+    channel.close();
+    channel.state = "connecting";
+    channel.lastError = null;
+    channel.close = this.transport.connect([table], this.buildHandlers(channel));
+  }
+
   /** Closes every open connection (used by `$disconnect`). */
   close(): void {
     for (const channel of this.channels.values()) channel.close();
@@ -290,4 +352,199 @@ export class RealtimeConnectionManager {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ─── createLiveSubscription ──────────────────────────────────────────────────
+
+interface WakeDebouncer {
+  wake(): void;
+  cancel(): void;
+}
+
+/**
+ * First-wake-armed fixed debounce window (design.md D3 — deliberately kept
+ * separate from `live.ts`'s own ~8-line inline copy, see D2: layering this
+ * primitive on `live.ts` would close an import cycle, since `realtime.ts`
+ * already imports `LIVE_DEBOUNCE_MS` from `./live.js`). The FIRST wake
+ * after idle arms a single trailing timer of `debounceMs`; a later wake
+ * arriving before it fires does NOT reset or extend it — re-arming on every
+ * wake is the exact starvation bug this guards against under sustained
+ * writes. `debounceMs <= 0` disables the window entirely: every wake fires
+ * `onFire` immediately, synchronously.
+ */
+export function createWakeDebouncer(debounceMs: number, onFire: () => void): WakeDebouncer {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    wake(): void {
+      if (debounceMs <= 0) {
+        onFire();
+        return;
+      }
+      if (timer !== null) return; // already armed for this burst — never re-armed
+      timer = setTimeout(() => {
+        timer = null;
+        onFire();
+      }, debounceMs);
+      timer.unref?.();
+    },
+    cancel(): void {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+/** Five-state machine (design.md D4): `"idle"` until the first `subscribe()`
+ * — constructing `createLiveSubscription()` MUST NOT open a channel, start a
+ * timer, or otherwise leave `"idle"` on its own. */
+export type LiveSubscriptionStatus = "idle" | "connecting" | "live" | "error" | "closed";
+
+export interface LiveSubscriptionOptions {
+  table: string;
+  /** Explicit — no origin-inferring default (design.md D5). Use
+   * `browserTransport()` in client code, or `new SseTransport(origin)`
+   * directly. */
+  transport: RealtimeTransport;
+  /** The app's own invalidation callback; NEVER receives rows — the
+   * primitive holds no data (realtime-live-subscription spec). */
+  onWake?: () => void;
+  /** Default `LIVE_DEBOUNCE_MS` (50). `<= 0` disables debouncing
+   * (design.md D3). */
+  debounceMs?: number;
+  /** Default: one `RealtimeConnectionManager` per `transport`, module-cached
+   * (`WeakMap`) so sibling subscriptions on the same transport share one
+   * channel per table without the caller having to wire that up. */
+  manager?: RealtimeConnectionManager;
+}
+
+/**
+ * Framework-agnostic, browser-safe, SSR-inert status-only subscription
+ * (`realtime-live-subscription` spec). Returns EXACTLY these four members —
+ * never row data, never a `RealtimeEvent` payload: composing with an app's
+ * own data library happens entirely through the caller-supplied `onWake`.
+ */
+export interface LiveSubscription {
+  /** Pure, allocation-free, safe to call before `subscribe()`. */
+  getStatus(): LiveSubscriptionStatus;
+  /** First call starts the underlying channel (design.md D4 — lazy start);
+   * last unsubscribe stops it. Invoked once per STATUS TRANSITION, never for
+   * a repeated identical status. */
+  subscribe(onChange: () => void): Unsubscribe;
+  /** No-op unless `getStatus() === "error"`. Channel-level (D6): revives
+   * every listener sharing this table's channel, not only the caller. */
+  retry(): void;
+  /** Idempotent. After `close()`, no further `onWake` or `subscribe`
+   * callback delivery occurs, even for a wake already in flight. */
+  close(): void;
+}
+
+const sharedManagers = new WeakMap<RealtimeTransport, RealtimeConnectionManager>();
+
+function getSharedManager(transport: RealtimeTransport): RealtimeConnectionManager {
+  let manager = sharedManagers.get(transport);
+  if (!manager) {
+    manager = new RealtimeConnectionManager(transport);
+    sharedManagers.set(transport, manager);
+  }
+  return manager;
+}
+
+export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSubscription {
+  const debounceMs = options.debounceMs ?? LIVE_DEBOUNCE_MS;
+  const manager = options.manager ?? getSharedManager(options.transport);
+  const table = options.table;
+
+  let status: LiveSubscriptionStatus = "idle";
+  let unsubscribeChannel: Unsubscribe | null = null;
+  const changeListeners = new Set<() => void>();
+
+  const notify = (): void => {
+    // Snapshot — a listener added/removed mid-callback must not be
+    // double-invoked or skipped.
+    for (const cb of [...changeListeners]) cb();
+  };
+
+  const setStatus = (next: LiveSubscriptionStatus): void => {
+    if (status === next) return; // no callback for a repeated identical status
+    status = next;
+    notify();
+  };
+
+  const debouncer = createWakeDebouncer(debounceMs, () => {
+    // A wake already in flight at close() time must never reach onWake.
+    if (status === "closed") return;
+    options.onWake?.();
+  });
+
+  const channelListener: ChannelListener = {
+    onEvent: () => {},
+    onWake: () => debouncer.wake(),
+    onOpen: () => setStatus("live"),
+    onError: () => setStatus("error"),
+  };
+
+  const releaseChannel = (): void => {
+    unsubscribeChannel?.();
+    unsubscribeChannel = null;
+  };
+
+  return {
+    getStatus: () => status,
+
+    subscribe(onChange) {
+      changeListeners.add(onChange);
+      if (status === "idle") {
+        // Lazy start (design.md D4): the first subscribe() — ever, or after
+        // every prior one unsubscribed — opens the channel. `"connecting"`
+        // is set before `manager.subscribe()` so both a fresh open and a
+        // synchronous replay of an already-live channel are preceded by it.
+        setStatus("connecting");
+        unsubscribeChannel = manager.subscribe(table, channelListener);
+      }
+      return () => {
+        changeListeners.delete(onChange);
+        if (changeListeners.size === 0 && status !== "closed") {
+          debouncer.cancel();
+          releaseChannel();
+          status = "idle";
+        }
+      };
+    },
+
+    retry() {
+      if (status !== "error") return; // no-op outside error (design.md D6)
+      setStatus("connecting");
+      manager.reviveChannel(table);
+    },
+
+    close() {
+      if (status === "closed") return; // idempotent
+      debouncer.cancel();
+      releaseChannel();
+      changeListeners.clear();
+      status = "closed";
+    },
+  };
+}
+
+/**
+ * Convenience `RealtimeTransport` factory for the browser (design.md D5):
+ * reads `window.location.origin` so callers don't have to. Deliberately
+ * never called at module scope — `createLiveSubscription` takes an
+ * EXPLICIT `transport`, with no origin-inferring default; unlike the
+ * Studio hook's pre-existing unguarded `new SseTransport(window.location.origin, …)`,
+ * this helper is opt-in and throws a NAMED error server-side instead of a
+ * bare `window is not defined` `ReferenceError`.
+ */
+export function browserTransport(path?: string): RealtimeTransport {
+  const win = (globalThis as { window?: { location: { origin: string } } }).window;
+  if (win === undefined) {
+    throw new Error(
+      "browserTransport() can only be called in a browser environment (`window` is undefined). " +
+        "Pass an explicit RealtimeTransport, e.g. `new SseTransport(origin, path)`, for SSR/Node.",
+    );
+  }
+  return new SseTransport(win.location.origin, path);
 }
