@@ -6,12 +6,12 @@ target awareness) is dropped (Q4); slices are renumbered per design.
 
 ## Scenario → T-row → Task mapping (reconciliation)
 
-44 spec scenarios, 41 design T-rows. Every scenario below resolves to a task. `NEW` = a task
+56 spec scenarios, 41 design T-rows. Every scenario below resolves to a task. `NEW` = a task
 added here because no T-row covered it (a genuine coverage hole, closed). `T41→4.x` = one coarse
 T-row decomposed into several precise assertions. The 7 scenarios marked `+` were added by the
 spec patch that closed Conflicts 1–3 below; each maps to a task that already existed.
 
-### realtime-live-subscription (14 scenarios, MODIFIED)
+### realtime-live-subscription (22 scenarios, MODIFIED)
 | Scenario | T-row | Task | Note |
 |---|---|---|---|
 | Return shape carries no rows | T25 | 3.11 | |
@@ -27,6 +27,8 @@ spec patch that closed Conflicts 1–3 below; each maps to a task that already e
 | Transport error stays error | T17 | 3.3 | |
 | + Non-2xx that is not 5xx/408/429 is terminal, halts retry | T21 | 3.13 | Conflict 2 RESOLVED |
 | + 5xx / stream end / `TypeError` stay transient | T22 | 3.14 | Conflict 2 RESOLVED |
+| + Every named TERMINAL status (400/401/403/404/410) classified at runtime | T21 | 3.20 | Phase 3 verify WARNING 1 CLOSED |
+| + Every named TRANSIENT status (408/429/500/502) classified at runtime | T22 | 3.21 | Phase 3 verify WARNING 1 CLOSED |
 | retry() from error re-opens | T23 | 3.9 | |
 | retry() while live is a no-op | T23 | 3.9 | |
 | Burst of wakes → exactly one onWake | T18 | 3.5 | |
@@ -35,13 +37,17 @@ spec patch that closed Conflicts 1–3 below; each maps to a task that already e
 | Wake in flight at close never fires | T24 | 3.10 | |
 | Import under Node, no DOM globals | T26 | 3.16 | |
 
-### client-live-queries (4 scenarios, ADDED)
-| Scenario | T-row | Task |
-|---|---|---|
-| Late join on open channel → onOpen(false) | T9 | 2.2 |
-| First open no longer swallowed | T8 | 2.1 |
-| Genuine reconnect → onOpen(true) + resync | T11 | 2.4 |
-| Replay never fires onResync | T10 | 2.3 |
+### client-live-queries (8 scenarios, ADDED)
+| Scenario | T-row | Task | Note |
+|---|---|---|---|
+| Late join on open channel → onOpen(false) | T9 | 2.2 | |
+| First open no longer swallowed | T8 | 2.1 | |
+| Genuine reconnect → onOpen(true) + resync | T11 | 2.4 | |
+| Replay never fires onResync | T10 | 2.3 | |
+| + Terminal channel error leaves `.live()` stopped, no self-revive | T21 | 3.22 | Phase 3 verify WARNING 2 CLOSED |
+| + `.live()`'s `retry()` revives the shared channel, resumes snapshot-then-tail | T23 | 3.23 | Phase 3 verify WARNING 2 CLOSED |
+| + `.live()`'s `retry()` is a no-op when healthy and after `unsubscribe()` | T23 | 3.24 | Phase 3 verify WARNING 2 CLOSED |
+| + An auto-recovered transient error clears `retry()`'s gate | T22 | 3.25 | Phase 3 verify WARNING 2 CLOSED |
 
 ### react-live-bindings (6 scenarios)
 | Scenario | T-row | Task | Note |
@@ -232,6 +238,13 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
       Mutations: (a) rebuild the snapshot on every read — fails the referential-identity check only;
       (b) make `clearError()` a no-op — fails both the clear-on-open and clear-on-retry checks;
       (c) leave `onTerminal` setting `rawErrorTerminal = false` — fails the terminal-classification check.
+
+- [x] 3.20 RED `packages/client/test/live-subscription.mjs`: every status D6 NAMES terminal (400/401/403/410, plus 404) classifies terminal exactly once and makes no further connect attempt, driven against the real `SseTransport` over a mocked `fetch` that dispatches on the URL path (one shared backoff wait for the whole matrix). Closes Phase 3 verify WARNING 1 — the classifier was runtime-proven at 404 only, the rest by code inspection. Mutation: classify `401` transient; the terminal-count assertion fails on `401` alone.
+- [x] 3.21 RED same file: every status D6 NAMES transient (408/429/502, plus 500) never classifies terminal and makes a further connect attempt after its backoff. Mutations: (a) drop `status === 429` from `isTransientHttpStatus` — the `429` stay-transient assertion fails; (b) drop `status === 408` — the `408` assertion fails. Both are the exact off-by-one the WARNING named.
+- [x] 3.22 RED `packages/client/test/live.mjs` (ADDITIVE — no existing assertion touched): a `.live()` query on a REAL `RealtimeConnectionManager` over a fake transport, driven to a terminal channel error, makes no further connect attempt and no further refetch on its own. Closes the untested half of Phase 3 verify WARNING 2. Mutation: none needed in isolation — this is the GIVEN state 3.23 recovers from; its own assertion is the connect/refetch counter.
+- [x] 3.23 GREEN `packages/client/src/live.ts` + `packages/client/src/realtime-delegate.ts`: `LiveQuery` gains `retry()`, delegating to the SAME `RealtimeConnectionManager.reviveChannel(table)` path `createLiveSubscription.retry()` uses, wired in as a new `LiveDeps.revive` dep (a dep, not an import — `realtime.ts` already imports `LIVE_DEBOUNCE_MS` from `live.ts`, so a value import back would close design.md D2's cycle). The revived open forces exactly one immediate refetch, then normal debounced tailing. Mutations: (a) revived open skips the refetch — the "exactly one immediate refetch" assertion fails; (b) `retry()` stops calling `deps.revive()` — the stale-close assertion fails.
+- [x] 3.24 RED same file: `retry()` on a healthy channel closes/opens nothing, and is a no-op after `unsubscribe()`. Mutation: drop `retry()`'s error gate (revive unconditionally); the healthy-channel no-op assertion fails.
+- [x] 3.25 RED same file: an error the transport never classified terminal, followed by its own backoff reconnect, lowers the error latch so a later `retry()` is a no-op. Mutations: (a) drop the error gate — this check's no-op assertion fails; (b) stop latching the error in `onError` — 3.23's stale-close assertion fails.
 
 ## Phase 4 — Slice 4: Docs (README, TanStack recipe, non-goals) [PR 4/6, M1] — depends on Phase 3
 

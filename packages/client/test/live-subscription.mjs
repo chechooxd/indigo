@@ -517,6 +517,67 @@ await check("3.14: 5xx, stream end, and a fetch TypeError all stay transient and
   });
 });
 
+// ─── 3.20/3.21: every D6-NAMED boundary value, exercised at runtime ───────
+//
+// 3.13/3.14 above prove the classifier at two representative values (404
+// terminal, 500 transient). The spec NAMES more: 408 and 429 stay transient
+// despite sitting inside the 4xx range, and 400/401/403/410 are terminal.
+// Those were previously proven only by reading `isTransientHttpStatus`, so a
+// mutation dropping 408 (or moving 429 across the line) would have shipped
+// green. The two checks below assert every named value directly.
+//
+// One `fetch` mock serves every status at once, dispatching on the URL path
+// (`new SseTransport(base, "/408")`), so all of a check's transports share a
+// single backoff wait instead of paying 1.1s each.
+
+function connectStatusMatrix(statuses, onTerminalFor) {
+  const calls = new Map(statuses.map((s) => [s, 0]));
+  globalThis.fetch = async (url) => {
+    const status = Number(new URL(String(url)).pathname.slice(1));
+    calls.set(status, calls.get(status) + 1);
+    return { ok: false, status, body: null };
+  };
+  const stops = statuses.map((status) =>
+    new SseTransport("http://example.test", `/${status}`).connect(["Order"], {
+      onEvent: () => {},
+      onOpen: () => {},
+      onError: () => {},
+      onTerminal: (e) => onTerminalFor(status).push(e),
+    }),
+  );
+  return { calls, stopAll: () => stops.forEach((stop) => stop()) };
+}
+
+await check("3.20: every D6-named TERMINAL status (400, 401, 403, 410 — plus 404) classifies terminal and stops the retry loop", async () => {
+  const TERMINAL = [400, 401, 403, 404, 410];
+  await withMockedFetch(async () => {
+    const terminals = new Map(TERMINAL.map((s) => [s, []]));
+    const { calls, stopAll } = connectStatusMatrix(TERMINAL, (s) => terminals.get(s));
+    await waitFor(() => TERMINAL.every((s) => calls.get(s) >= 1));
+    await sleep(1_200); // more than the transport's 1s first backoff
+    stopAll();
+    for (const status of TERMINAL) {
+      assert(terminals.get(status).length === 1, `expected HTTP ${status} to classify TERMINAL exactly once, got ${terminals.get(status).length} onTerminal call(s)`);
+      assert(calls.get(status) === 1, `expected HTTP ${status} to make no further connect attempt, got ${calls.get(status)} fetch call(s)`);
+    }
+  });
+});
+
+await check("3.21: every D6-named TRANSIENT status (408, 429, 502 — plus 500) never classifies terminal and keeps retrying", async () => {
+  const TRANSIENT = [408, 429, 500, 502];
+  await withMockedFetch(async () => {
+    const terminals = new Map(TRANSIENT.map((s) => [s, []]));
+    const { calls, stopAll } = connectStatusMatrix(TRANSIENT, (s) => terminals.get(s));
+    await waitFor(() => TRANSIENT.every((s) => calls.get(s) >= 1));
+    await sleep(1_200); // more than the transport's 1s first backoff
+    stopAll();
+    for (const status of TRANSIENT) {
+      assert(terminals.get(status).length === 0, `expected HTTP ${status} to stay TRANSIENT, but onTerminal fired ${terminals.get(status).length} time(s)`);
+      assert(calls.get(status) >= 2, `expected HTTP ${status} to schedule a further connect attempt, got ${calls.get(status)} fetch call(s)`);
+    }
+  });
+});
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

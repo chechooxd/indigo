@@ -171,6 +171,12 @@ export type ClientRunScoped = <T>(
 export interface LiveSubscribeListener {
   onEvent: (event: unknown) => void;
   onWake?: () => void;
+  /** Fired on every successful (re)open of the shared channel, including the
+   * state replay a late joiner receives (design.md D1). `.live()` uses it
+   * only to clear its transport-error latch and to resume after a
+   * `retry()`-driven revive — it deliberately does NOT refetch on an
+   * ordinary open, so the bootstrap snapshot is never duplicated. */
+  onOpen?: (reconnected: boolean) => void;
   onResync?: () => void;
   onError?: (error: Error) => void;
 }
@@ -191,6 +197,32 @@ export interface LiveQuery<Row> {
   /** `[]` until the first snapshot settles. */
   readonly rows: Row[];
   readonly status: LiveStatus;
+  /**
+   * Revives the shared channel after a transport error (design.md D6).
+   *
+   * Mirrors `createLiveSubscription`'s own `retry()` exactly: it is
+   * CHANNEL-level, so it revives the table's channel for every listener
+   * attached to it — not only this `.live()` — and it is a NO-OP unless
+   * this subscription is in a transport-error state, so a caller cannot
+   * thrash a healthy channel.
+   *
+   * "Error state" for `.live()` is the *transport* error latch, not the
+   * `status` field: `status` here tracks the data-fetch state machine
+   * (bootstrap/refetch), a different axis from the primitive's
+   * transport-only status. The latch is raised by the channel's `onError`
+   * and lowered by its next successful `onOpen` — the exact condition the
+   * primitive's `getStatus() === "error"` expresses on its own axis.
+   *
+   * Why it exists: D6 stops the retry loop at the CHANNEL level, and
+   * channels are shared, so a terminal error raised by any consumer of a
+   * table stops it for every consumer — including `.live()`, which before
+   * this had no recovery path at all short of tearing the whole query down.
+   *
+   * After a successful revive the channel's `onOpen` forces one immediate
+   * refetch (the same path `onResync` uses), so `.live()` resumes its normal
+   * snapshot-then-tail behavior rather than tailing a stale snapshot.
+   */
+  retry(): void;
   /** Idempotent; safe to call before the bootstrap snapshot resolves. */
   unsubscribe(): void;
 }
@@ -210,6 +242,14 @@ export interface LiveDeps<Row> {
   getHandle: GetHandleFn;
   runScoped: RunScoped<Row>;
   subscribe: (listener: LiveSubscribeListener) => Unsubscribe;
+  /** Channel-level revive for `retry()` — wired by `LiveModelDelegate` to
+   * `RealtimeConnectionManager.reviveChannel(table)`, the SAME path
+   * `createLiveSubscription.retry()` takes (design.md D6). Kept as a dep
+   * rather than an import so `live.ts` keeps importing nothing from
+   * `realtime.ts` (design.md D2: `realtime.ts` already imports
+   * `LIVE_DEBOUNCE_MS` from here, so a value import back would close a
+   * cycle). */
+  revive: () => void;
   handlers?: LiveHandlers<Row>;
 }
 
@@ -230,6 +270,15 @@ export function createLiveQuery<Row>(deps: LiveDeps<Row>): LiveQuery<Row> {
   let dirty = false;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeChannel: Unsubscribe | null = null;
+  // The TRANSPORT-error latch that gates `retry()` (design.md D6). Deliberately
+  // separate from `status`, which tracks the data-fetch state machine — the two
+  // are different axes (see `LiveQuery.retry`'s doc). Raised by the shared
+  // channel's `onError`, lowered by its next successful `onOpen`. This is the
+  // `.live()` analogue of `createLiveSubscription`'s `getStatus() === "error"`.
+  let channelError: Error | null = null;
+  // Set by `retry()` and consumed by the next `onOpen`, so a revive — and ONLY
+  // a revive — forces the one immediate refetch that resumes snapshot-then-tail.
+  let revivePending = false;
 
   const setStatus = (next: LiveStatus): void => {
     if (status === next) return;
@@ -365,8 +414,24 @@ export function createLiveQuery<Row>(deps: LiveDeps<Row>): LiveQuery<Row> {
       // to a `.live()`-consuming model.
       onEvent: () => scheduleRefetch(),
       onWake: () => scheduleRefetch(),
+      onOpen: () => {
+        // The channel is healthy again: lower the retry() gate. An ORDINARY
+        // open (initial connect, state replay, transport-level backoff
+        // recovery) does nothing else — refetching here would duplicate the
+        // bootstrap snapshot and change `.live()`'s existing call counts.
+        channelError = null;
+        if (!revivePending) return;
+        revivePending = false;
+        // A revive means the channel was down long enough to be given up on,
+        // so events were certainly missed: force one immediate refetch, the
+        // same path a reconnect's `onResync` takes.
+        onResync();
+      },
       onResync: () => onResync(),
-      onError: (error) => deps.handlers?.onError?.(error),
+      onError: (error) => {
+        channelError = error;
+        deps.handlers?.onError?.(error);
+      },
     });
   };
 
@@ -378,6 +443,18 @@ export function createLiveQuery<Row>(deps: LiveDeps<Row>): LiveQuery<Row> {
     },
     get status() {
       return status;
+    },
+    retry(): void {
+      // No-op unless this subscription is in a transport-error state — never
+      // let a caller thrash a healthy channel (design.md D6, mirroring
+      // `createLiveSubscription.retry()`'s `status !== "error"` guard).
+      if (destroyed || channelError === null) return;
+      channelError = null;
+      revivePending = true;
+      // The SAME channel-level path the primitive takes
+      // (`RealtimeConnectionManager.reviveChannel`): every listener sharing
+      // this table's channel is revived, not only this `.live()`.
+      deps.revive();
     },
     unsubscribe(): void {
       if (destroyed) return;

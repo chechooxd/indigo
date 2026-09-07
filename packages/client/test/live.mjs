@@ -276,6 +276,7 @@ function makeDeps(overrides = {}) {
     runScopedCalls: [],
     subscribeCalls: 0,
     unsubscribeCalls: 0,
+    reviveCalls: 0,
     listener: null,
   };
   let userIdSeq = 0;
@@ -303,6 +304,11 @@ function makeDeps(overrides = {}) {
         return () => {
           state.unsubscribeCalls++;
         };
+      }),
+    revive:
+      overrides.revive ??
+      (() => {
+        state.reviveCalls++;
       }),
     handlers: overrides.handlers,
   };
@@ -781,6 +787,125 @@ await check("13.3 (threat: resource amplification) — bounded refetch count und
 
 await check("13.4: 1.3's import-graph assertion doubles as this row's secret-handling guard (cross-reference, no additional code)", () => {
   assert(true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Section 15: .live() retry() after a channel-level terminal error (D6)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// D6 stops the transport's retry loop at the CHANNEL level, and channels are
+// shared across every consumer of a table via `RealtimeConnectionManager`.
+// So a terminal error raised by ANY consumer of table `Order` kills the
+// channel for every consumer — `.live()` included, which before this had no
+// recovery path of its own. These checks drive a real
+// `RealtimeConnectionManager` over a fake transport (so the terminal stop is
+// the manager's real fan-out, not a stub) and prove `.live()`'s new
+// `retry()` recovers it, matching the primitive's semantics: channel-level,
+// no-op unless in a transport-error state, snapshot-then-tail afterwards.
+
+/** A fake `RealtimeTransport` whose per-connection handlers stay reachable,
+ * so a test can drive onOpen/onError/onTerminal/onWake by hand. Each
+ * `connect()` records a NEW handler set — `handlers` therefore always points
+ * at the CURRENT connection, which is exactly what a revive replaces. */
+function makeChannelHarness() {
+  const state = { connects: 0, closes: 0, handlers: null };
+  const transport = {
+    connect: (_tables, handlers) => {
+      state.connects++;
+      state.handlers = handlers;
+      return () => {
+        state.closes++;
+      };
+    },
+  };
+  return { state, manager: new RealtimeConnectionManager(transport) };
+}
+
+async function liveOnRealChannel(overrides = {}) {
+  const harness = makeChannelHarness();
+  const { deps, state } = makeDeps(overrides);
+  const q = createLiveQuery({
+    ...deps,
+    subscribe: (listener) => harness.manager.subscribe("Order", listener),
+    revive: () => harness.manager.reviveChannel("Order"),
+  });
+  // Bootstrap must settle before the channel exists at all (`.live()`
+  // subscribes only after its first snapshot resolves).
+  await waitFor(() => harness.state.connects === 1);
+  return { q, state, harness };
+}
+
+await check("15.1: a terminal channel error leaves .live() stopped — the channel never revives itself", async () => {
+  const { q, state, harness } = await liveOnRealChannel();
+  assert(q.status === "live", `expected live after bootstrap, got ${q.status}`);
+  assert(state.runScopedCalls.length === 1, `expected exactly one bootstrap fetch, got ${state.runScopedCalls.length}`);
+
+  const err = new Error("realtime subscribe failed: HTTP 404");
+  harness.state.handlers.onError(err);
+  harness.state.handlers.onTerminal(err);
+
+  // A terminal error means the transport's loop returned: nothing reconnects
+  // on its own, ever. This is the exact defect the WARNING named.
+  await sleep(LIVE_DEBOUNCE_MS * 3);
+  assert(harness.state.connects === 1, `expected no self-revive after a terminal error, got ${harness.state.connects} connect(s)`);
+  assert(state.runScopedCalls.length === 1, `expected no refetch while the channel is dead, got ${state.runScopedCalls.length}`);
+  q.unsubscribe();
+});
+
+await check("15.2: .live()'s retry() revives the shared channel and resumes snapshot-then-tail", async () => {
+  const { q, state, harness } = await liveOnRealChannel();
+  const err = new Error("realtime subscribe failed: HTTP 404");
+  harness.state.handlers.onError(err);
+  harness.state.handlers.onTerminal(err);
+
+  assert(typeof q.retry === "function", "expected .live() to expose retry()");
+  q.retry();
+
+  // Channel-level revive: the stale connection is closed and a fresh one
+  // opened, with every listener still attached (the manager keeps them).
+  assert(harness.state.closes === 1, `expected the stale connection to be closed, got ${harness.state.closes}`);
+  assert(harness.state.connects === 2, `expected a fresh connect after retry(), got ${harness.state.connects}`);
+
+  // Snapshot: the revived open forces one immediate refetch, so the query
+  // does not tail a snapshot that went stale while the channel was dead.
+  harness.state.handlers.onOpen(false);
+  await sleep(LIVE_DEBOUNCE_MS * 3);
+  assert(state.runScopedCalls.length === 2, `expected the revived open to force exactly one immediate refetch, got ${state.runScopedCalls.length} total fetch(es)`);
+
+  // Tail: wakes on the NEW connection drive debounced refetches again.
+  harness.state.handlers.onWake();
+  await sleep(LIVE_DEBOUNCE_MS * 3);
+  assert(state.runScopedCalls.length === 3, `expected a wake on the revived channel to refetch, got ${state.runScopedCalls.length} total fetch(es)`);
+  q.unsubscribe();
+});
+
+await check("15.3: retry() is a no-op on a healthy channel and after unsubscribe()", async () => {
+  const { q, harness } = await liveOnRealChannel();
+
+  // Healthy: never thrash a working channel (the primitive's own guard).
+  q.retry();
+  assert(harness.state.connects === 1, `expected retry() on a healthy channel to be a no-op, got ${harness.state.connects} connect(s)`);
+  assert(harness.state.closes === 0, `expected retry() on a healthy channel to close nothing, got ${harness.state.closes}`);
+
+  // Errored, then torn down: a destroyed query never reopens anything.
+  harness.state.handlers.onError(new Error("boom"));
+  q.unsubscribe();
+  q.retry();
+  assert(harness.state.connects === 1, `expected retry() after unsubscribe() to be a no-op, got ${harness.state.connects} connect(s)`);
+});
+
+await check("15.4: a TRANSIENT error that the transport recovers from on its own clears retry()'s gate", async () => {
+  const { q, harness } = await liveOnRealChannel();
+  harness.state.handlers.onError(new Error("transient blip")); // no onTerminal
+  // The transport's own backoff reconnects and reports the open.
+  harness.state.handlers.onOpen(true);
+
+  // The error latch is lowered by that open, so a later retry() finds
+  // nothing to revive — matching the primitive, whose status is back to
+  // "live" and whose retry() is therefore a no-op.
+  q.retry();
+  assert(harness.state.connects === 1, `expected retry() after an auto-recovered transient error to be a no-op, got ${harness.state.connects} connect(s)`);
+  q.unsubscribe();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

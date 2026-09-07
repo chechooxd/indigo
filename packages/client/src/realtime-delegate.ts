@@ -194,6 +194,10 @@ export class LiveModelDelegate<
             Promise.resolve(d.findMany(args)) as Promise<Payload<Row, Rel, A>[]>,
           ),
         subscribe: (listener) => this.liveRealtime().subscribe(this.liveModel, listener),
+        // `.live()`'s `retry()` goes through the exact channel-level path
+        // `createLiveSubscription.retry()` uses (design.md D6) — reviving the
+        // shared channel for every listener on this table, not just this query.
+        revive: () => this.liveRealtime().reviveChannel(this.liveModel),
         handlers,
       });
 

@@ -146,6 +146,20 @@ MUST be a no-op unless the current status is `"error"`.
 - THEN none of the three is classified terminal
 - AND the transport makes a further connect attempt after each
 
+#### Scenario: Every status named terminal by this Requirement is classified terminal at runtime
+
+- GIVEN a transport receiving each of `400`, `401`, `403`, `404` and `410` in turn
+- WHEN each is given more than its backoff interval to act
+- THEN each one is classified terminal exactly once
+- AND none of them makes a further connect attempt
+
+#### Scenario: Every status named transient by this Requirement is classified transient at runtime
+
+- GIVEN a transport receiving each of `408`, `429`, `500` and `502` in turn
+- WHEN each is given more than its backoff interval to act
+- THEN none of them is classified terminal — `408` and `429` stay transient despite being 4xx
+- AND each one makes a further connect attempt
+
 ### Requirement: retry() re-opens a channel from error and is a no-op outside error
 
 `retry()` MUST, when status is `"error"`, close any stale channel and re-open the subscription,
