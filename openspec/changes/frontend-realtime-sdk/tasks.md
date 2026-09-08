@@ -266,17 +266,17 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 5b — Slice 5b: `useLiveTable` hook (D4/D5) [PR 5b/6, M2] — depends on Phase 5a
 
-- [ ] 5b.1 RED `packages/react/test/use-live-table.test.tsx`: return shape is exactly `{status,error,retry}` — closes coverage hole (react-live-bindings scenario 1, no T-row). Mutation: add a `rows` field; key-enumeration assertion must fail.
-- [ ] 5b.2 RED same file: re-rendering 3× with unchanged props keeps exactly one active `createLiveSubscription` (T32). Mutation: recreate on every render; call-count assertion must fail.
-- [ ] 5b.3 RED same file: `renderToString` with `window` deleted completes without throwing, opens no connection, reports `"idle"` (T29/T30). Mutation: read `window.location.origin` at hook top level; render must throw.
-- [ ] 5b.4 RED same file: StrictMode mount→unmount→remount leaves exactly one open connection (T31). Mutation: skip cleanup on the discarded double-invoked instance; connect/close balance assertion must fail.
-- [ ] 5b.5 RED same file: N=3 hook instances on one table ⇒ exactly one `connect` (T33). Mutation: don't share the manager's channel per instance; connect-count assertion must fail.
-- [ ] 5b.6 RED same file: a second instance mounting after the first is `"live"` reports `"live"` immediately, 0 extra connects (T34). Mutation: ignore the Phase 2 replay path; status assertion must fail.
-- [ ] 5b.7 RED same file: `enabled:false` / `table:null` ⇒ `"idle"`, 0 connects (T35). Mutation: still construct the subscription when disabled; connect-count assertion must fail.
-- [ ] 5b.8 RED same file: terminal error surfaces via `error`+`status:"error"`; `retry()` invokes the primitive's `retry()` and recovers to `"live"` (T36). Mutation: swallow the error; non-null `error` assertion must fail.
-- [ ] 5b.9 RED same file: unmounting the sole consumer closes the underlying SSE connection — closes coverage hole (react-live-bindings scenario 6, no T-row). Mutation: skip calling the returned unsubscribe on unmount; close-call assertion must fail.
-- [ ] 5b.10 GREEN `packages/react/src/use-live-table.ts`: implement `useLiveTable` per D4 (`useMemo` + latest-ref `onWake` + two `useSyncExternalStore` calls + `getServerSnapshot`). Make 5b.1–5b.9 pass.
-- [ ] 5b.11 Verify: `pnpm --filter @indigodb/react build && pnpm --filter @indigodb/react test`; `pnpm build && pnpm lint` at the root to confirm no cross-package type drift.
+- [x] 5b.1 RED `packages/react/test/use-live-table.test.tsx`: return shape is exactly `{status,error,retry}` — closes coverage hole (react-live-bindings scenario 1, no T-row). Mutation: add a `rows` field; key-enumeration assertion must fail.
+- [x] 5b.2 RED same file: re-rendering 3× with unchanged props keeps exactly one active `createLiveSubscription` (T32). Mutation: recreate on every render; call-count assertion must fail.
+- [x] 5b.3 RED same file: `renderToString` with `window` deleted completes without throwing, opens no connection, reports `"idle"` (T29/T30). Mutation: read `window.location.origin` at hook top level; render must throw.
+- [x] 5b.4 RED same file: StrictMode mount→unmount→remount leaves exactly one open connection (T31). Mutation: skip cleanup on the discarded double-invoked instance; connect/close balance assertion must fail.
+- [x] 5b.5 RED same file: N=3 hook instances on one table ⇒ exactly one `connect` (T33). Mutation: don't share the manager's channel per instance; connect-count assertion must fail.
+- [x] 5b.6 RED same file: a second instance mounting after the first is `"live"` reports `"live"` immediately, 0 extra connects (T34). Mutation: ignore the Phase 2 replay path; status assertion must fail.
+- [x] 5b.7 RED same file: `enabled:false` / `table:null` ⇒ `"idle"`, 0 connects (T35). Mutation: still construct the subscription when disabled; connect-count assertion must fail.
+- [x] 5b.8 RED same file: terminal error surfaces via `error`+`status:"error"`; `retry()` invokes the primitive's `retry()` and recovers to `"live"` (T36). Mutation: swallow the error; non-null `error` assertion must fail.
+- [x] 5b.9 RED same file: unmounting the sole consumer closes the underlying SSE connection — closes coverage hole (react-live-bindings scenario 6, no T-row). Mutation: skip calling the returned unsubscribe on unmount; close-call assertion must fail.
+- [x] 5b.10 GREEN `packages/react/src/use-live-table.ts`: implement `useLiveTable` per D4 (`useMemo` + latest-ref `onWake` + two `useSyncExternalStore` calls + `getServerSnapshot`). Make 5b.1–5b.9 pass.
+- [x] 5b.11 Verify: `pnpm --filter @indigodb/react build && pnpm --filter @indigodb/react test`; `pnpm build && pnpm lint` at the root to confirm no cross-package type drift.
 
 ## Phase 6 — Slice 6: Studio `useLiveTable` re-base [PR 6/6, M2] — depends on Phase 5b
 

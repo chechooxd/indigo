@@ -1,11 +1,10 @@
 /**
- * @indigodb/react — placeholder entry point (Phase 5a of `frontend-realtime-sdk`).
+ * @indigodb/react — entry point.
  *
- * The real `useLiveTable` hook ships in the next slice (Phase 5b, design.md
- * D4/D5). This stub exists so the package has a genuine shape — real build,
- * lint, test and `npm pack` behavior (D8) — before the hook lands, and so
- * `test/browser-safety.mjs`'s reachable-specifier scan has a real import
- * graph to walk.
+ * `useLiveTable` (Phase 5b, design.md D4/D5) is the package's real product:
+ * a thin `useSyncExternalStore` binding over `createLiveSubscription`. Both
+ * are re-exported here so a consumer never has to reach into `@indigodb/client`
+ * directly.
  *
  * This file imports ONLY the browser-safe `./realtime` subpath of
  * `@indigodb/client` — never the package's root entry, which value-exports
@@ -20,3 +19,5 @@ export type {
   LiveSubscriptionStatus,
   LiveSubscriptionError,
 } from "@indigodb/client/realtime";
+export { useLiveTable } from "./use-live-table.js";
+export type { UseLiveTableOptions, UseLiveTableResult } from "./use-live-table.js";
