@@ -21,6 +21,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { builtinModules } from "node:module";
 
 let failures = 0;
 
@@ -40,8 +41,16 @@ function assert(condition, message) {
 }
 
 const FORBIDDEN = ["pg", /^node:/];
+// `node:fs` and a bare `fs` are the same module to Node, so a `/^node:/` rule
+// alone leaves the entire standard library reachable through its unprefixed
+// form. Sourced from Node rather than hand-kept so it cannot drift.
+// Tradeoff: a few builtin names (`process`, `util`, `punycode`) also exist as
+// browser-safe npm shims; flagging them here is the safe default for a browser
+// package, and a false positive is visible and one line to waive.
+const NODE_BUILTINS = new Set(builtinModules);
 
 function isForbidden(specifier) {
+  if (NODE_BUILTINS.has(specifier)) return true;
   return FORBIDDEN.some((rule) => (rule instanceof RegExp ? rule.test(specifier) : rule === specifier));
 }
 
@@ -88,8 +97,11 @@ function collectReachable(entryFile, seenFiles = new Set(), foundAt = new Map())
   const source = readFileSync(abs, "utf8");
   const importRe = /(?:import|export)\s[^;]*?from\s+["']([^"']+)["']/g;
   const bareImportRe = /import\s+["']([^"']+)["']/g;
+  // A static grep over `from "..."` never sees `import("pg")`, which the
+  // compiled output executes identically.
+  const dynamicImportRe = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
   const specs = new Set();
-  for (const re of [importRe, bareImportRe]) {
+  for (const re of [importRe, bareImportRe, dynamicImportRe]) {
     let m;
     while ((m = re.exec(source))) specs.add(m[1]);
   }

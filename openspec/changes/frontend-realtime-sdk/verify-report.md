@@ -1,5 +1,239 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:c5b1cd6475fd1efdf7f62a3799009444943d9cf706a85fc9288d7c12057c057f
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 0/0
+scenarios: 0/0
+test_command: pnpm exec turbo test --filter=@indigodb/react --force
+test_exit_code: 0
+test_output_hash: sha256:7a40401078e5c84af4f4180cf6298d75ff7e395925157020a137fa6202ac121e
+build_command: pnpm exec turbo build lint --filter=@indigodb/react --force
+build_exit_code: 0
+build_output_hash: sha256:f08db4c703cc984e61fa628d4ddaf00048ed550c76b6c2ee0d8dc9b6356f2070
+```
+
+# Verification Report — frontend-realtime-sdk (Phase 5a)
+
+**Change**: frontend-realtime-sdk
+**Phase scored**: Phase 5a only (Slice 5a — `@indigodb/react` package skeleton + browser-safety
+guard, D8), tasks 5a.1–5a.6.
+**Commit**: `9de6f8e` on `feat/react-package-skeleton`, off `main` @ `629ab28` (Phases 1-4 merged
+and previously verified — not re-audited here). Not yet merged.
+**Mode**: Strict TDD.
+**Spec surface**: none of `react-live-bindings`'s 4 requirements/4 scenarios are in scope for
+5a — every one of them tests `useLiveTable` hook behavior, which Phase 5a deliberately does not
+implement (see the design's own T-row split: T29–T36 are Phase 5b, only T37/T38 belong to 5a).
+Phase 5a is infra scaffolding scored against its own two design test rows (T37, T38), not a
+formal spec Requirement/Scenario pair — hence `0/0` for both counts, matching this phase's actual
+spec surface exactly (not a gap).
+
+## Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 5a) | 6 (5a.1–5a.6) |
+| Tasks complete | 6 |
+| Tasks incomplete | 0 |
+
+All 6 checkboxes are `[x]` in `tasks.md` and each maps to real substance landed in `9de6f8e`:
+
+| Task | Claim | Verified against |
+|---|---|---|
+| 5a.1 | `package.json`/`tsconfig.json`/`src/index.ts` stub created | Files present; `package.json` matches D8 field-for-field (see Package Shape below) |
+| 5a.2 | vitest + jsdom + RTL scaffold, own verification test | `vitest.config.ts` + `test/renderer-setup.test.tsx`; re-run below, genuinely mounts/unmounts |
+| 5a.3 | RED `browser-safety.mjs`, `FORBIDDEN=["pg", /^node:/]` | File present; RED mutation independently reproduced (see Guard Strength below) |
+| 5a.4 | GREEN — `src/index.ts` imports only `@indigodb/client/realtime` | `index.ts` re-exports `createLiveSubscription`/`browserTransport` + 4 types, only from `@indigodb/client/realtime` |
+| 5a.5 | `check-pack-contents.mjs` accepts the package, zero script changes | `git diff main..HEAD -- scripts/check-pack-contents.mjs` is empty; re-run below, `ok` |
+| 5a.6 | `build && lint && test` green | Re-run fresh below, all green |
+
+## Build & Tests Execution (this session's own re-run, not replayed from apply-progress)
+
+**Build**: ✅ Passed
+```text
+$ pnpm exec turbo build lint --filter=@indigodb/react --force
+@indigodb/react:lint: tsc --noEmit  → clean
+@indigodb/react:build: tsc          → clean
+ Tasks: 9 successful, 9 total (0 cached — fresh)
+```
+
+**Tests**: ✅ 2 passed (renderer scaffold) + 1 static scan passed (browser-safety)
+```text
+$ pnpm exec turbo test --filter=@indigodb/react --force
+ ✓ test/renderer-setup.test.tsx (2 tests) 35ms
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+  ok   packages/react's reachable import graph carries no forbidden specifier
+ Tasks: 9 successful, 9 total (0 cached — fresh)
+```
+
+**Coverage**: Not available (no coverage tool wired for `@indigodb/react`) — informational only,
+not a blocker per skill rules.
+
+**Cross-package regression check**:
+- `pnpm exec turbo build lint --force` (whole workspace, fresh, `--force`): **22/22 tasks
+  successful**, including `apps/studio`'s `tsc -b --noEmit` (confirms the new workspace package
+  did not disturb Turbo's `^build` ordering or any consumer's typecheck).
+- `pnpm exec turbo test --force --filter=@indigodb/ast --filter=@indigodb/parser
+  --filter=@indigodb/core --filter=@indigodb/compiler --filter=@indigodb/generator`: fresh,
+  8/8 successful.
+- `git diff main..HEAD -- pnpm-lock.yaml`: confirmed purely additive — the only new block is
+  `packages/react:` (deps + 9 devDependency resolutions); no existing package's `dependencies`/
+  `devDependencies` resolved-version lines changed.
+- The Postgres-gated suites (`*-pg.mjs`, `client`/`migrator`/`cli`'s full chains) were not run to
+  completion in this pass — they are long-running (~2+ min) independent of this change and
+  unrelated to `packages/react` (untouched by this diff); this is a known harness characteristic,
+  not evidence of regression. `@indigodb/react` and the packages directly affected by workspace
+  graph changes (`ast`/`parser`/`core`/`compiler`/`generator`/`client`/`realtime` builds) were all
+  exercised fresh above.
+
+## Package Shape vs D8
+
+| D8 aspect | Required | Actual | Match |
+|---|---|---|---|
+| Name/version | `@indigodb/react`, `0.0.1` | Exact | ✅ |
+| Module type | ESM, `type: module` | `"type": "module"` | ✅ |
+| Dependency | `@indigodb/client: workspace:*`, import only `/realtime` subpath | `"dependencies": {"@indigodb/client": "workspace:*"}`; `src/index.ts` imports only `@indigodb/client/realtime` | ✅ |
+| React | `peerDependencies: {react: ">=18.0.0"}`, never a hard dep | Present as peer; `react`/`react-dom` are `devDependencies` only | ✅ |
+| Exports | single `"."`, `main`/`types` → `dist/index.js`/`.d.ts`, `files: ["dist"]` | Exact | ✅ |
+| Scripts | `build: tsc`, `lint: tsc --noEmit`, `test: vitest run && node test/browser-safety.mjs` | Exact | ✅ |
+| No `private` field | required | absent | ✅ |
+| Pack guard, zero script changes | required | `scripts/check-pack-contents.mjs` re-run: `@indigodb/react ok (5 files, all under dist)`; `git diff main..HEAD -- scripts/check-pack-contents.mjs` empty | ✅ |
+
+**Package shape**: fully compliant with D8, no deviations.
+
+## Renderer Scaffold — Real, Not a Stub Smoke Test
+
+`test/renderer-setup.test.tsx` was re-run in this session (not just read): it genuinely renders a
+`Probe` component via `@testing-library/react`'s `render()`, asserts `document.body.contains(node)`
+and the exact rendered `textContent` (a real behavioral assertion, not `toBeInTheDocument()` alone),
+then calls `unmount()` and asserts `screen.queryByTestId("probe")` is `null` afterward. Both
+assertions require jsdom + RTL to actually be wired correctly — a broken `vitest.config.ts` (e.g.
+wrong `environment`, missing the React plugin) would fail these, not just fail to import. This
+gives Phase 5b real assurance that its `useSyncExternalStore` + StrictMode double-mount tests
+(T29–T36) have a working DOM to render into.
+
+## Guard Strength — `browser-safety.mjs` Probed Beyond the Orchestrator's Reproduction
+
+The orchestrator already reproduced the named RED mutation (root `@indigodb/realtime` import,
+rebuilt) and confirmed it fails with two distinct offenders, each naming the reaching file. This
+pass probed further, independently, with the guard's actual code re-read and each claim verified
+by mutation + rebuild + scan (all reverted clean afterward, confirmed via `git status`/`git diff`
+showing zero residual changes):
+
+1. **Transitive (2+ hop) detection: confirmed working.** `collectReachable()` recurses
+   unconditionally on every relative specifier and every resolved `@indigodb/*` workspace
+   specifier, with no depth limit — the orchestrator's own reproduction (`pg` reached via
+   `packages/realtime/dist/engine.js`) is already a 2-hop case (react → realtime root →
+   engine.js → `pg`), and the recursion structure imposes no bound beyond that. By code
+   inspection, a 3+ hop chain would be caught the same way.
+
+2. **Dynamic `import()` and re-export forms: mixed — re-exports ARE covered, dynamic
+   `import()` is NOT.** Re-export forms (`export { X } from "spec"`) are matched by the same
+   `(?:import|export)\s[^;]*?from\s+["'][^"']+["']` regex used for static imports — verified
+   this form is covered by code inspection (the alternation includes `export`). **Confirmed by
+   live mutation**: appending `export async function boom() { const pg = await
+   import("pg"); return pg; }` to `src/index.ts`, rebuilding (`tsc` emits `TS2307` but still
+   emits JS, matching the apply-progress's own observation of `noEmitOnError` being unset), and
+   re-running the scan **passed clean** (`ok`) despite `dist/index.js` containing a live
+   `import("pg")` call reachable at runtime. Neither of the scan's two regexes matches the
+   `import(...)` call form (both require a `from "..."` clause or a bare side-effect
+   `import "..."` statement). **This is a real, confirmed gap**: a dynamically-imported
+   forbidden module is invisible to this guard. Reverted; scan confirmed green again afterward.
+
+3. **Type-only imports correctly NOT flagged: confirmed working, by design (not accidentally
+   correct).** The scan reads `dist/index.js` (compiled output), not TypeScript source — `tsc`
+   already strips `import type {...}` at compile time, so type-only imports from a
+   root-entry-only package would never appear in the artifact the scan walks. This is the
+   correct behavior and was not observed to false-positive.
+
+4. **`FORBIDDEN = ["pg", /^node:/]` is insufficient in general — confirmed by live mutation,
+   not just inspection.** Bare Node built-in specifiers without the `node:` prefix (`"fs"`,
+   `"path"`, `"crypto"`, etc.) are legal, commonly-used Node import forms and match neither list
+   entry. **Confirmed**: appending `export { readFileSync } from "fs";` to `src/index.ts`,
+   rebuilding, and re-running the scan **passed clean** (`ok`) despite `dist/index.js`
+   containing `export { readFileSync } from "fs";` verbatim. This is a real gap in the exact
+   `FORBIDDEN` list the design specifies (D8, T37) — not a deviation from design, since the
+   design itself names this exact list and reuses the existing `realtime-entry.mjs` pattern
+   verbatim, but a genuine weakness worth flagging for anyone extending this guard later (e.g.
+   Phase 5b/6, or a future package). Reverted; scan confirmed green again afterward.
+
+**Net assessment**: the guard does its one named job — catching the one documented RED mutation
+(a root-entry `@indigodb/*` import, static form) — reliably, including transitively. It is not a
+general-purpose bundler-safety net: dynamic `import()` and bare (non-`node:`-prefixed) Node
+built-ins both slip through undetected. Since this exact scope is what D8 specifies (not a
+broader guarantee), this is a **WARNING**, not a CRITICAL — the implementation matches its
+design exactly, and the design's own chosen mechanism has this known blind spot.
+
+## Correctness (Static Evidence)
+
+| Item | Status | Notes |
+|---|---|---|
+| `@indigodb/react` package scaffolded per D8 | ✅ Implemented | See Package Shape table |
+| Stub entry re-exports only `@indigodb/client/realtime` | ✅ Implemented | `src/index.ts` |
+| `browser-safety.mjs` guard present and RED-mutation-proven | ✅ Implemented | See Guard Strength |
+| `check-pack-contents.mjs` unmodified, accepts new package | ✅ Confirmed | Diff empty, re-run `ok` |
+| Renderer scaffold works for Phase 5b's benefit | ✅ Confirmed | Re-run, real mount/unmount assertions |
+| `useLiveTable` hook | N/A this phase | Correctly deferred to Phase 5b — not a gap |
+
+## Coherence (Design)
+
+| Decision | Followed? | Notes |
+|---|---|---|
+| D8 package location/name/version/module type | ✅ Yes | Exact match |
+| D8 dependency direction (react → client, `/realtime` subpath only) | ✅ Yes | Confirmed statically and by the guard's own RED/GREEN cycle |
+| D8 peer dependency for React | ✅ Yes | `react`/`react-dom` never hard deps |
+| D8 exports shape, `files: ["dist"]`, no `private` | ✅ Yes | Exact match |
+| D8 scripts (`build`/`lint`/`test`) | ✅ Yes | Exact match |
+| D8 pack guard: zero `check-pack-contents.mjs` changes | ✅ Yes | Diff empty |
+| D8's chosen `FORBIDDEN` list and static-scan mechanism | ✅ Yes (as specified) | Implemented exactly as designed; the mechanism's own blind spots (dynamic `import()`, bare Node builtins) are a design-level limitation, not an implementation deviation — flagged as a WARNING for future extension |
+
+## Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `browser-safety.mjs`'s static reachable-specifier scan does not detect dynamic `import()`
+   calls — a forbidden module (e.g. `pg`) reached only through `await import("pg")` would ship
+   silently. Confirmed by live mutation in this pass (see Guard Strength item 2).
+2. `browser-safety.mjs`'s `FORBIDDEN` list only matches the exact string `"pg"` and the
+   `/^node:/` prefix form — bare, non-prefixed Node built-ins (`"fs"`, `"path"`, `"crypto"`, etc.)
+   are legal Node specifiers that slip through undetected. Confirmed by live mutation in this
+   pass (see Guard Strength item 4). Not a deviation from D8 (the design specifies this exact
+   list), but worth hardening before this pattern is reused for a third package.
+3. The Postgres-gated test chains (`client`/`migrator`/`cli` full `pnpm test` chains, `*-pg.mjs`
+   files) were not run to full completion in this verify pass due to their multi-minute runtime
+   being unrelated to the untouched packages they live in; build+lint for the whole workspace and
+   full test runs for the packages nearest the dependency change (`ast`/`parser`/`core`/
+   `compiler`/`generator`/`client`-build/`realtime`-build) were exercised fresh and green. No
+   evidence of regression was found, but this is disclosed as an incomplete verification surface
+   rather than silently treated as a pass.
+
+**SUGGESTION**:
+1. Consider extending `FORBIDDEN` to cover bare Node builtin names (`fs`, `path`, `crypto`, `os`,
+   `net`, `tls`, `stream`, `child_process`, etc.) alongside the `/^node:/` prefix form, and/or
+   extending the regex to also capture `import(` call expressions, before this scan pattern is
+   reused for a third browser-facing package.
+
+## Verdict
+
+**PASS WITH WARNINGS** — all 6 Phase 5a tasks complete with real substance, package shape matches
+D8 exactly, the renderer scaffold is genuinely functional (verified by real mount/unmount
+assertions), and the browser-safety guard correctly blocks its one named RED mutation
+(transitively, including through 2+ workspace hops). Three WARNINGs are disclosed: two are
+confirmed, real gaps in the guard's coverage (dynamic `import()`, bare non-prefixed Node
+builtins) that are inherent to the design's own chosen `FORBIDDEN` list and mechanism rather than
+implementation deviations, and one is an incomplete-but-justified verification surface (long-
+running Postgres-gated suites not run to completion, unrelated packages, fresh build/lint/test
+elsewhere confirms no regression). None of these block Phase 5a — none is a spec regression,
+since Phase 5a carries no formal spec requirements of its own (0/0, correctly — `react-live-bindings`'s
+requirements are entirely Phase 5b scope). Ready for Phase 5b (`useLiveTable` hook, D4/D5).
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:a81245f10efa6e3354dfc74c9c9ea023ba583ce22177c954e26bee903aa36a67
 verdict: pass_with_warnings
 blockers: 0
