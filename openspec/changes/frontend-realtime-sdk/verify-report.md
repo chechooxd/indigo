@@ -1,5 +1,180 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:b972329f352ba580e5e7c6a5d5ec2778206532d9c26cdc9abc093bdcd87e992f
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 6/6
+scenarios: 6/6
+test_command: pnpm exec turbo test --filter=@indigodb/react --force
+test_exit_code: 0
+test_output_hash: sha256:a6f4f8d02ca3941af6cd4a882c56657eaaa8be080e9daff5d8e3b4a2b4c3ad41
+build_command: pnpm exec turbo build lint --filter=@indigodb/react --force
+build_exit_code: 0
+build_output_hash: sha256:6b52923405ae13c09be426f9cfb71fa33faa2492ddae28efc88e3200ed2af498
+```
+
+# Verification Report — frontend-realtime-sdk (Phase 5b)
+
+**Change**: frontend-realtime-sdk
+**Phase scored**: Phase 5b only (Slice 5 — `useLiveTable` hook, D4/D5), tasks 5b.1–5b.11.
+**Commit**: `b48763e` on `feat/react-use-live-table`, off `main` @ `03d0d40` (Phases 1–5a merged
+and previously verified — not re-audited here). Not yet merged.
+**Mode**: Strict TDD.
+**Spec surface**: `react-live-bindings` — 6 requirements, 6 scenarios, all in scope for this
+phase (the only phase that implements `useLiveTable`).
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total (5b) | 11 |
+| Tasks complete | 11 |
+| Tasks incomplete | 0 |
+
+All 11 checkboxes (5b.1–5b.11) are `[x]` in `tasks.md` and land with real substance in
+`b48763e`: `packages/react/src/use-live-table.ts` (new, 108 lines), `packages/react/test/use-live-table.test.tsx`
+(new, 249 lines, 10 tests), `packages/react/src/index.ts` (re-exports), `tasks.md` (checkbox
+updates).
+
+### Build & Tests Execution
+**Build**: PASSED
+```text
+pnpm exec turbo build lint --filter=@indigodb/react --force
+8/8 tasks successful (dependency chain: ast→compiler→parser→core→migrator→realtime→client→react)
+```
+
+**Tests**: PASSED — 12/12 (2 renderer-setup + 10 use-live-table), 0 failed, 0 skipped
+```text
+pnpm exec turbo test --filter=@indigodb/react --force
+ ✓ test/renderer-setup.test.tsx (2 tests)
+ ✓ test/use-live-table.test.tsx (10 tests)
+  ok   packages/react's reachable import graph carries no forbidden specifier
+```
+
+**Coverage**: not available — no coverage tool configured for `@indigodb/react`'s vitest setup.
+
+### Spec Compliance Matrix
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| Return shape has no data field | Return shape has no data field | `use-live-table.test.tsx > useLiveTable — return shape > returns exactly {status, error, retry}` | ✅ COMPLIANT |
+| Stable subscribe identity, one subscription per mount | Re-rendering with unchanged props does not create a second subscription | `use-live-table.test.tsx > useLiveTable — subscription identity > keeps exactly one active createLiveSubscription across 3 re-renders` | ✅ COMPLIANT |
+| SSR-safe, no `window` access during render | Rendering to a string on the server does not throw | `use-live-table.test.tsx > useLiveTable — SSR > renderToString with window deleted...` | ✅ COMPLIANT |
+| StrictMode double-invoke leaves exactly one live subscription | StrictMode double-invoke leaves one connection, not two | `use-live-table.test.tsx > useLiveTable — StrictMode double-invoke > leaves exactly one open connection` | ✅ COMPLIANT |
+| Terminal error surfaces via `error`/`status`, `retry()` recovers | A transport error is observable and retry() recovers it | `use-live-table.test.tsx > useLiveTable — terminal error and retry > surfaces a terminal error...` | ✅ COMPLIANT |
+| Unmounting closes the subscription | Unmounting the sole consumer of a table closes the connection | `use-live-table.test.tsx > useLiveTable — unmount > unmounting the sole consumer closes the underlying connection` | ✅ COMPLIANT |
+
+**Compliance summary**: 6/6 scenarios compliant.
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| Two separate `useSyncExternalStore` calls (status string, error object) | ✅ Implemented | `use-live-table.ts:100-101` — `sub.getStatus`/`sub.getError` passed unwrapped, preserving the client primitive's cached-identity guarantee (`realtime.ts`'s `readError()` only rebuilds the snapshot object when `rawError`/`rawErrorTerminal` actually change). |
+| `onWake` via latest-ref, never re-subscribes on inline-closure churn | ✅ Implemented | `use-live-table.ts:73-74,84` |
+| `subscribe` stable via `useCallback([sub])` | ✅ Implemented | `use-live-table.ts:89-95` |
+| `enabled:false` / `table == null` never constructs the subscription | ✅ Implemented | `use-live-table.ts:76-87` |
+| No `fetch(`, `window`, `document` reference anywhere in the file | ✅ Confirmed | `rg -n "fetch\(" use-live-table.ts` → no matches; independently re-confirmed this session. |
+| Package entry re-exports only the browser-safe `@indigodb/client/realtime` subpath | ✅ Confirmed | `index.ts:15,21`; `browser-safety.mjs` scan green post-rebuild. |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| D4 — `useMemo`-lazy primitive, inert until `subscribe()` | ✅ Yes | Confirmed by the StrictMode test's absolute connect/close counts (2/1), not net parity. |
+| D4 — return is `{status, error, retry}` only, fresh object per render | ✅ Yes | Return-shape test enumerates exactly 3 keys. |
+| D5 — `getServerSnapshot` = `() => "idle"` / `() => null`, no `window` touch | ✅ Yes | Exercised through an actual `renderToString` server-render pass, not source inspection alone (see Investigation Findings). |
+| D6 — terminal error class surfaces via `error.terminal`, `retry()` revives the channel | ✅ Yes | Terminal-error test drives `onError`+`onTerminal` through the fake transport's real handlers, then calls `retry()` and confirms a fresh `connect()`. |
+
+### Investigation Findings (orchestrator-requested deep checks)
+
+1. **StrictMode net-count self-fix — verified correct and not repeated elsewhere.** The
+   apply agent's own documented deviation (weak net `connectCount - closeCount` assertion nets
+   identically for "correct reopen cycle" and "broken cleanup that never closes") was
+   independently reproduced: reverting the StrictMode test to `sub.subscribe(onChange)` returning
+   a no-op cleanup instead of the real unsubscribe fails **both** the StrictMode assertions
+   (`connectCount()===2`, `closeCount()===1`) and the unmount test's `closeCount()===1`. `rg` over
+   the full test file found no other `connectCount() - closeCount()`-style net assertion; every
+   other connect/close check in the suite (`shared channel`, `enabled/table gating`, `unmount`) is
+   an absolute count.
+
+2. **Snapshot stability, verified by mutation.** Rewriting the hook's `getError` to allocate a
+   fresh object per call (`() => ({ ...sub.getError() })`) — instead of passing `sub.getError`
+   through unwrapped — was applied, rebuilt, and run: **7 of 10 tests failed** with React's
+   `"Maximum update depth exceeded"` / `"The result of getSnapshot should be cached to avoid an
+   infinite loop"`, confirming the test suite genuinely depends on referential snapshot stability
+   and would catch a regression here. The status snapshot is a plain string (inherently stable);
+   the error snapshot's stability is enforced one level down in `packages/client/src/realtime.ts`'s
+   `readError()`, which only rebuilds `errorSnapshot` when `rawError`/`rawErrorTerminal` actually
+   change — the hook correctly passes it through without re-wrapping. Mutation reverted clean
+   (`diff` confirmed byte-identical to the pre-mutation backup).
+
+3. **Re-render counting — NOT asserted (WARNING, not spec-mandated).** No test in the suite
+   counts React renders or asserts "a status change re-renders exactly once." Every assertion
+   reads the hook's latest value through an imperative `resultRef` captured on every render, which
+   proves the *final* value is correct but not that a transition renders exactly once rather than
+   looping or double-committing. None of the 6 `react-live-bindings` spec scenarios require this
+   assertion, so it is not a spec gap — but it is a real testing blind spot for a hook whose entire
+   purpose is `useSyncExternalStore` correctness. Recommend a `renderCount` probe (e.g. incrementing
+   a ref inside the `Probe` component body) in a follow-up if this hook's behavior is revisited.
+
+4. **SSR path is genuinely exercised, not merely inspected.** The SSR test renders through the
+   real `react-dom/server` `renderToString` entry point (not `render()` from
+   `@testing-library/react`) with `globalThis.window` actually deleted, which is what causes React
+   to invoke `getServerSnapshot` rather than the client `getSnapshot`. This is a real server-render
+   path proof, not source-inspection-only compliance with D5.
+
+5. **Subscribe identity — stable-across-unchanged-props confirmed; resubscribe-on-change
+   UNTESTED (WARNING).** `subscribe`'s `useCallback([sub])` dependency on `sub`, and `sub`'s
+   `useMemo([active, table, transport, debounceMs])` dependency array, mean `subscribe`'s identity
+   changes only when one of those four values changes — consistent with D4. Test 5b.2 confirms the
+   *stable* half (3 re-renders with unchanged props keep one subscription). The *unstable* half —
+   that changing `table`, `transport`, or `debounceMs` on a live hook actually creates a new
+   subscription and resubscribes — has **no covering test**. Mutation-confirmed: removing
+   `table`/`transport`/`debounceMs` from the `useMemo` dependency array (leaving only `[active]`)
+   was applied, rebuilt, and the full suite (12/12) still passed with **zero test failures** — this
+   is a genuine, currently-invisible regression risk (a table-prop change would silently keep
+   subscribing to the stale table). Mutation reverted clean (`diff` confirmed byte-identical).
+   This is a coverage gap outside all 6 spec scenarios (none of which exercise prop changes on an
+   already-mounted hook), so it is a WARNING, not a spec-scenario CRITICAL.
+
+6. **Assertion quality across all 10 tests: no crash-only or hang-only failures found.** Every
+   mutation independently attempted this session (StrictMode no-op unsubscribe, error re-wrapping,
+   `useMemo` deps narrowing) failed on the specific assertion the corresponding scenario names,
+   confirmed by re-running the full suite and reading each failure's own expect/actual pair — no
+   test failed via an unrelated crash, timeout, or collateral test breaking instead. This matches
+   the apply agent's own mutation log for the remaining 6 mutations (5b.1, 5b.2, 5b.5, 5b.6, 5b.7)
+   recorded in `apply-progress`, not independently re-run this session (already reported with
+   specific expect/actual pairs consistent with real assertion failures, not crashes).
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+- No test asserts "a status change triggers exactly one re-render" (see Finding 3). Not a spec
+  gap — none of the 6 `react-live-bindings` scenarios require it — but a real blind spot for a
+  `useSyncExternalStore`-correctness-focused package.
+- Changing `table`/`transport`/`debounceMs` on an already-mounted `useLiveTable` to trigger a
+  resubscribe is unimplemented-by-test (see Finding 5): mutation-confirmed that narrowing the
+  `useMemo` dependency array to `[active]` alone passes the entire suite. D4's own dependency
+  array (`[active, table, transport, debounceMs]`) is implemented correctly in the shipped code —
+  this is a coverage gap, not a functional defect, and outside the 6 spec scenarios' scope.
+
+**SUGGESTION**:
+- Consider adding one `renderCount` probe test and one prop-change resubscribe test in a future
+  slice (or as a fast-follow before Phase 6, since Studio will mount/unmount this hook with a
+  changing `table` prop as the user navigates tables) to close the two blind spots above before
+  they can hide a real regression.
+
+### Verdict
+PASS WITH WARNINGS — all 11 tasks complete with real substance, all 6 spec scenarios covered by
+passing, non-trivial, mutation-verified tests, build/lint/test all green; two coverage-gap
+WARNINGs found outside the spec's 6-scenario surface (re-render-count and prop-change-resubscribe
+untested), neither of which corresponds to a failing test, an unchecked task, or a spec scenario
+without a covering test.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:c5b1cd6475fd1efdf7f62a3799009444943d9cf706a85fc9288d7c12057c057f
 verdict: pass_with_warnings
 blockers: 0
@@ -194,14 +369,27 @@ design exactly, and the design's own chosen mechanism has this known blind spot.
 **CRITICAL**: None.
 
 **WARNING**:
-1. `browser-safety.mjs`'s static reachable-specifier scan does not detect dynamic `import()`
-   calls — a forbidden module (e.g. `pg`) reached only through `await import("pg")` would ship
-   silently. Confirmed by live mutation in this pass (see Guard Strength item 2).
-2. `browser-safety.mjs`'s `FORBIDDEN` list only matches the exact string `"pg"` and the
-   `/^node:/` prefix form — bare, non-prefixed Node built-ins (`"fs"`, `"path"`, `"crypto"`, etc.)
-   are legal Node specifiers that slip through undetected. Confirmed by live mutation in this
-   pass (see Guard Strength item 4). Not a deviation from D8 (the design specifies this exact
-   list), but worth hardening before this pattern is reused for a third package.
+
+1. ~~`browser-safety.mjs` does not detect dynamic `import()`~~ — **RETRACTED, this finding is
+   wrong.** 2. ~~bare non-prefixed Node built-ins slip through~~ — **RETRACTED, also wrong.**
+
+   Both gaps were real when Phase 5a's verify found them, and both were closed in commit
+   `03d0d40` (`test(react): close the browser-safety guard's two confirmed blind spots`) before
+   Phase 5b branched. The hardening is present in the exact commit this pass scored: `b48763e`'s
+   `browser-safety.mjs` carries `builtinModules`, `NODE_BUILTINS`, and `dynamicImportRe`.
+
+   Re-proved live by the orchestrator after this pass: appending
+   `export async function boom() { return import("pg"); }` to `src/index.ts` **and rebuilding**
+   fails the scan with `forbidden import "pg" ... reached via packages/react/dist/index.js`.
+   A bare `export { readFileSync } from "fs"` likewise fails.
+
+   Root cause of the false finding: the scan reads `dist/`, so a mutation applied to `src/`
+   without an intervening `pnpm --filter @indigodb/react build` leaves the compiled output
+   unchanged and the scan correctly reports `ok`. The pass read that as the guard being blind.
+   This is the same rebuild-between-mutation-and-scan trap the launch prompt named, and it is
+   worth remembering: **a mutation that does not reach the artifact under test proves nothing,
+   in either direction.**
+
 3. The Postgres-gated test chains (`client`/`migrator`/`cli` full `pnpm test` chains, `*-pg.mjs`
    files) were not run to full completion in this verify pass due to their multi-minute runtime
    being unrelated to the untouched packages they live in; build+lint for the whole workspace and
@@ -211,7 +399,9 @@ design exactly, and the design's own chosen mechanism has this known blind spot.
    rather than silently treated as a pass.
 
 **SUGGESTION**:
-1. Consider extending `FORBIDDEN` to cover bare Node builtin names (`fs`, `path`, `crypto`, `os`,
+1. ~~Consider extending `FORBIDDEN`~~ — already done in `03d0d40`, which sources the
+   builtin list from Node's own `builtinModules` rather than hand-keeping it. Original text:
+   consider extending `FORBIDDEN` to cover bare Node builtin names (`fs`, `path`, `crypto`, `os`,
    `net`, `tls`, `stream`, `child_process`, etc.) alongside the `/^node:/` prefix form, and/or
    extending the regex to also capture `import(` call expressions, before this scan pattern is
    reused for a third browser-facing package.
