@@ -78,7 +78,7 @@ describe('useLiveTable', () => {
     expect(result.current.status).toBeNull();
   });
 
-  it('a change frame refetches only after the debounce window elapses', async () => {
+  it('a wake frame refetches only after the debounce window elapses', async () => {
     const transport = new FakeTransport();
     const fetchRows = vi.fn().mockResolvedValue({ columns: [], rows: [{ id: 1 }] });
 
@@ -86,7 +86,7 @@ describe('useLiveTable', () => {
 
     act(() => transport.lastHandlers.onOpen(false));
 
-    act(() => transport.lastHandlers.onEvent({} as never));
+    act(() => transport.lastHandlers.onWake?.());
     expect(fetchRows).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -114,7 +114,7 @@ describe('useLiveTable', () => {
     expect(fetchRows).toHaveBeenCalledTimes(1);
   });
 
-  it('a burst of 5 frames within the debounce window produces exactly one refetch', async () => {
+  it('a burst of 5 wake frames within the debounce window produces exactly one refetch', async () => {
     const transport = new FakeTransport();
     const fetchRows = vi.fn().mockResolvedValue({ columns: [], rows: [] });
 
@@ -122,7 +122,7 @@ describe('useLiveTable', () => {
     act(() => transport.lastHandlers.onOpen(false));
 
     act(() => {
-      for (let i = 0; i < 5; i++) transport.lastHandlers.onEvent({} as never);
+      for (let i = 0; i < 5; i++) transport.lastHandlers.onWake?.();
     });
 
     await act(async () => {
@@ -133,7 +133,7 @@ describe('useLiveTable', () => {
     expect(fetchRows).toHaveBeenCalledTimes(1);
   });
 
-  it('a frame arriving mid-flight produces exactly one follow-up refetch, never overlapping', async () => {
+  it('a wake arriving mid-flight produces exactly one follow-up refetch, never overlapping', async () => {
     const transport = new FakeTransport();
     let resolveFirst: (v: { columns: string[]; rows: unknown[] }) => void = () => {};
     const fetchRows = vi
@@ -149,7 +149,7 @@ describe('useLiveTable', () => {
     renderHook(() => useLiveTable('users', true, { transport, fetchRows, debounceMs: 50 }));
     act(() => transport.lastHandlers.onOpen(false));
 
-    act(() => transport.lastHandlers.onEvent({} as never));
+    act(() => transport.lastHandlers.onWake?.());
     await act(async () => {
       vi.advanceTimersByTime(50);
       await Promise.resolve();
@@ -157,7 +157,7 @@ describe('useLiveTable', () => {
     expect(fetchRows).toHaveBeenCalledTimes(1);
 
     // Mid-flight: another frame arrives while the first refetch is pending.
-    act(() => transport.lastHandlers.onEvent({} as never));
+    act(() => transport.lastHandlers.onWake?.());
     await act(async () => {
       vi.advanceTimersByTime(50);
       await Promise.resolve();
@@ -252,7 +252,7 @@ describe('useLiveTable', () => {
     const { result } = renderHook(() => useLiveTable('users', true, { transport, fetchRows, debounceMs: 50 }));
     act(() => transport.lastHandlers.onOpen(false));
 
-    act(() => transport.lastHandlers.onEvent({} as never));
+    act(() => transport.lastHandlers.onWake?.());
     await act(async () => {
       vi.advanceTimersByTime(50);
       await Promise.resolve();
@@ -324,7 +324,7 @@ describe('useLiveTable', () => {
       act(() => transport.lastHandlers.onError(new Error('boom')));
       expect(result.current.status).toBe('error');
 
-      act(() => transport.lastHandlers.onEvent({} as never));
+      act(() => transport.lastHandlers.onWake?.());
       await act(async () => {
         vi.advanceTimersByTime(50);
         await Promise.resolve();
@@ -335,6 +335,46 @@ describe('useLiveTable', () => {
       expect(stored?.records).toEqual([{ id: 1 }]);
       // The error status is scoped to the badge — it never gates data fetching.
       expect(result.current.status).toBe('error');
+    });
+  });
+
+  describe('re-based onto RealtimeConnectionManager (studio-live-view, tasks 6.2/6.3)', () => {
+    it('joining a table another consumer already holds open reports live immediately, with exactly one connection opened (T39/T40)', () => {
+      const transport = new FakeTransport();
+      const fetchRows = vi.fn().mockResolvedValue({ columns: [], rows: [] });
+
+      // First consumer opens the channel and the transport reports live.
+      const first = renderHook(() => useLiveTable('users', true, { transport, fetchRows }));
+      act(() => transport.lastHandlers.onOpen(false));
+      expect(first.result.current.status).toBe('live');
+
+      // Second consumer subscribes to the SAME already-open channel (same
+      // transport instance — the shared manager keys on transport identity).
+      const second = renderHook(() => useLiveTable('users', true, { transport, fetchRows }));
+
+      // No further connect() call — one shared connection, not a private
+      // transport per hook instance — and the late joiner is told "live"
+      // synchronously, without waiting for a reconnect event.
+      expect(transport.connectCalls).toHaveLength(1);
+      expect(second.result.current.status).toBe('live');
+    });
+
+    it('the RealtimeConnectionManager-bypass rationale and its private-transport code path are gone from source (T40)', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const filePath = path.resolve(process.cwd(), 'src/features/studio/browser/hooks/useLiveTable.ts');
+      const src = fs.readFileSync(filePath, 'utf-8');
+
+      // The bypass RATIONALE (why the manager was avoided) must be gone —
+      // referencing RealtimeConnectionManager positively (it is now used)
+      // is fine; the "it swallows the first onOpen" justification is not.
+      expect(src).not.toMatch(/swallow/i);
+      expect(src).not.toMatch(/ONE LAYER BELOW/);
+      // The private-transport code path (an unconditional direct
+      // `SseTransport` construction bypassing the shared binding) must be
+      // gone too — the only allowed constructor call is through
+      // `browserTransport()`.
+      expect(src).not.toMatch(/new SseTransport\(/);
     });
   });
 });

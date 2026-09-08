@@ -35,6 +35,10 @@ export interface UseLiveTableOptions {
   transport: RealtimeTransport;
   /** The app's own invalidation callback; NEVER receives rows. */
   onWake?: () => void;
+  /** Fired when a dropped connection comes back, so events were missed while
+   * it was down. Not debounced: a wake means "refetch soon", a resync means
+   * "refetch now". NEVER receives rows. */
+  onResync?: () => void;
   /** Default `LIVE_DEBOUNCE_MS` (50). `<= 0` disables debouncing. */
   debounceMs?: number;
   /** `false` never constructs the underlying subscription (design.md D4). */
@@ -72,6 +76,8 @@ export function useLiveTable(table: string | null | undefined, options: UseLiveT
   // never invalidates the `useMemo` below or re-subscribes (design.md D4).
   const onWakeRef = useRef(options.onWake);
   onWakeRef.current = options.onWake;
+  const onResyncRef = useRef(options.onResync);
+  onResyncRef.current = options.onResync;
 
   const active = enabled && table != null;
 
@@ -82,6 +88,7 @@ export function useLiveTable(table: string | null | undefined, options: UseLiveT
       transport,
       debounceMs,
       onWake: () => onWakeRef.current?.(),
+      onResync: () => onResyncRef.current?.(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, table, transport, debounceMs]);

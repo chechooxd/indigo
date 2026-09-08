@@ -280,11 +280,36 @@ guards, ~150) and 5b (the hook, ~470). Use 5a/5b only if scaffolding overruns du
 
 ## Phase 6 — Slice 6: Studio `useLiveTable` re-base [PR 6/6, M2] — depends on Phase 5b
 
-- [ ] 6.1 RED existing Studio hook suite, re-pointed: debounce/coalescing/transient-error/inert-`null` assertions still pass against the re-based hook (T39). Mutation: revert one call site to the old inline transport; an existing assertion must fail, proving the suite still bites post-rebase.
-- [ ] 6.2 RED same suite: selecting a table another consumer already holds open reports `"live"` immediately, no reconnect wait — closes coverage hole (studio-live-view scenario 1, T39/T40 were too generic). Mutation: bypass the shared manager for this path; status assertion must fail.
-- [ ] 6.3 RED same suite: exactly one connection opens for the Table Browser; the bypass rationale comment is gone from source (T40). Mutation: reintroduce a private transport; connect-count assertion fails and the bypass-comment grep assertion fails.
-- [ ] 6.4 GREEN `apps/studio/.../hooks/useLiveTable.ts`: re-base onto `@indigodb/react`'s `useLiveTable`; delete the bypass comment and the private-transport code path. Make 6.1–6.3 pass.
-- [ ] 6.5 Verify: `pnpm --filter @indigodb/studio test` (vitest) and `pnpm --filter @indigodb/studio lint` (`tsc -b --noEmit`, `-b` load-bearing) both green.
+- [x] 6.1 RED existing Studio hook suite, re-pointed: every pre-existing assertion still passes
+      against the re-based hook (T39). Mutation confirmed to bite on a currently-passing baseline
+      assertion (`transport.connectCalls` length), `cp`-backed revert `diff`-confirmed clean.
+- [x] 6.2 RED→GREEN: selecting a table another consumer already holds open reports `"live"`
+      immediately, no reconnect wait — the payoff of Phase 2's replay-on-subscribe fix.
+- [x] 6.3 RED→GREEN: exactly one connection opens for the Table Browser; the bypass rationale
+      comment is gone from source.
+- [x] 6.4 GREEN `apps/studio/.../hooks/useLiveTable.ts` re-based onto `@indigodb/react`'s
+      `useLiveTable`; private-transport path and bypass comment deleted.
+- [x] 6.5 Verify: `pnpm --filter @indigodb/studio test` green (17/17); `pnpm --filter
+      @indigodb/studio lint` (`tsc -b --noEmit`, `-b` load-bearing) clean.
+- [x] 6.6 Close the binding gap the re-base surfaced: `createLiveSubscription` was discarding
+      `ChannelListener.onOpen`'s `reconnected` flag, and since `setStatus` skips notifying on an
+      unchanged status, a reconnect returning to `"live"` was invisible to every consumer. Added
+      `onResync` to the primitive and threaded it through `@indigodb/react`'s hook via a
+      latest-ref (mirroring `onWake`), and the Studio refetches immediately on it, skipping the
+      debounce. Test 3.22 pins it from both sides: discarding `reconnected` fails with
+      "reconnect must resync exactly once, got 0"; firing on every open fails with "first open
+      must NOT resync, got 1".
+- [x] 6.7 Retire the dead change-frame drivers: 5 pre-existing Studio assertions drove the hook
+      through `onEvent` (a `change` frame), which the server has not emitted since `9798f9c` made
+      the SSE wire wake-only. They were testing a protocol shape deleted three slices earlier.
+      Retargeted onto the wake path and retitled; **no `expect(...)` line was altered** — verified
+      by diff. The behaviours (debounce, coalescing, null-result, error-status-still-fetches)
+      remain covered; only the trigger changed to the frame that actually exists.
+
+**Finding, RESOLVED.** The re-base did its job as the binding's acceptance test: it surfaced a
+real gap before any external consumer met it. Closing it (6.6) is why this slice exists. The
+`onEvent` half was never a binding gap — it was test debt from the wake-only migration, and is
+now paid (6.7).
 
 ## Standing obligation (carried forward)
 

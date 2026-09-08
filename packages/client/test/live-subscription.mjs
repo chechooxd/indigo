@@ -339,6 +339,33 @@ function subscribedWithError(terminal) {
   return { fake, sub, raw };
 }
 
+await check("3.22: onResync fires on a RECONNECT only — never on the first open, and even when the status snapshot does not change", () => {
+  const fake = makeFakeTransport();
+  const manager = new RealtimeConnectionManager(fake.transport);
+  const resyncs = [];
+  const wakes = [];
+  const sub = createLiveSubscription({
+    table: "Order",
+    transport: fake.transport,
+    manager,
+    onResync: () => resyncs.push("resync"),
+    onWake: () => wakes.push("wake"),
+  });
+  sub.subscribe(() => {});
+
+  fake.fireOpen(false); // first open: connecting -> live
+  assert(sub.getStatus() === "live", `expected "live", got "${sub.getStatus()}"`);
+  assert(resyncs.length === 0, `first open must NOT resync, got ${resyncs.length}`);
+
+  // A reconnect that returns to an already-"live" status. `setStatus` is a
+  // no-op here, so this signal is unreachable from the status snapshot alone —
+  // which is exactly why the primitive must not discard `reconnected`.
+  fake.fireOpen(true);
+  assert(sub.getStatus() === "live", `expected still "live", got "${sub.getStatus()}"`);
+  assert(resyncs.length === 1, `reconnect must resync exactly once, got ${resyncs.length}`);
+  assert(wakes.length === 0, `a resync is not a wake; expected 0 wakes, got ${wakes.length}`);
+});
+
 await check("3.19a: getError() is null before any error — unsubscribed, connecting, and live", () => {
   const fake = makeFakeTransport();
   const manager = new RealtimeConnectionManager(fake.transport);

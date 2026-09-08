@@ -4,37 +4,41 @@
  */
 
 /**
- * Subscribes the active table to the embedded, unauthenticated realtime SSE
- * stream and triggers a debounced, coalesced refetch on every `change`/`wake`
- * frame (`studio-live-view` spec, design.md `studio-live-view`).
+ * Subscribes the active table to the shared realtime connection and
+ * triggers a debounced, coalesced refetch on every wake frame
+ * (`studio-live-view` spec, design.md `studio-live-view`).
  *
  * Studio has no generated `IndigoClient`, so `.live()` is unreachable by
  * construction (Node-only `pg`/`node:async_hooks`; emitted only for
  * `@@realtime` + `@@allow`; requires an app-supplied `getHandle`). This hook
- * therefore connects ONE LAYER BELOW `.live()`: it imports the same
- * browser-safe `SseTransport` that `.live()` rides on directly (NOT
- * `RealtimeConnectionManager` — its refcounting swallows the first `onOpen`,
- * which is exactly the `connecting -> live` edge this hook needs), and
- * re-implements only `createLiveQuery`'s debounce/coalesce/status core
- * (`packages/client/src/live.ts`), reusing its exported `LIVE_DEBOUNCE_MS`
- * and `LiveStatus` vocabulary. Structure mirrored, code not shared —
- * `createLiveQuery`'s `requireHandle`/`getHandle`/`runScoped` deps are
- * mandatory there and meaningless here (no auth boundary at this layer).
+ * rides the SAME published binding every other consumer uses:
+ * `@indigodb/react`'s `useLiveTable` hands back `{status, error, retry}` off
+ * a subscription shared per table through `RealtimeConnectionManager`, so a
+ * second consumer subscribing to a table another consumer already holds
+ * open reports `live` immediately, without opening a second connection or
+ * waiting for a reconnect event.
  *
- * `error` is TRANSIENT and auto-recovering, never terminal (design decision
- * 6): `SseTransport`'s own backoff (1s -> 30s) keeps retrying underneath;
- * `onOpen(reconnected)` returns to `live` and fires one immediate refetch
- * bypassing the debounce. There is no manual retry control.
+ * The binding is status-only — it never fetches, caches, or exposes rows.
+ * This hook layers Studio's own debounced, coalesced `fetchTableRows` call
+ * on top, wired through the binding's `onWake` callback (the debounce
+ * window itself now lives in the shared primitive, `LIVE_DEBOUNCE_MS`
+ * (`@indigodb/client/realtime`); this hook keeps only the in-flight/dirty
+ * refetch coalescing, since an in-flight fetch duration is a Studio-side
+ * concern the generic primitive has no opinion on).
+ *
+ * `error` is TRANSIENT and auto-recovering, never terminal in ordinary
+ * operation (design decision 6): the underlying transport's own backoff
+ * (1s -> 30s) keeps retrying underneath and returns to `live` on its own.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
+import { useLiveTable as useLiveTableBinding } from '@indigodb/react';
 import {
-  SseTransport,
-  LIVE_DEBOUNCE_MS,
+  browserTransport,
   REALTIME_PATH,
   type RealtimeTransport,
+  type LiveStatus,
 } from '@indigodb/client/realtime';
-import type { LiveStatus } from '@indigodb/client/realtime';
 
 import { fetchTableRows, type QueryResult } from '../../../../lib/api';
 import { useDataStore } from '../../../../store/useDataStore';
@@ -44,7 +48,7 @@ export interface UseLiveTableDeps {
   transport?: RealtimeTransport;
   /** Test seam — default is `fetchTableRows` from `lib/api`. */
   fetchRows?: (name: string) => Promise<QueryResult | null>;
-  /** Test seam — default is `LIVE_DEBOUNCE_MS` (50ms). */
+  /** Test seam — default is `LIVE_DEBOUNCE_MS` (50ms), forwarded to the binding. */
   debounceMs?: number;
 }
 
@@ -54,22 +58,23 @@ export interface UseLiveTableResult {
   status: LiveStatus | null;
 }
 
+/** Never called — only used to satisfy the binding's required `transport`
+ * prop while the subscription is inert (`enabled: false`). */
+const INERT_TRANSPORT: RealtimeTransport = {
+  connect: () => () => {},
+};
+
 /**
  * `null` status ⇒ inert: no subscription, no indicator.
  *
- * One `useEffect` keyed on `[tableName, enabled]`. `destroyed`/`inFlight`/
- * `dirty`/`timer` are closure locals (not React state) so no frame causes a
- * re-render — only `status` is state. `fetchRows` and `updateTableRecords`
- * are read through refs so the effect never re-subscribes when the caller
- * passes a fresh closure on every render.
+ * `fetchRows` and `updateTableRecords` are read through refs so a fresh
+ * closure on every render never re-subscribes the underlying binding.
  */
 export function useLiveTable(
   tableName: string | undefined,
   enabled: boolean,
   deps?: UseLiveTableDeps,
 ): UseLiveTableResult {
-  const [status, setStatus] = useState<LiveStatus | null>(null);
-
   const updateTableRecords = useDataStore((s) => s.updateTableRecords);
   const updateTableRecordsRef = useRef(updateTableRecords);
   updateTableRecordsRef.current = updateTableRecords;
@@ -78,96 +83,76 @@ export function useLiveTable(
   const fetchRowsRef = useRef(fetchRowsFn);
   fetchRowsRef.current = fetchRowsFn;
 
-  const transportRef = useRef(deps?.transport);
-  transportRef.current = deps?.transport;
+  const active = enabled && !!tableName;
 
-  const debounceMs = deps?.debounceMs ?? LIVE_DEBOUNCE_MS;
+  const tableRef = useRef(tableName);
+  tableRef.current = tableName;
 
-  useEffect(() => {
-    if (!enabled || !tableName) {
-      setStatus(null);
+  // Test seam (`deps.transport`) or a lazily-built browser transport —
+  // never constructed while inert, mirroring the binding's own inertness
+  // rule (design.md D5).
+  const transport = useMemo<RealtimeTransport>(() => {
+    if (deps?.transport) return deps.transport;
+    if (!active) return INERT_TRANSPORT;
+    return browserTransport(REALTIME_PATH);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deps?.transport, active]);
+
+  // Coalescing refetch state: a frame arriving mid-flight never starts a
+  // second concurrent refetch — mark dirty for exactly one follow-up, run
+  // from this same refetch's `finally` below. Closure locals, not React
+  // state, so no frame causes an extra re-render — only `status`/`error`
+  // from the binding do.
+  const inFlightRef = useRef(false);
+  const dirtyRef = useRef(false);
+
+  const refetchRef = useRef<() => Promise<void>>(async () => {});
+  refetchRef.current = async () => {
+    const table = tableRef.current;
+    if (!table) return;
+    if (inFlightRef.current) {
+      dirtyRef.current = true;
       return;
     }
-
-    const table = tableName;
-    const transport: RealtimeTransport =
-      transportRef.current ?? new SseTransport(window.location.origin, REALTIME_PATH);
-
-    let destroyed = false;
-    let inFlight = false;
-    let dirty = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    setStatus('connecting');
-
-    const refetch = async (): Promise<void> => {
-      if (destroyed) return;
-      if (inFlight) {
-        // Coalescing: a frame arriving mid-flight never starts a second
-        // concurrent refetch — mark dirty for exactly one follow-up, run
-        // from this same refetch's `finally` below.
-        dirty = true;
-        return;
+    inFlightRef.current = true;
+    try {
+      const result = await fetchRowsRef.current(table);
+      // `null` (decision 7): keep prior rows, no error, no teardown —
+      // `api.ts` fails soft by contract; a data-fetch failure is not a
+      // subscription-lifecycle failure.
+      if (result) updateTableRecordsRef.current(table, result.rows);
+    } finally {
+      inFlightRef.current = false;
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        void refetchRef.current();
       }
-      inFlight = true;
-      try {
-        const result = await fetchRowsRef.current(table);
-        if (destroyed) return;
-        // `null` (decision 7): keep prior rows, no error, no teardown —
-        // `api.ts` fails soft by contract; a data-fetch failure is not a
-        // subscription-lifecycle failure.
-        if (result) updateTableRecordsRef.current(table, result.rows);
-      } finally {
-        inFlight = false;
-        if (dirty && !destroyed) {
-          dirty = false;
-          void refetch();
-        }
-      }
-    };
+    }
+  };
 
-    const scheduleRefetch = (): void => {
-      if (destroyed) return;
-      // First-frame-armed fixed window (design decision 5): a timer already
-      // pending is never reset/re-armed by a later frame in the same burst.
-      if (timer !== null) return;
-      timer = setTimeout(() => {
-        timer = null;
-        void refetch();
-      }, debounceMs);
-    };
+  const onWakeRef = useRef(() => {
+    void refetchRef.current();
+  });
 
-    const unsubscribe = transport.connect([table], {
-      onEvent: () => scheduleRefetch(),
-      onWake: () => scheduleRefetch(),
-      onOpen: (reconnected) => {
-        if (destroyed) return;
-        setStatus('live');
-        if (reconnected) {
-          // Bypass the debounce entirely — a reconnected subscriber must
-          // not stay silently stale (design decision 6).
-          if (timer !== null) {
-            clearTimeout(timer);
-            timer = null;
-          }
-          void refetch();
-        }
-      },
-      onError: () => {
-        if (destroyed) return;
-        setStatus('error');
-      },
-    });
+  // A reconnect means events were missed while the connection was down, so
+  // the debounce window is deliberately skipped: a wake says "refetch soon",
+  // a resync says "you cannot know what you missed, refetch now".
+  const onResyncRef = useRef(() => {
+    void refetchRef.current();
+  });
 
-    return () => {
-      destroyed = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      unsubscribe();
-    };
-  }, [tableName, enabled, debounceMs]);
+  const binding = useLiveTableBinding(active ? tableName : null, {
+    transport,
+    onWake: () => onWakeRef.current(),
+    onResync: () => onResyncRef.current(),
+    debounceMs: deps?.debounceMs,
+    enabled: active,
+  });
+
+  const status: LiveStatus | null =
+    binding.status === 'connecting' || binding.status === 'live' || binding.status === 'error'
+      ? binding.status
+      : null;
 
   return { status };
 }

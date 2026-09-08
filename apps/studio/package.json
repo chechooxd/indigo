@@ -15,6 +15,7 @@
   "dependencies": {
     "@indigodb/client": "workspace:*",
     "@indigodb/core": "workspace:*",
+    "@indigodb/react": "workspace:*",
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@monaco-editor/react": "^4.7.0",

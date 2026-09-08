@@ -24,16 +24,25 @@ vi.mock('../../../../lib/api', () => ({
 // Fake transport: `connect()` synchronously fires `onOpen(false)` so the
 // live badge (when mounted) reaches its `live` status without a real SSE
 // stream. Real transport/backoff behavior is covered by useLiveTable.test.tsx.
-vi.mock('@indigodb/client/realtime', () => ({
-  SseTransport: vi.fn().mockImplementation(() => ({
+// Partial mock: spread the real module and override only the transport
+// factories. A hand-listed replacement has to enumerate every export the
+// consuming chain touches, so it breaks each time that module grows — it
+// already broke twice during the Studio re-base (first `browserTransport`,
+// then `createLiveSubscription`). `importOriginal` keeps the real surface.
+vi.mock('@indigodb/client/realtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@indigodb/client/realtime')>();
+  const fakeTransport = () => ({
     connect: vi.fn((_tables: string[], handlers: { onOpen: (reconnected: boolean) => void }) => {
       handlers.onOpen(false);
       return () => {};
     }),
-  })),
-  LIVE_DEBOUNCE_MS: 50,
-  REALTIME_PATH: '/api/realtime',
-}));
+  });
+  return {
+    ...actual,
+    SseTransport: vi.fn().mockImplementation(fakeTransport),
+    browserTransport: vi.fn(fakeTransport),
+  };
+});
 
 import { isBackendAvailable, fetchTableRows, createRow, deleteRow, type TablePage } from '../../../../lib/api';
 

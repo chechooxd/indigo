@@ -449,6 +449,15 @@ export interface LiveSubscriptionOptions {
   /** The app's own invalidation callback; NEVER receives rows — the
    * primitive holds no data (realtime-live-subscription spec). */
   onWake?: () => void;
+  /** Fired when the transport RE-opens a channel that had already been open —
+   * the connection dropped and came back, so events were missed while it was
+   * down. Deliberately distinct from `onWake`: a wake says "something changed,
+   * refetch soon" and is debounced; a resync says "you cannot know what you
+   * missed, refetch now" and is not. The manager already carries this bit
+   * (`ChannelListener.onOpen(reconnected)`); the primitive used to discard it,
+   * and since `setStatus` skips notifying on an unchanged status, a reconnect
+   * returning to `"live"` was invisible to every consumer. NEVER receives rows. */
+  onResync?: () => void;
   /** Default `LIVE_DEBOUNCE_MS` (50). `<= 0` disables debouncing
    * (design.md D3). */
   debounceMs?: number;
@@ -551,9 +560,13 @@ export function createLiveSubscription(options: LiveSubscriptionOptions): LiveSu
   const channelListener: ChannelListener = {
     onEvent: () => {},
     onWake: () => debouncer.wake(),
-    onOpen: () => {
+    onOpen: (reconnected) => {
       clearError(); // cleared on the next successful open (design.md D6)
       setStatus("live");
+      // Reported even when `setStatus` was a no-op because the status was
+      // already `"live"` — that no-op is precisely why a reconnect cannot be
+      // inferred from the status snapshot alone.
+      if (reconnected) options.onResync?.();
     },
     onError: (error) => {
       rawError = error;
