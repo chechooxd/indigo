@@ -48,6 +48,31 @@ const SNAPSHOT_FILE = ".snapshot.json";
 const HISTORY_TABLE = "_indigo_migrations";
 
 /**
+ * The single statement every history write goes through.
+ *
+ * `installed_by` is `current_user`, evaluated server-side: it is the role
+ * Postgres authenticated, not a value this process chose, so it cannot claim an
+ * identity the database would not confirm. Nothing here accepts a caller-
+ * supplied name — an override would be a self-reported claim wearing the same
+ * column as a database-enforced fact.
+ *
+ * `ON CONFLICT (name) DO UPDATE` rather than a plain INSERT because `name` is
+ * UNIQUE and a migration may legitimately be written twice: retrying one that
+ * previously recorded a failure has to replace that row, not collide with it.
+ * `applied_at` is refreshed so the timestamp describes the attempt that
+ * actually stands, not the one that failed.
+ */
+const HISTORY_UPSERT = `INSERT INTO "${HISTORY_TABLE}"
+     (name, checksum, success, installed_by, execution_time_ms)
+   VALUES ($1, $2, $3, current_user, $4)
+   ON CONFLICT (name) DO UPDATE SET
+     checksum = EXCLUDED.checksum,
+     success = EXCLUDED.success,
+     installed_by = EXCLUDED.installed_by,
+     execution_time_ms = EXCLUDED.execution_time_ms,
+     applied_at = now()`;
+
+/**
  * Session-level advisory-lock key `migrateDeploy` uses to serialize
  * concurrent deploys against the same database. `0x494E4449474F` = ASCII
  * "INDIGO" — a fixed, non-configurable, per-database key (advisory locks
@@ -389,12 +414,11 @@ export async function migrateDev(options: DevOptions): Promise<void> {
     }
 
     try {
+      const startedAt = performance.now();
       await applyMigrationSql(client, sql);
+      const elapsedMs = Math.round(performance.now() - startedAt);
       const checksum = migrationChecksum(sql);
-      await client.query(
-        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-        [id, checksum, true],
-      );
+      await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
       saveSnapshot(options.resolved, cwd);
       console.log(`✅ Migration created and applied: ${id}`);
@@ -464,12 +488,11 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
 
     for (const id of pending) {
       const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
+      const startedAt = performance.now();
       await applyMigrationSql(client, sql);
+      const elapsedMs = Math.round(performance.now() - startedAt);
       const checksum = migrationChecksum(sql);
-      await client.query(
-        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-        [id, checksum, true],
-      );
+      await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
       console.log(`  ✓ applied ${id}`);
     }

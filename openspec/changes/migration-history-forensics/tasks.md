@@ -87,7 +87,7 @@ and execution_time_ms, created once with no backfill".
 Spec: `migration-history-integrity` — "success gates which migrations are
 treated as applied"; `migration-history-resolve` — applied-resolve columns.
 
-- [ ] **B1. RED — add I8 and the success-path half of I9.**
+- [x] **B1. RED — add I8 and the success-path half of I9.**
       I8: after a successful `migrateDev` and a successful `migrateDeploy`,
       assert `row.installed_by === (SELECT current_user)` queried live from
       the database — not a hard-coded `'postgres'`.
@@ -98,7 +98,7 @@ treated as applied"; `migration-history-resolve` — applied-resolve columns.
       task needed.)
       Both fail today: `installed_by`/`execution_time_ms` are never written.
 
-- [ ] **B2. GREEN — introduce `HISTORY_UPSERT` and D1 timing, wire into `migrateDev` and `migrateDeploy` success paths.**
+- [x] **B2. GREEN — introduce `HISTORY_UPSERT` and D1 timing, wire into `migrateDev` and `migrateDeploy` success paths.**
       Add the shared constant:
       ```sql
       INSERT INTO "_indigo_migrations"
@@ -117,7 +117,7 @@ treated as applied"; `migration-history-resolve` — applied-resolve columns.
       "why not include preflight" reasoning. Confirms B1's I8 and I9-success.
       Test command: `node packages/cli/test/migrate-runner.mjs 2>&1 | rg "installed_by|execution_time"`
 
-- [ ] **B3. RED then GREEN — I3 (success = true on all three write paths).**
+- [x] **B3. RED then GREEN — I3 (success = true on all three write paths).** *(dev + deploy sub-cases here; the `migrateResolve --applied` sub-case is sequenced into Work Unit C, the ordering tasks.md sanctions first — see apply-progress.)*
       Add I3 as its own named assertion (three sub-cases: `migrateDev`,
       `migrateDeploy`, `migrateResolve --applied`), even though B2/B5 already
       make two of the three pass — this row exists in the design's table and

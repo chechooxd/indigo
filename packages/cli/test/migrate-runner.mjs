@@ -81,9 +81,16 @@ async function historyColumns(db) {
 
 async function historyRows(db) {
   const result = await db.query(
-    `SELECT name, checksum, success FROM "_indigo_migrations" ORDER BY id`,
+    `SELECT name, checksum, success, installed_by, execution_time_ms
+       FROM "_indigo_migrations" ORDER BY id`,
   );
   return result.rows;
+}
+
+/** The database's own idea of who is connected, for `installed_by` assertions. */
+async function currentUser(db) {
+  const result = await db.query(`SELECT current_user AS who`);
+  return result.rows[0].who;
 }
 
 /** Captures stdout `console.log` calls for the duration of `fn`. */
@@ -184,6 +191,122 @@ await check("I2 a legacy table is left as-is: a write naming a new column is rej
       ok(
         /installed_by/.test(String(rejected.message)),
         `expected the rejection to name installed_by, got: ${rejected.message}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I3: success = true on every write path ──────────────────────────────────
+
+// Two of the three sub-cases live here; `migrateResolve --applied` is the
+// third and lands in Work Unit C, where its write path exists. Sequencing it
+// there rather than writing an assertion that stays red across two work units
+// is the ordering `tasks.md` sanctions first, and it keeps every commit green.
+// It is NOT dropped: C's task list owns it explicitly.
+
+await check("I3 success = true after a successful migrateDev and migrateDeploy", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      let rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, true, "migrateDev must record success = true");
+
+      const id = "20240101000000_i3";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "i3" (id serial PRIMARY KEY);\n`);
+
+      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
+      rows = await historyRows(db);
+      const deployed = rows.find((r) => r.name === id);
+      ok(deployed, `expected a row for ${id}`);
+      strictEqual(deployed.success, true, "migrateDeploy must record success = true");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I8: installed_by comes from the database, not from the client ───────────
+
+await check("I8 installed_by is recorded from current_user on dev and deploy", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      // Compared against a value read live from this same database rather than
+      // a hard-coded 'postgres': the property is "whatever Postgres says the
+      // connected role is", and a literal would still pass if the code wrote a
+      // constant of its own.
+      const expected = await currentUser(db);
+
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      let rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].installed_by, expected);
+
+      // And again through the deploy path, which is a separate write site.
+      const id = "20240101000000_second";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "b2" (id serial PRIMARY KEY);\n`);
+
+      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
+      rows = await historyRows(db);
+      const deployed = rows.find((r) => r.name === id);
+      ok(deployed, `expected a row for ${id}, got: ${rows.map((r) => r.name).join(", ")}`);
+      strictEqual(deployed.installed_by, expected);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I9 (success half): execution_time_ms measures the apply, not zero ───────
+
+await check("I9 execution_time_ms is a real elapsed measurement on a successful apply", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20240101000000_slow";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      // A real 50ms sleep followed by real DDL. The >= 40 threshold bites: a
+      // stopwatch started or stopped on the wrong side of applyMigrationSql
+      // would report a value near zero, which >= 0 would not catch.
+      writeFileSync(
+        join(dir, "migration.sql"),
+        `SELECT pg_sleep(0.05);\nCREATE TABLE "slow" (id serial PRIMARY KEY);\n`,
+      );
+
+      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
+      const rows = await historyRows(db);
+      const row = rows.find((r) => r.name === id);
+      ok(row, `expected a row for ${id}`);
+      strictEqual(typeof row.execution_time_ms, "number");
+      ok(
+        row.execution_time_ms >= 40,
+        `expected execution_time_ms to cover a 50ms sleep, got ${row.execution_time_ms}`,
       );
     } finally {
       cleanup();
