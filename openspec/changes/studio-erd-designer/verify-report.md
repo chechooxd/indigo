@@ -1776,3 +1776,140 @@ four are now closed with fresh mutation evidence (W1, W3, S1, S2) and one was al
 out of scope before this delta (S3); one (W2, the TDD evidence table format) remains open with no
 new reasoning recorded in this batch and is restated above rather than dropped. Zero CRITICAL
 findings. No blocker to `sdd-archive`.
+
+
+---
+
+## Verification Report — Phase 7 — final verification
+
+**Change**: studio-erd-designer — final release-readiness check of the committed tree at
+`fbd12d8` (branch `fix/erd-add-relation-resolves`, two commits off `main`: `23ed635` the
+`addRelation` fix + tests + spec rewrite + tasks/apply-progress, `fbd12d8` the TDD-evidence
+table and two wording fixes). This section supersedes neither of the two prior Phase 7 sections
+above; it re-runs the gates from scratch on the exact tree that would archive, and specifically
+audits the delta `fbd12d8` introduced since the last verify pass.
+
+### 1. Delta scope confirmed documentation-only
+
+`git show fbd12d8 --stat` touches exactly three files: `apply-progress.md` (+24/-0),
+`tasks.md` (+8/-2), `verify-report.md` (+196/-0). No source file (`apps/studio/src/**`) and no
+test file changed in this commit — confirmed by the stat output containing zero paths under
+`apps/studio/src/`. Nothing in this commit required re-running mutation proofs against new
+code; the audit below re-verifies claims made **about** already-landed code, not new code.
+
+### 2. Gates re-run from scratch on the current committed tree
+
+| Gate | Command | Result |
+|---|---|---|
+| Clean | `pnpm clean` | 11/11 tasks, exit 0 |
+| Build | `pnpm build --force` | exit 0, 11/11 tasks, 0 cached (forced) |
+| Lint | `pnpm lint` | exit 0, 21/21 tasks; `apps/studio/package.json:12`'s `lint` script confirmed still `tsc -b --noEmit` (not bare `tsc --noEmit`) |
+| Test | `pnpm test` | exit 0, 20/20 turbo tasks; `@indigodb/studio` re-run directly with `npx vitest run` (bypassing turbo cache) to get real counts: **29/29 test files, 254/254 tests passed** — matches every prior pass's baseline exactly |
+
+`test_output_hash`: `sha256:55a5c5febce818ffa24acb9e653645db3e43fdf67a350b83a2b830c60f0369e3`
+(full `pnpm test` combined stdout+stderr).
+`build_output_hash`: `sha256:c23d477e9279dbbcc3834554ee4744773ebebb5f084eec1597804b806f8c3ae3`
+(combined `pnpm clean && pnpm build --force` stdout+stderr).
+
+### 3. TDD Cycle Evidence table — spot-checked against real test files and re-run mutations, not accepted on existence alone
+
+The table added at `apply-progress.md` (new "## TDD Cycle Evidence" section) has 8 rows. Four
+rows were checked against the actual test files and, where feasible, the actual code:
+
+| Row | Claim | Checked against | Result |
+|---|---|---|---|
+| 7.5 | Test "refuses a drag between two fields where neither side is a primary key" exists and fails `expected true to be false` | `patch-semantics.test.ts:138` | **Confirmed** — test exists with this exact name; asserts `result.ok`/`reason: 'not-a-primary-key'` against `patch.ts:401-412`'s refusal branch |
+| 7.16 | Dropping `stripped.length > 0 &&` in `uniqueRelationFieldName` fails only 7.16's own test | `patch.test.ts` (44 tests), `patch.ts:137-146` | **Confirmed** — hand-re-applied this exact mutation in this pass (see Mutation 1 in the re-verification section above, independently reproduced again); 1/44 failed, 7.16's test only |
+| **7.6** | "refuses when the referenced table is absent from the fresh parse" is proven by mutation "7.15's `toModel.fields[0]` fallback → 1 failure" | `patch.test.ts:859-877`, `patch.ts:371-386` | **INCORRECT — this row overstates what happened.** 7.6's test (`to: 'User'`, a table absent entirely from the mocked parse) fails at the `toModel` null-check (`patch.ts:371-378`), never reaching the `toFieldSpan` block (`patch.ts:379-385`) that 7.15's mutation touches. Hand-re-applied 7.15's exact mutation (`findField(toModel, edit.toField) ?? toModel.fields[0]`, replacing lines 379-385) against the current tree and ran the 44-test suite: **7.6's test still passes**; only 7.15's own test fails (1/44). The cited mutation proves nothing about 7.6 — its code path is a table-absent check, not a field-absent check. Mutation reverted, `git diff` confirmed empty. |
+| **7.7** | "avoids colliding with an existing field name by suffixing" is proven by mutation "7.16's dropped guard → 1 failure" | `patch.test.ts:789-806`, `patch.ts:137-146` | **INCORRECT — this row also overstates what happened.** 7.7's fixture uses `authorId` (`stripped = "author"`, non-empty), so the `stripped.length > 0 &&` guard 7.16's mutation drops is never the deciding clause for this row — `stripped !== foreignKeyFieldName` alone already yields `base = "author"` before or after that mutation; the row's own suffix behavior (`author` → `author_2`) is untouched by it. This was independently confirmed already: the earlier Phase 7 re-verification section above states this exact mutation left "43 others green" in the 44-test file, and 7.7's test is among those 43 that stay green under it — so the table cites a mutation that provably does NOT fail 7.7's test as if it did. |
+
+**Net**: the table exists and its underlying RED/GREEN test coverage is real (every cited test
+was found, with the correct name, at the cited or a findable location, and genuinely covers the
+task it names) — but 2 of the 4 spot-checked "Mutation proof" cells (7.6, 7.7) misattribute
+proof to a mutation that does not actually exercise that row's code path or fail that row's
+test. This is a documentation-accuracy defect in the evidence table itself, not evidence that
+the underlying implementation or test coverage is wrong: 7.6 and 7.7's own tests are real, pass,
+and (per the standing Phase 7 audits) are each independently covered by *some* mutation — just
+not the one this table cites for them. Rated **WARNING** (new finding, this run) rather than
+CRITICAL, because no spec scenario is left without a genuinely covering passing test — the
+defect is in the evidence table's cross-referencing, not in test coverage or spec compliance.
+
+The carried-forward WARNING from the standing Phase 7 report ("no TDD Cycle Evidence table
+exists") is **CLOSED** — the table now exists, in `apply-progress.md`, with the required
+RED/GREEN/mutation columns — but is immediately superseded by the narrower finding above: the
+table exists and is *mostly* accurate, but not fully.
+
+### 4. Task 7.17 wording — confirmed resolved
+
+`tasks.md`'s 7.17 now reads "the real figure (573 code lines) is recorded in
+`apply-progress.md` as a miss rather than re-estimated. The maintainer's `size:exception`
+decision that this called for was taken and is recorded above under the Phase 7 delivery note,"
+replacing the prior text that read as if the decision were still pending. The acceptance it
+references remains at `tasks.md:229-234`, pre-dating 7.17's own entry. **SUGGESTION from the
+prior pass is CLOSED.**
+
+### 5. Whole-change internal consistency for archive
+
+- `tasks.md`: **95/95** checkboxes checked (`rg -c '^\s*- \[x\]'`), **0** unchecked
+  (`rg -c '^\s*- \[ \]'` → 0 matches).
+- `apply-progress.md` and `verify-report.md` both present and non-contradictory: the new
+  "TDD Cycle Evidence" section in `apply-progress.md` and this section agree on which
+  claims hold and which do not; no section anywhere asserts a scenario is untested when a
+  passing covering test exists, or vice versa.
+- Delta specs under `openspec/changes/studio-erd-designer/specs/` (`ast-source-spans`,
+  `studio-erd-editing`, `studio-layout-persistence`, `studio-readonly-mode`) are present and
+  syntactically well-formed OpenSpec delta documents (`## Purpose` / `### Requirement` /
+  `#### Scenario` structure verified for `studio-erd-editing`); `studio-readonly-mode` is a
+  `## MODIFIED Requirements` delta against the already-merged `openspec/specs/studio-readonly-mode/`
+  capability, the other three are new capabilities not yet present under `openspec/specs/` —
+  expected pre-archive state, ready to merge.
+- Working tree under `openspec/changes/studio-erd-designer/` is clean (no uncommitted changes)
+  at the point this section was written.
+
+### Issues Found (this final pass)
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. (New, this run) Two of the eight rows in `apply-progress.md`'s new "TDD Cycle Evidence"
+   table (7.6, 7.7) cite a mutation that does not actually fail that row's test — re-applying
+   each cited mutation by hand shows it fails only its originally-intended target test, not the
+   row it is listed under. The underlying tests are real, correctly named, and (per this and
+   prior passes) each independently covered by mutation evidence — just not the specific
+   mutation these two rows cite. Non-blocking for archive: no spec scenario is left without a
+   genuinely passing covering test. Recommend correcting the "Mutation proof" cells for 7.6 and
+   7.7 before or shortly after archive, e.g. 7.6's own table-absent check (`patch.ts:371-378`,
+   mutable by e.g. removing that `if (!toModel)` guard) and 7.7's actual suffix loop
+   (`patch.ts:147-152`).
+
+**SUGGESTION**: None new this pass.
+
+### Verdict
+
+**PASS WITH WARNINGS.** All gates re-run fresh and green on the current committed tree
+(`pnpm clean && pnpm build --force` 11/11 exit 0; `pnpm lint` 21/21 exit 0, `apps/studio` still
+on `tsc -b --noEmit`; `pnpm test` 20/20 turbo tasks exit 0, `@indigodb/studio` re-run outside
+cache at 254/254). `fbd12d8`'s delta is confirmed documentation-only. Task 7.17's wording fix is
+confirmed. The carried WARNING (missing TDD Cycle Evidence table) is closed — the table exists —
+but this pass found and reports a narrower, new documentation-accuracy issue in that same table:
+2 of 4 spot-checked "Mutation proof" cells misattribute their evidence. This does not change the
+release verdict: `tasks.md` is 95/95 complete, no spec scenario lacks a genuinely passing
+covering test, and no CRITICAL issue exists. **No blocker to `sdd-archive`.**
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:46c076991ba6db50f69725a5a688345f16ba501dd7dbba85e286be900ab1343c
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 5/5
+test_command: pnpm test
+test_exit_code: 0
+test_output_hash: sha256:55a5c5febce818ffa24acb9e653645db3e43fdf67a350b83a2b830c60f0369e3
+build_command: pnpm clean && pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:c23d477e9279dbbcc3834554ee4744773ebebb5f084eec1597804b806f8c3ae3
+lint_command: pnpm lint
+lint_exit_code: 0
+```

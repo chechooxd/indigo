@@ -303,6 +303,12 @@ for the next phase.
       above under the Phase 7 delivery note.
 - [x] 7.18 TDD Cycle Evidence table added to `apply-progress.md`, closing the WARNING carried
       from the first verify report into the re-verification.
+- [x] 7.19 Corrected rows 7.6 and 7.7 of that table, which cited mutations that do not break
+      their own row's test — caught by the final verify pass, which re-applied them by hand
+      instead of accepting the table because it existed. `patch.ts`'s table-absent and
+      field-absent checks are sequential guards, so a mutation to the second never runs for a
+      fixture that already fails the first. Both cells now carry mutations observed failing
+      exactly their own test and nothing else.
 
 ### Follow-ups raised by 6.7, deliberately NOT absorbed into this phase
 

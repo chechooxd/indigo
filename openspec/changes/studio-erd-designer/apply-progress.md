@@ -111,11 +111,21 @@ before its GREEN existed; every mutation was re-applied and reverted with a clea
 | 7.1–7.2 | `patch-semantics.test.ts` (new file, real compiler). 4/4 failed: `foreignKeysOf(...)` returned `[]` against the expected FK, on its own `toEqual` — not a crash | insert a field typed as the referenced model instead of decorating the scalar | append to the scalar again → 8 failures (3 semantic + 5 text) |
 | 7.3–7.4 | "the reverse drag direction yields the same foreign key" — failed with an inverted FK | derive the FK side from `@id`, not from `source`/`target` | `toIsPk = true` → 4 failures |
 | 7.5 | "refuses a drag between two fields where neither side is a primary key" — failed `expected true to be false`, i.e. it emitted instead of refusing | `not-a-primary-key` refusal naming both endpoints | covered by the `toIsPk = true` mutation above |
-| 7.6 | "refuses when the referenced table is absent from the fresh parse" | resolve both endpoints against the fresh parse | 7.15's `toModel.fields[0]` fallback → 1 failure |
-| 7.7 | "avoids colliding with an existing field name by suffixing" | `uniqueRelationFieldName` | 7.16's dropped guard → 1 failure |
+| 7.6 | "refuses when the referenced table is absent from the fresh parse" | resolve both endpoints against the fresh parse | drop the `toModel` null guard (`?? fromModel`) → 1 failure, its own test only |
+| 7.7 | "avoids colliding with an existing field name by suffixing" | `uniqueRelationFieldName` | drop the collision suffix loop (always return `base`) → 1 failure, its own test only |
 | 7.14 | both-`@id` tie keeps the drag direction | (behaviour already present; the test pins intent) | `if (toIsPk && !fromIsPk)` → 1 failure, its own test only |
 | 7.15 | absent `toField` refuses `anchor-missing` | (already present; test pins the branch) | fallback to `toModel.fields[0]` → 1 failure, its own test only |
 | 7.16 | FK field named literally `Id` falls back to the model name | (already present; test pins the guard) | drop `stripped.length > 0 &&` → 1 failure, its own test only |
+
+**Two rows of this table were wrong when first written, and verify caught them.** Rows 7.6
+and 7.7 originally cited mutations borrowed from 7.15 and 7.16 — real mutations, but ones that
+do not break *these* rows' tests. The reason is worth keeping: `patch.ts`'s table-absent and
+field-absent checks are **sequential guards**, so a mutation to the second never executes for a
+fixture that already fails the first. A mutation-proof table can therefore name a genuinely
+passing, genuinely covered test and still cite the wrong evidence for it. Both cells now carry
+mutations that were re-applied and observed failing exactly their own test, and nothing else.
+The lesson is the same one this whole phase is about: evidence has to be produced, not
+plausibly asserted.
 
 **One RED in this batch was written wrong and is worth recording.** 7.16's first assertion was
 `not.toContain(' User @relation(fields: [Id]')` — a substring the **correct** output also
