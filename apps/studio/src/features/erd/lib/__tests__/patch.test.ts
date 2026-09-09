@@ -59,14 +59,23 @@ function fakeSpan(start: number, end: number): Span {
  * Builds `FieldSpan`s for every simple `name Type[?]` line inside a model's
  * body (`[bodyOpenEnd, bodyCloseStart)`), by real string offsets — skips
  * blank lines, `@@`-prefixed block attributes and `//` comments. Only
- * covers the plain declarations the Phase 5 fixtures use; attributes are
- * left empty (unused by `addField`/`editField`/`deleteField`, which never
- * read `field.attributes`). `decl` spans the whole trimmed line (so it
+ * covers the plain declarations the Phase 5 fixtures use. Field attribute
+ * NAMES are populated (`@id`, `@default`, …) because `addRelation` reads
+ * them to decide which side of a drawn relation holds the foreign key —
+ * they were stubbed empty while no edit kind read them, and leaving them
+ * that way would silently route every `addRelation` test into the
+ * "neither field is a primary key" refusal. `decl` spans the whole trimmed line (so it
  * includes any trailing `@id`-style attribute text), matching the real
  * parser's `decl_start..last_consumed_end` convention.
  */
 function buildFieldSpans(source: string, bodyOpenEnd: number, bodyCloseStart: number) {
-  const fields: Array<{ name: string; decl: Span; nameToken: Span; typeToken: Span; attributes: never[] }> = [];
+  const fields: Array<{
+    name: string;
+    decl: Span;
+    nameToken: Span;
+    typeToken: Span;
+    attributes: Array<{ name: string; span: Span }>;
+  }> = [];
   let cursor = bodyOpenEnd;
   const body = source.slice(bodyOpenEnd, bodyCloseStart);
   for (const line of body.split('\n')) {
@@ -82,12 +91,21 @@ function buildFieldSpans(source: string, bodyOpenEnd: number, bodyCloseStart: nu
     const typeStart = lineStart + line.indexOf(fieldMatch[2], leadingWs + fieldMatch[1].length);
     const typeEnd = typeStart + fieldMatch[2].length;
     const declEnd = lineStart + line.trimEnd().length;
+    const attributes: Array<{ name: string; span: Span }> = [];
+    const attrRe = /(?<!@)@([A-Za-z_][A-Za-z0-9_]*)/g;
+    for (let m = attrRe.exec(trimmed); m; m = attrRe.exec(trimmed)) {
+      const attrStart = lineStart + leadingWs + m.index;
+      attributes.push({
+        name: m[1],
+        span: fakeSpan(attrStart, attrStart + m[0].length),
+      });
+    }
     fields.push({
       name: fieldMatch[1],
       decl: fakeSpan(nameStart, declEnd),
       nameToken: fakeSpan(nameStart, nameEnd),
       typeToken: fakeSpan(typeStart, typeEnd),
-      attributes: [],
+      attributes,
     });
   }
   return fields;
@@ -701,7 +719,7 @@ describe('applyErdEdit — deleteField (5.5/5.6)', () => {
 });
 
 describe('applyErdEdit — addRelation (6.1/6.2)', () => {
-  it('inserts a @relation attribute on the target field, appended after its existing line content', () => {
+  it('inserts a new relation field of the referenced model type, after the foreign-key field', () => {
     const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n}\n';
     mockRealParse(source);
 
@@ -715,9 +733,76 @@ describe('applyErdEdit — addRelation (6.1/6.2)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok result');
+    // NOT `authorId Int @relation(...)`. `@relation` on a scalar field
+    // compiles clean and resolves to zero foreign keys — see
+    // `patch-semantics.test.ts`, which pins that against the real compiler.
     expect(result.text).toBe(
-      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int @relation(fields: [authorId], references: [id])\n}\n',
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n  author User @relation(fields: [authorId], references: [id])\n}\n',
     );
+  });
+
+  it('resolves the foreign-key side from the schema, so the reverse drag direction emits the same field', () => {
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int\n}\n';
+    mockRealParse(source);
+
+    const forward = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+    mockRealParse(source);
+    const reverse = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'User',
+      fromField: 'id',
+      to: 'Post',
+      toField: 'authorId',
+    });
+
+    expect(forward.ok).toBe(true);
+    expect(reverse.ok).toBe(true);
+    if (!forward.ok || !reverse.ok) throw new Error('expected ok results');
+    expect(reverse.text).toBe(forward.text);
+  });
+
+  it('refuses when neither field is a primary key, rather than emitting an inert relation', () => {
+    const source = 'Table A {\n  id Int @id\n  x Int\n}\n\nTable B {\n  id Int @id\n  y Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'A',
+      fromField: 'x',
+      to: 'B',
+      toField: 'y',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('not-a-primary-key');
+    expect(result.message).toContain('A.x');
+    expect(result.message).toContain('B.y');
+  });
+
+  it('avoids colliding with an existing field name by suffixing', () => {
+    const source =
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  author String\n  authorId Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toContain('author_2 User @relation(fields: [authorId], references: [id])');
+    expect(result.text).toContain('  author String\n');
   });
 
   it('RED/byte-diff: addRelation on Post.ownerId leaves every other construct in the combined fixture byte-identical (mutation target: wrong anchor/off-by-one)', () => {
@@ -736,22 +821,24 @@ describe('applyErdEdit — addRelation (6.1/6.2)', () => {
 
     const expected = COMBINED_FIXTURE.replace(
       '  ownerId Int\n  @@allow',
-      '  ownerId Int @relation(fields: [ownerId], references: [id])\n  @@allow',
+      '  ownerId Int\n  owner ProjectedUser @relation(fields: [ownerId], references: [id])\n  @@allow',
     );
     expect(result.text).toBe(expected);
 
-    // Everything outside Post's `ownerId` line, including its own sibling
-    // `id String @id` line and every other construct, stays byte-unchanged.
+    // Everything outside the inserted line, including Post's own `ownerId`
+    // and `id String @id` lines and every other construct, stays
+    // byte-unchanged.
     expect(result.text).toContain('Table   Widget {');
     expect(result.text).toContain('    id        Int     @id');
     expect(result.text).toContain('\tlabel String');
     expect(result.text).toContain('@@realtime(columns: [id, email])');
     expect(result.text).toContain('TableGroup "Billing" {');
-    expect(result.text).toContain('  id      String @id\n  ownerId Int @relation');
+    expect(result.text).toContain('  id      String @id\n  ownerId Int\n  owner ProjectedUser');
   });
 
-  it('preserves an existing attribute on the target field — the relation is appended, not a rewrite of the line', () => {
-    const source = 'Table Post {\n  id Int @id\n  authorId Int @default(0)\n}\n';
+  it('leaves the foreign-key field line byte-unchanged, attributes included', () => {
+    const source =
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int @default(0)\n}\n';
     mockRealParse(source);
 
     const result = applyErdEdit(source, {
@@ -765,8 +852,116 @@ describe('applyErdEdit — addRelation (6.1/6.2)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok result');
     expect(result.text).toBe(
-      'Table Post {\n  id Int @id\n  authorId Int @default(0) @relation(fields: [authorId], references: [id])\n}\n',
+      'Table User {\n  id Int @id\n}\n\nTable Post {\n  id Int @id\n  authorId Int @default(0)\n  author User @relation(fields: [authorId], references: [id])\n}\n',
     );
+  });
+
+  it('refuses when the referenced table is absent from the fresh parse', () => {
+    // The old implementation interpolated `to`/`toField` literally without
+    // ever looking them up, so a relation could name a table that does not
+    // exist. Both ends are resolved now.
+    const source = 'Table Post {\n  id Int @id\n  authorId Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('anchor-missing');
+    expect(result.message).toContain('User');
+  });
+
+  it('a both-@id tie keeps the drag direction: the dragged-from side becomes the FK side', () => {
+    // Two primary keys is a 1:1 shape. Neither side is more "the FK side"
+    // than the other by schema, so the gesture is the only signal left and
+    // the code deliberately keeps it. Untested until verify flagged it.
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Profile {\n  id Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Profile',
+      fromField: 'id',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    // FK side is `Profile` — the side dragged FROM — not `User`.
+    expect(result.text).toBe(
+      'Table User {\n  id Int @id\n}\n\nTable Profile {\n  id Int @id\n  user User @relation(fields: [id], references: [id])\n}\n',
+    );
+  });
+
+  it('refuses when the referenced FIELD is absent from the fresh parse', () => {
+    // Sibling of the absent-table case: `toField` was interpolated blind
+    // before, so a relation could reference a column that does not exist.
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  authorId Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'missingColumn',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('anchor-missing');
+    expect(result.message).toContain('missingColumn');
+    expect(result.message).toContain('User');
+  });
+
+  it('falls back to the referenced model name when stripping would leave nothing', () => {
+    // `Id` strips to the empty string. The `stripped.length > 0` guard is
+    // load-bearing, not redundant with `stripped !== foreignKeyFieldName`:
+    // without it the inserted field would be named "".
+    const source = 'Table User {\n  id Int @id\n}\n\nTable Post {\n  Id Int\n  other Int @id\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'Id',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    // Assert the whole inserted line, indentation included. A substring
+    // check on ` User @relation(...)` would pass on the empty-name output
+    // too, since that output contains it as well — the bug this pins is
+    // precisely a MISSING name, so only an exact-line assertion catches it.
+    expect(result.text).toContain('\n  user User @relation(fields: [Id], references: [id])\n');
+    expect(result.text).not.toContain('\n   User @relation');
+  });
+
+  it('matches the indentation of the field it inserts after', () => {
+    const source =
+      'Table User {\n\tid Int @id\n}\n\nTable Post {\n\tid Int @id\n\tauthorId Int\n}\n';
+    mockRealParse(source);
+
+    const result = applyErdEdit(source, {
+      kind: 'addRelation',
+      from: 'Post',
+      fromField: 'authorId',
+      to: 'User',
+      toField: 'id',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.text).toContain('\tauthorId Int\n\tauthor User @relation(');
   });
 
   it('addRelation refuses as anchor-missing when the source table is absent from the fresh parse', () => {

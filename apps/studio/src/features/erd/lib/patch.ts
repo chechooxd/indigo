@@ -94,7 +94,11 @@ export type ErdEdit =
 
 export type ErdEditResult =
   | { ok: true; text: string }
-  | { ok: false; reason: 'parse-failed' | 'anchor-missing' | 'referenced'; message: string };
+  | {
+      ok: false;
+      reason: 'parse-failed' | 'anchor-missing' | 'referenced' | 'not-a-primary-key';
+      message: string;
+    };
 
 function findModel(models: ModelSpan[], name: string): ModelSpan | undefined {
   return models.find((model) => model.name === name);
@@ -102,6 +106,51 @@ function findModel(models: ModelSpan[], name: string): ModelSpan | undefined {
 
 function findField(model: ModelSpan, name: string): FieldSpan | undefined {
   return model.fields.find((field) => field.name === name);
+}
+
+/** True when `field` carries `@id`. Read off the span index's own attribute list. */
+function hasIdAttribute(field: FieldSpan): boolean {
+  return field.attributes.some((attribute) => attribute.name === 'id');
+}
+
+/**
+ * The leading whitespace of the line containing `offset`, so an inserted
+ * field matches the indentation of the field it is inserted after — tabs,
+ * four spaces or none, whatever the file already uses. Never normalizes:
+ * this module does not reformat.
+ */
+function lineIndentAt(source: string, offset: number): string {
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+  const match = /^[ \t]*/.exec(source.slice(lineStart, offset));
+  return match ? match[0] : '';
+}
+
+/**
+ * Names the inserted relation field. Prefers the foreign-key field's name
+ * with a trailing `Id`/`_id` stripped (`authorId` → `author`), which is the
+ * convention the repo's own fixtures use, and falls back to the referenced
+ * model's name lower-cased. Suffixes with `_2`, `_3`, … only if that
+ * collides with a field the table already has — a collision would otherwise
+ * produce a duplicate field name, which is a compile error rather than a
+ * silent no-op, but there is no reason to emit one.
+ */
+function uniqueRelationFieldName(
+  model: ModelSpan,
+  foreignKeyFieldName: string,
+  referencedModelName: string,
+): string {
+  const stripped = foreignKeyFieldName.replace(/(_id|Id)$/, '');
+  const base =
+    stripped.length > 0 && stripped !== foreignKeyFieldName
+      ? stripped
+      : referencedModelName.charAt(0).toLowerCase() + referencedModelName.slice(1);
+
+  const taken = new Set(model.fields.map((field) => field.name));
+  if (!taken.has(base)) return base;
+  for (let suffix = 2; ; suffix++) {
+    const candidate = `${base}_${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 /**
@@ -288,35 +337,91 @@ export function applyErdEdit(currentText: string, edit: ErdEdit): ErdEditResult 
       return { ok: true, text };
     }
     case 'addRelation': {
-      // Anchored on `edit.from`'s `fromField` — the SAME `FieldSpan` lookup
-      // `editField` uses. The `@relation(...)` attribute is appended right
-      // after `decl.end` (that field's whole trimmed line, any existing
-      // attributes included), never a rewrite of the line, so an already
-      // `@id`/`@default(...)`-carrying field keeps every prior attribute
-      // byte-unchanged (same discipline as `editField`'s `?` insertion).
-      // `to`/`toField` are not independently validated against the fresh
-      // parse — they are interpolated literally into the attribute text,
-      // matching this edit's stated scope (task 6.1: emit the attribute on
-      // the target field).
-      const model = findModel(spans.models, edit.from);
-      if (!model) {
+      // A relation in `.indigo` is NOT an attribute on the scalar foreign-key
+      // field. `@relation(...)` must sit on a field whose TYPE is the
+      // referenced model — `author User @relation(fields: [authorId],
+      // references: [id])`. Appending the attribute to the scalar `authorId`
+      // instead parses and resolves with no error and produces ZERO foreign
+      // keys: the relation is inert end to end (no FK in the IR, so no DDL
+      // from `migrate` and no edge on the canvas that drew it). That is what
+      // this edit used to emit, on both drag directions. `patch.test.ts`
+      // could not see it, because it mocks `@indigodb/core` wholesale and can
+      // only compare emitted strings; `patch-semantics.test.ts` asserts on
+      // the resolved IR against the real compiler and is what pins this.
+      //
+      // So this edit inserts a NEW relation field rather than decorating an
+      // existing one. Both models and both fields are resolved against the
+      // fresh parse — `to`/`toField` are no longer interpolated blind.
+      const fromModel = findModel(spans.models, edit.from);
+      if (!fromModel) {
         return {
           ok: false,
           reason: 'anchor-missing',
           message: `Table "${edit.from}" was not found in the current buffer.`,
         };
       }
-      const field = findField(model, edit.fromField);
-      if (!field) {
+      const fromFieldSpan = findField(fromModel, edit.fromField);
+      if (!fromFieldSpan) {
         return {
           ok: false,
           reason: 'anchor-missing',
           message: `Field "${edit.fromField}" was not found on table "${edit.from}".`,
         };
       }
-      const attribute = ` @relation(fields: [${edit.fromField}], references: [${edit.toField}])`;
+      const toModel = findModel(spans.models, edit.to);
+      if (!toModel) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Table "${edit.to}" was not found in the current buffer.`,
+        };
+      }
+      const toFieldSpan = findField(toModel, edit.toField);
+      if (!toFieldSpan) {
+        return {
+          ok: false,
+          reason: 'anchor-missing',
+          message: `Field "${edit.toField}" was not found on table "${edit.to}".`,
+        };
+      }
+
+      // Which side holds the foreign key is a property of the SCHEMA — the
+      // side pointing at the other's primary key — not of the gesture.
+      // React Flow's `source`/`target` follow whichever handle the user
+      // grabbed first, so the same intent arrives with `from`/`to` swapped
+      // half the time. Deciding here, rather than trusting the drag
+      // direction, is what makes both directions produce the same relation.
+      // Ties (both sides `@id`) keep the drag's own direction.
+      const toIsPk = hasIdAttribute(toFieldSpan);
+      const fromIsPk = hasIdAttribute(fromFieldSpan);
+      let fkModel: ModelSpan;
+      let fkField: FieldSpan;
+      let refModel: ModelSpan;
+      let refField: FieldSpan;
+      if (toIsPk) {
+        [fkModel, fkField, refModel, refField] = [fromModel, fromFieldSpan, toModel, toFieldSpan];
+      } else if (fromIsPk) {
+        [fkModel, fkField, refModel, refField] = [toModel, toFieldSpan, fromModel, fromFieldSpan];
+      } else {
+        // Refuse loudly instead of emitting text that compiles and means
+        // nothing — the exact failure this edit used to ship.
+        return {
+          ok: false,
+          reason: 'not-a-primary-key',
+          message:
+            `Cannot draw a relation between "${edit.from}.${edit.fromField}" and ` +
+            `"${edit.to}.${edit.toField}": neither field is a primary key (@id). ` +
+            `Draw the relation to the table's @id field.`,
+        };
+      }
+
+      const relationFieldName = uniqueRelationFieldName(fkModel, fkField.name, refModel.name);
+      const indent = lineIndentAt(currentText, fkField.decl.start);
+      const insertion =
+        `\n${indent}${relationFieldName} ${refModel.name} ` +
+        `@relation(fields: [${fkField.name}], references: [${refField.name}])`;
       const text = applyEdits(currentText, [
-        { start: field.decl.end, end: field.decl.end, text: attribute },
+        { start: fkField.decl.end, end: fkField.decl.end, text: insertion },
       ]);
       return { ok: true, text };
     }
