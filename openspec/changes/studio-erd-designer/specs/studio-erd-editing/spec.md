@@ -54,8 +54,12 @@ applied to the buffer when the deletion is refused.
 
 #### Scenario: Deleting a table referenced by one other table is refused with names
 
-- GIVEN tables `User` and `Post`, where `Post.authorId` carries
-  `@relation(fields: [authorId], references: [id])` pointing at `User`
+- GIVEN tables `User` and `Post`, where `Post` declares
+  `author User @relation(fields: [authorId], references: [id])` alongside
+  its scalar `authorId Int` — the form that actually resolves to a foreign
+  key; the refusal is computed from `resolve(schema)`'s foreign keys, so a
+  `@relation` written onto the scalar instead would produce no foreign key
+  and this guard would correctly see nothing to refuse
 - WHEN the user attempts to delete `User` from the canvas
 - THEN the deletion is refused
 - AND the refusal message contains the literal table name `Post` and the
@@ -334,40 +338,92 @@ before and after the edit. When the target table or field is absent from
 - THEN the result is `{ok: false, reason: 'anchor-missing', ...}` and the
   buffer is left untouched
 
-### Requirement: Drawing a relation between two fields appends a `@relation` attribute on the source field
+### Requirement: Drawing a relation between two fields inserts a relation field the compiler resolves
 
 Drawing a relation on the canvas — completing a drag from one field's
 connection handle to another field's connection handle — MUST be expressed
 as an `addRelation` edit and applied through the same `applyErdEdit`
-entry point as every other `ErdEdit` kind. The patch MUST append a
-`@relation(fields: [<fromField>], references: [<toField>])` attribute
-immediately after the source field's own declaration content, and MUST NOT
-rewrite any other byte of that line or any other field. Field-level
-connection handles MUST be interactive only when the canvas is in edit mode
-(schema writable, not read-only); in view mode or whenever editing is
-disabled, the handles MUST remain non-interactive, matching the existing
-1×1/`opacity: 0` hit area. When the source table or the source field is
-absent from `applyErdEdit`'s internal fresh parse, the edit MUST be refused
-as `anchor-missing` with the buffer left untouched.
+entry point as every other `ErdEdit` kind.
 
-#### Scenario: Completing a drag between two field handles adds a relation attribute on the source field
+The patch MUST insert a NEW field whose type is the referenced model and
+which carries `@relation(fields: [<fkField>], references: [<pkField>])`,
+immediately after the foreign-key field's own declaration and matching that
+line's indentation. It MUST NOT append `@relation(...)` to the scalar
+foreign-key field: in `.indigo`, `@relation` on a scalar parses and resolves
+with no error and produces **zero** foreign keys, so the relation would be
+inert end to end — no FK in the resolved IR, no DDL from `migrate`, and no
+edge on the canvas that drew it. The emitted buffer MUST resolve to a
+foreign key on the FK-side table, and that is the assertion this requirement
+turns on; matching an expected string is not sufficient evidence, because
+the patch module's own unit suite mocks the compiler and cannot see
+semantics.
+
+Which side holds the foreign key MUST be derived from the schema — the side
+whose counterpart field carries `@id` — and never from the drag direction,
+which follows whichever handle the user grabbed first. Both drag directions
+between the same two fields MUST therefore produce the same buffer. When
+neither field carries `@id`, the edit MUST be refused as
+`not-a-primary-key`, naming both endpoints, rather than emitting a relation
+that compiles and means nothing.
+
+The inserted field's name MUST be the foreign-key field's name with a
+trailing `Id`/`_id` removed (`authorId` → `author`), falling back to the
+referenced model's name lower-cased, and MUST be suffixed to avoid
+colliding with a field the table already declares.
+
+The patch MUST NOT rewrite any other byte of the buffer, the foreign-key
+field's own line included. Field-level connection handles MUST be
+interactive only when the canvas is in edit mode (schema writable, not
+read-only); in view mode or whenever editing is disabled, the handles MUST
+remain non-interactive, matching the existing 1×1/`opacity: 0` hit area.
+When either table or either field is absent from `applyErdEdit`'s internal
+fresh parse, the edit MUST be refused as `anchor-missing` with the buffer
+left untouched — both endpoints are resolved against that parse, never
+interpolated into the emitted text unchecked.
+
+#### Scenario: Completing a drag between two field handles inserts a resolvable relation field
 
 - GIVEN tables `Post` (with a field `authorId Int`) and `User` (with a field
   `id Int @id`)
 - WHEN the user drags a connection from `Post.authorId`'s handle to
   `User.id`'s handle and releases it
-- THEN the resulting buffer's `Post.authorId` line reads
-  `authorId Int @relation(fields: [authorId], references: [id])`
+- THEN the resulting buffer contains a new line inside `Post` reading
+  `author User @relation(fields: [authorId], references: [id])`
+- AND resolving the buffer yields a foreign key on `Post` over the
+  `authorId` column referencing `User.id`
 - AND every other byte of the buffer, including `Post`'s own `id Int @id`
-  line and the `User` table, is unchanged
+  and `authorId Int` lines and the `User` table, is unchanged
 
-#### Scenario: An existing attribute on the source field survives the relation attribute being appended
+#### Scenario: The reverse drag direction produces the same buffer
+
+- GIVEN the same two tables
+- WHEN the user drags from `User.id`'s handle to `Post.authorId`'s handle —
+  the opposite gesture, the same intent
+- THEN the resulting buffer is byte-identical to the forward drag's
+- AND the foreign key is on `Post`, not on `User`
+
+#### Scenario: A drag between two non-primary-key fields is refused
+
+- GIVEN tables `A` (with `id Int @id`, `x Int`) and `B` (with `id Int @id`,
+  `y Int`)
+- WHEN the user draws a relation from `A.x` to `B.y`
+- THEN the result is `{ok: false, reason: 'not-a-primary-key', ...}`
+- AND the message names both `A.x` and `B.y`
+- AND the buffer is unchanged
+
+#### Scenario: The foreign-key field's own line survives untouched, attributes included
 
 - GIVEN a field `authorId Int @default(0)` on `Post`
 - WHEN the user draws a relation from `Post.authorId` to `User.id`
-- THEN the resulting line is
-  `authorId Int @default(0) @relation(fields: [authorId], references: [id])`
-- AND the pre-existing `@default(0)` attribute is byte-unchanged
+- THEN the `authorId Int @default(0)` line is byte-unchanged
+- AND the relation is a new line following it
+
+#### Scenario: A colliding relation field name is suffixed
+
+- GIVEN `Post` already declares a field named `author`
+- WHEN the user draws a relation from `Post.authorId` to `User.id`
+- THEN the inserted field is named `author_2`
+- AND the existing `author` field is byte-unchanged
 
 #### Scenario: Field connection handles are interactive only in edit mode
 

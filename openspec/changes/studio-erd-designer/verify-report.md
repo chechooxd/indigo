@@ -1362,3 +1362,221 @@ Re-ran the full suite (`pnpm build`, `pnpm lint`, `pnpm test`) from a clean `pac
 
 ### Verdict
 **PASS** — the prior CRITICAL (untested "schema Save does not implicitly write layout" scenario) and both prior WARNINGs (partial drag-wiring coverage; spec.md/`{layout,version}` documentation drift) are all independently confirmed closed in this pass via source inspection, traceability, and reproduced mutation proofs (not taken on the apply agent's word). 21/21 tasks complete, 16/16 spec scenarios COMPLIANT, zero orphan tests, no regression in the 14 previously-compliant scenarios. Clear to proceed to `sdd-archive` for Phase 2.
+
+---
+
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:d7483c4c09ae686f9c42b8be6bea9f5d6b83b29ab0c4303e95975f64a7650255
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 5/5
+test_command: pnpm test
+test_exit_code: 0
+test_output_hash: sha256:e2cc03411dfb2d5ecb41917a52241a71afbbaa2fdd3bd4ea51608569d7253497
+build_command: pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:d7483c4c09ae686f9c42b8be6bea9f5d6b83b29ab0c4303e95975f64a7650255
+```
+
+## Verification Report — Phase 7
+
+**Change**: studio-erd-designer — Phase 7 (`addRelation emits a relation the compiler resolves`,
+tasks 7.1–7.13), plus resolution of task 6.7.
+**Mode**: Strict TDD.
+**Scope**: working tree on `main` (nothing committed) — `apps/studio/src/features/erd/lib/patch.ts`,
+`apps/studio/src/features/erd/lib/__tests__/patch.test.ts` (modified),
+`apps/studio/src/features/erd/lib/__tests__/patch-semantics.test.ts` (NEW),
+`apps/studio/src/test/setup.ts` (modified), `specs/studio-erd-editing/spec.md` (modified),
+`tasks.md` (modified), `apply-progress.md` (NEW). Phases 1–6 landed on `main` and were verified
+independently in earlier batches — not re-audited.
+
+### Completeness
+
+| Metric | Value |
+|---|---|
+| Tasks total (Phase 7) | 13 |
+| Tasks complete | 13/13 |
+| Task 6.7 | Resolved this batch — `[x]`, manual E2E actually run against a real browser + Postgres |
+
+All 13 `[x]` boxes for Phase 7 in `tasks.md`, plus 6.7, confirmed by direct read of the current
+file. Cross-checked against direct inspection of `patch.ts`, `patch.test.ts`,
+`patch-semantics.test.ts`, and `spec.md`.
+
+### Gate Evidence (re-run in this pass, not taken from apply-progress)
+
+| Gate | Command | Result |
+|---|---|---|
+| Build | `pnpm clean && pnpm build --force` | exit 0, 11/11 tasks |
+| Lint | `pnpm lint` | exit 0, 21/21 tasks — confirmed `apps/studio`'s `lint` script is `tsc -b --noEmit` (not bare `tsc --noEmit`) |
+| Test | `pnpm test` | exit 0. `@indigodb/studio`: **29 files / 251 tests passed**, matching apply-progress's claim exactly. `patch-semantics.test.ts`: 4/4 passed. `patch.test.ts`: 41/41 passed. Workspace pack-contents guard green across all 11 packages. |
+
+### Independent Mutation Verification (not trusted from apply-progress — re-run from scratch)
+
+Both mutations applied to a backed-up copy of `patch.ts`, rebuilt (`pnpm --filter @indigodb/studio
+build`), run against `vitest run src/features/erd`, then reverted with a byte-diff confirming a
+clean revert before the next mutation.
+
+| Mutation | Claimed | Observed | Verdict |
+|---|---|---|---|
+| Reintroduce the shipped defect: append `@relation` to the scalar FK field instead of inserting a new relation field | 8 failures | **8 failures** — 3 in `patch-semantics.test.ts` (all real `expect().toEqual`/`.toContain` mismatches against the resolved IR), 5 in `patch.test.ts` (real string-equality/`.toContain` mismatches) | Confirmed, no crash-only failures |
+| `toIsPk = true` (always trust the drag direction, ignore `@id`) | 4 failures | **4 failures** — both reverse-direction tests (`patch-semantics.test.ts`, `patch.test.ts`) and both `not-a-primary-key` refusal tests, each on its own `expect()` | Confirmed, no crash-only failures |
+
+Every failure inspected individually in the raw vitest output; all are genuine assertion
+mismatches (diffed expected vs. received), not thrown exceptions or timeouts. This project has a
+documented history of tests that only "fail" via a crash — that was checked for and not found
+here.
+
+### Spec Scenario → Test Mapping (Requirement: "Drawing a relation between two fields inserts a relation field the compiler resolves")
+
+| Scenario | Covering test(s) | Result |
+|---|---|---|
+| Completing a drag between two field handles inserts a resolvable relation field | `patch-semantics.test.ts` › "a drag from the FK field to the PK field yields a real foreign key"; `patch.test.ts` › "inserts a new relation field of the referenced model type, after the foreign-key field" | PASS |
+| The reverse drag direction produces the same buffer | `patch-semantics.test.ts` › "the reverse drag direction yields the same foreign key, not an inverted one"; `patch.test.ts` › "resolves the foreign-key side from the schema, so the reverse drag direction emits the same field" | PASS |
+| A drag between two non-primary-key fields is refused | `patch-semantics.test.ts` › "refuses a drag between two fields where neither side is a primary key"; `patch.test.ts` › "refuses when neither field is a primary key, rather than emitting an inert relation" | PASS |
+| The foreign-key field's own line survives untouched, attributes included | `patch.test.ts` › "leaves the foreign-key field line byte-unchanged, attributes included" | PASS |
+| A colliding relation field name is suffixed | `patch.test.ts` › "avoids colliding with an existing field name by suffixing" | PASS |
+
+All 5 scenarios map to a real, passing test that exercises the named branch — no fixture that
+seeds around the branch it claims to test (checked specifically, per this project's documented
+history with `C1.3a`).
+
+One implementation branch is **not** independently named by a scenario or a dedicated test: the
+`toField` (destination field) absent case in `addRelation` (`patch.ts:379–386`). The symmetric
+cases — `from` table absent, `from` field absent, `to` table absent — each have a dedicated test
+(`patch.test.ts` lines 860, 898, 917); the `to`-field-absent branch does not. It is structurally
+identical code to the tested `from`-field-absent branch, so the residual risk is low, but it is
+untested. SUGGESTION, not CRITICAL — the spec's prose ("When either table or either field is
+absent... refused as anchor-missing") does not itemize this as a distinct scenario, so it is not
+a scenario-without-a-test violation, only an untested code branch.
+
+### Edge-Case Audit (source inspection + reproduced in isolation, `patch.ts`)
+
+| Case | Behavior observed | Assessment |
+|---|---|---|
+| `uniqueRelationFieldName` with FK field literally named `Id` | `stripped = ""` (empty after regex strip) → `stripped.length > 0` is false → fallback to referenced-model name (`user`) reached correctly | Correct, no crash |
+| `uniqueRelationFieldName` with FK field literally named `_id` | Same as above — `stripped = ""`, fallback reached | Correct |
+| `uniqueRelationFieldName` with FK field literally named `id` (no `_`/capital `I`) | Regex `/(_id|Id)$/` does not match plain lowercase `id`; `stripped === foreignKeyFieldName`, so the `!==` guard also routes to the fallback | Reaches the intended fallback, but via the equality branch rather than the emptiness branch — same outcome, worth noting since the two guard clauses overlap for this specific input |
+| `lineIndentAt` at offset 0 | `source.lastIndexOf("\n", -1)` returns `-1` → `lineStart = 0` → `slice(0,0)` → `""` matched → returns `""`, no crash | Correct (though `fkField.decl.start` can never actually be 0 in a well-formed `.indigo` file, since it is always inside a `Table` block) |
+| `lineIndentAt` on the first line of the file (offset > 0, no preceding newline) | Verified independently: `lastIndexOf` returns `-1`, `lineStart = 0`, slices correctly from file start | Correct |
+| Both-`@id` tie (`fromField` and `toField` both carry `@id`) | Code takes the `toIsPk` branch unconditionally when true, regardless of `fromIsPk` — i.e., the FK lands on the `from` (drag-origin) side, matching the documented "ties keep the drag's own direction" comment | **No test exercises this branch.** Behavior matches the code comment's stated intent, but is unverified by any assertion — flagged below. |
+
+### Standing Obligation — 4 clauses, `addRelation`
+
+| Clause | Status |
+|---|---|
+| 1. Spec Requirement/Scenario names `addRelation` | Met — `spec.md`'s rewritten Requirement title and all 5 scenarios name it |
+| 2. Every scenario points at an existing covering test | Met — see mapping table above (all 5 map to a real, passing test) |
+| 3. UI affordance gated on shared `editDisabled` | Met — established in Phase 6 (task 6.9), unchanged and unaffected by this batch's scope |
+| 4. At least one test feeds the emitted buffer through the REAL compiler and asserts on the resolved IR | Met — `patch-semantics.test.ts` runs in `node` environment against the real `@indigodb/core`, asserting on `resolve(parse(source)).tables[].foreignKeys` |
+
+### Review Workload Guard — changed-line count
+
+Exact `git diff --numstat` / `wc -l` for every file in this batch's scope:
+
+| File | Added | Deleted | Total |
+|---|---|---|---|
+| `apps/studio/src/features/erd/lib/patch.ts` | 122 | 17 | 139 |
+| `apps/studio/src/features/erd/lib/__tests__/patch.test.ts` | 140 | 14 | 154 |
+| `apps/studio/src/features/erd/lib/__tests__/patch-semantics.test.ts` (new) | 165 | 0 | 165 |
+| `apps/studio/src/test/setup.ts` | 30 | 16 | 46 |
+| `specs/studio-erd-editing/spec.md` | 78 | 22 | 100 |
+| `tasks.md` | 89 | 3 | 92 |
+| `apply-progress.md` (new) | 160 | 0 | 160 |
+| **Total, all seven files** | | | **856** |
+| Implementation + tests only (`patch.ts` + both test files) | | | **458** |
+| Implementation + tests + spec | | | **558** |
+
+**WARNING**: `apply-progress.md` states *"Diff ≈ 250 lines across one implementation
+file, two test files, one spec and this file — under the 400-line review budget."* The actual,
+independently re-measured total for exactly those five files (`patch.ts`, `patch.test.ts`,
+`patch-semantics.test.ts`, `spec.md`, `apply-progress.md`) is **658 lines** (139 + 154 + 165 +
+100 + 160), and even the narrowest reasonable slice — implementation plus its two test files
+alone, excluding spec and process docs — is **458 lines**. Both figures exceed the stated 400-line
+budget on their own; the claimed ~250 undercounts the real diff by roughly 2.5–3.6×. Per the
+Review Workload Guard, `sdd-apply` must not start oversized work unless the delivery strategy
+resolves to chained/stacked slices or an explicit `size:exception` is accepted — this batch
+proceeded under `single-pr` without flagging the breach. The individual review is not unreasonable
+in substance (one coherent bug fix that cannot be usefully split without landing a known-inert
+edit, per apply-progress's own reasoning), but the review-budget accounting itself is wrong and
+should not be repeated uncorrected.
+
+### TDD Compliance
+
+| Check | Result | Details |
+|---|---|---|
+| TDD Evidence reported | ⚠️ Partial | `apply-progress.md` documents RED/GREEN narratively per task (7.1 RED, 7.2 GREEN, etc.) but has no formal "TDD Cycle Evidence" table with RED/GREEN/TRIANGULATE/SAFETY NET columns |
+| All tasks have tests | ✅ | 13/13 Phase 7 tasks map to a test file or a re-run manual E2E (7.13) |
+| RED confirmed (tests exist) | ✅ | `patch-semantics.test.ts` and the `patch.test.ts` additions both exist and were read directly |
+| GREEN confirmed (tests pass) | ✅ | Independently re-run in this pass — `pnpm test` exit 0, all 251 studio tests pass |
+| Triangulation adequate | ✅ | Multiple distinct test cases per behavior (forward, reverse, refusal, collision, indentation, byte-diff) |
+| Safety Net for modified files | ✅ | `patch.test.ts`'s prior addRelation test was rewritten in place with the new expected buffer, not silently deleted; mutation testing (independently reproduced above) proves the safety net actually catches the two known regressions |
+| Mutation proof reproduced independently | ✅ | Both claimed mutations re-run from scratch in this pass, not taken on the apply agent's word — see table above |
+
+**TDD Compliance**: 6/7 checks passed. The Strict TDD Verify protocol's literal rule treats a
+missing formal evidence table as an automatic finding; downgraded to **WARNING** here rather than
+CRITICAL because the substance that table would have documented was independently reproduced and
+confirmed in this pass — both claimed mutation counts matched exactly on re-execution, every
+failure was a real assertion mismatch (not crash-only), and all 251 studio tests were re-run and
+passed. This is a documentation-format gap, not a substantive gap in what was actually done.
+
+### Assertion Quality
+
+No tautologies, no assertion-free tests, no ghost loops, no ratio-heavy mocking found in
+`patch.test.ts`'s new/changed cases or in `patch-semantics.test.ts` (which uses zero mocks by
+design — it exercises the real compiler).
+
+**Assertion quality**: ✅ All assertions verify real behavior.
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `apply-progress.md`'s review-budget claim ("≈250 lines... under the 400-line review budget")
+   is wrong by a wide margin — the real total for the five named files is 658 lines, and even
+   implementation+tests alone is 458, both over the stated 400-line cap. See Review Workload
+   Guard section above. Does not affect code correctness; affects whether this batch should have
+   been flagged for chained delivery or an explicit `size:exception`.
+2. No formal "TDD Cycle Evidence" table exists in `apply-progress.md`, per the Strict TDD Verify
+   protocol's literal requirement — the RED/GREEN/mutation narrative is present and was
+   independently reproduced in this pass (matching mutation counts, real assertion failures, no
+   crash-only failures), but not in the mandated table format.
+3. The both-`@id` tie case in `addRelation` (`patch.ts:401-404`) has no covering test. The code
+   comment states the intended behavior ("ties keep the drag's own direction"), and inspection
+   confirms the code matches that stated intent, but no assertion exercises it.
+
+**SUGGESTION**:
+1. The `toField`-absent branch in `addRelation` (`patch.ts:379-386`) has no dedicated test, unlike
+   its three sibling anchor-missing branches (`from` table, `from` field, `to` table), all of
+   which are tested. Structurally identical code to a tested branch, so risk is low.
+2. `uniqueRelationFieldName`'s fallback for a plain-lowercase `id` FK field name is reached via
+   the `stripped !== foreignKeyFieldName` equality guard rather than the emptiness guard — same
+   observable outcome as the `Id`/`_id` cases, but worth noting the two guard clauses overlap for
+   that specific input.
+3. The known cosmetic gap apply-progress records (inserted relation field not column-aligned with
+   sibling fields) is honestly documented as out of scope and not a regression; no action needed
+   here.
+
+### Verdict
+
+**PASS WITH WARNINGS.** Both mutation-proof claims and the full gate suite (build/lint/test) were
+independently re-run from scratch in this pass and matched apply-progress's reported numbers
+exactly (8 and 4 failures respectively, 251/251 studio tests, 21/21 lint tasks, 11/11 build
+tasks). All 5 rewritten spec scenarios map to a real, passing test exercising the named behavior,
+and the Standing Obligation's 4 clauses are discharged for `addRelation`. The fix is substantively
+sound and closes the defect it targets (verified via the semantic test suite against the real
+compiler, not just string comparison). Zero CRITICAL findings: no incomplete task, no failing
+test, no untested spec scenario, no design deviation breaking a spec.
+
+Three WARNINGs are process/documentation-accuracy issues, not defects in the shipped code: the
+review-budget arithmetic in `apply-progress.md` is wrong (over budget, not under, by a wide
+margin) and should be corrected before this is treated as a clean single-PR delivery; the TDD
+evidence, while substantively verified in this pass, was not recorded in the mandated table
+format; and the both-`@id` tie branch in `addRelation` has no covering test. None of these block
+archiving the code, but the budget miscount should not be silently carried forward —
+`sdd-archive` or a maintainer should decide whether this now needs the chained/stacked delivery
+the guard calls for, or an explicit accepted `size:exception`.

@@ -92,9 +92,17 @@ each kind it adds:
 
 1. `specs/studio-erd-editing/spec.md` carries a Requirement or Scenario naming that kind;
 2. every scenario written for it points at a test that exists — write no scenario you cannot
-   name a covering test for; and
+   name a covering test for;
 3. its UI affordance is gated on the shared `editDisabled` flag (`schemaWritable`/`readOnly`)
-   in `ERDCanvas.tsx`, not on a second gating path of its own.
+   in `ERDCanvas.tsx`, not on a second gating path of its own; and
+4. **at least one test feeds the emitted buffer back through the REAL compiler and asserts on
+   the resolved IR** — added 2026-09-08, after Phase 6 shipped an `addRelation` that emitted
+   byte-perfect text meaning nothing. `patch.test.ts` mocks `@indigodb/core` wholesale (it must
+   — jsdom cannot host the WASM compiler), so every assertion in it is a string comparison and
+   the entire suite is structurally blind to semantics: a patch can satisfy all three clauses
+   above and still produce `.indigo` that resolves to zero foreign keys. Clauses 1–3 govern the
+   text; only this one governs the meaning. Semantic tests live in `patch-semantics.test.ts`
+   (`// @vitest-environment node`, real `@indigodb/core`).
 
 **Strict-TDD reminders:** test suites import compiled `dist/` — rebuild (`pnpm --filter <pkg> build`) before trusting a mutation result; `pnpm clean && pnpm build --force` when Turbo may have restored stale output. Studio lint is `tsc -b --noEmit` — do not drop `-b`.
 
@@ -192,10 +200,114 @@ full, and 6.8/6.9 below discharge it.
 - [x] 6.4 RED: edit mode reveals enlarged, interactive handles; view/read-only mode leaves them non-interactive (mutation: enable handles regardless of mode)
 - [x] 6.5 GREEN: wire `onConnect` on `<ReactFlow>` to call `applyErdEdit` with `addRelation` on a successful connection
 - [x] 6.6 RED: `onConnect` between two field handles triggers exactly one `addRelation` call with correct `from`/`fromField`/`to`/`toField`
-- [ ] 6.7 Manual E2E (recorded): add table → add field → draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a scratch project) — **NOT verified this batch**: no interactive browser session was available to the executing agent. See apply-progress for exactly what automated coverage substitutes for it and what a human still needs to run.
+- [x] 6.7 Manual E2E (recorded): add table → add field → draw relation → Save → reload → positions and schema both persist (`indigodb studio` against a scratch project) — **RUN 2026-09-08** against a real browser + real Postgres. Persistence half **PASSES**: per-request schema read picks up on-disk edits with no restart; Save round-trips the `datasource` block back intact with `env("DATABASE_URL")`; enum/`@note`/`@map`/comments byte-unchanged; layout autosaves to the `schema.layout.json` sidecar on drag-end, separate from the explicit schema Save; positions and schema both survive reload. **Relation half FAILED and produced Phase 7 below.** Two steps could not be driven by automation at all: `TableNode.tsx` names tables and fields through `window.prompt()` (5 sites), and a native modal freezes the CDP session — that, not "no browser was available", is why this task sat open. Add-field was exercised through the editor buffer instead.
 - [x] 6.8 Spec: add a Requirement (or Scenarios under an existing one) in
       `specs/studio-erd-editing/spec.md` naming `addRelation`, each scenario mapped to one of
       the tests above
 - [x] 6.9 RED: the relation-drawing affordance is gated on the same `editDisabled` flag as
       every other ERD edit affordance (mutation: enable it regardless of
       `schemaWritable`/`readOnly`)
+
+## Phase 7: `addRelation` emits a relation the compiler resolves (PR 7, depends on: Phase 6)
+
+Raised by task 6.7's manual E2E, which is the only reason this was found. Phase 6's
+`addRelation` appended `@relation(fields: [...], references: [...])` to the **scalar**
+foreign-key field. In `.indigo` that parses and resolves with no error and no diagnostic, and
+produces **zero** foreign keys — so the relation was inert end to end: nothing in the IR,
+nothing in `migrate`'s DDL, and no edge drawn on the canvas that authored it. Verified against
+the real compiler on both drag directions. This is the project's signature failure class (the
+`onDelete` golden snapshot, the `result === undefined` nested-write case): something that
+silently does nothing, ratified by a green suite.
+
+Delivery: `single-pr` (session preflight). **The ≈250-line estimate written here first was
+wrong — the real figure is 573 changed lines of code (408 modified + a 165-line new test
+file), ~1.4× the 400-line review budget**; verify caught the miscount. The single-PR shape is
+still the right call on its own merits — splitting means landing a known-inert `addRelation`
+in one PR and the test proving it inert in another — but it needs an explicit `size:exception`
+from the maintainer rather than a claim of fitting under a cap it does not fit under.
+
+**`size:exception` accepted by the maintainer, 2026-09-08** — `delivery_strategy` for this
+phase is `exception-ok`. The reason on record: the only honest split would put the spec and
+the failing semantic tests in one PR and the implementation in the next, leaving an
+intermediate branch whose suite is red on purpose and whose reviewer would be approving a
+known-inert `addRelation`. The cap was NOT raised to accommodate the work — it stands at 400
+for the next phase.
+
+- [x] 7.1 RED (vitest, node env, REAL compiler): new `patch-semantics.test.ts` asserts
+      `addRelation`'s emitted buffer resolves to a real foreign key on the FK-side table.
+      Fails before the fix with `foreignKeys: []` — on its own assertion, not by crash.
+- [x] 7.2 GREEN: `addRelation` inserts a NEW field typed as the referenced model carrying
+      `@relation(...)`, after the FK field's declaration, matching that line's indentation —
+      instead of decorating the scalar.
+- [x] 7.3 GREEN: the FK side is derived from the schema (which counterpart field carries
+      `@id`), never from the drag direction — React Flow's `source`/`target` follow whichever
+      handle the user grabbed first, so the same intent arrived with `from`/`to` swapped half
+      the time and produced a backwards relation.
+- [x] 7.4 RED: both drag directions between the same two fields produce a byte-identical
+      buffer (mutation: `toIsPk = true`, i.e. always trust the gesture → fails).
+- [x] 7.5 GREEN + RED: a drag where neither field is `@id` is refused as `not-a-primary-key`
+      naming both endpoints, rather than emitting text that compiles and means nothing.
+- [x] 7.6 GREEN: both endpoints are resolved against the fresh parse — `to`/`toField` used to
+      be interpolated into the emitted text unchecked, so a relation could name a table that
+      does not exist. Refuses `anchor-missing` now.
+- [x] 7.7 GREEN: inserted field name is the FK field minus a trailing `Id`/`_id`
+      (`authorId` → `author`), falling back to the referenced model lower-cased, suffixed
+      `_2`, `_3`, … on collision with an existing field. RED test covers the collision.
+- [x] 7.8 Test-infrastructure fix: `patch.test.ts`'s span mock left `attributes: []` with a
+      comment saying no edit kind read them. `addRelation` now does, and leaving the stub
+      would have silently routed every `addRelation` test into the `not-a-primary-key`
+      refusal — a green suite testing nothing. The mock now populates attribute names.
+- [x] 7.9 Test-infrastructure fix: `src/test/setup.ts` unconditionally touched `window`, so
+      any node-environment test file crashed in setup before its first assertion. Guarded via
+      a separately-typed `hasDom` check that does not narrow the DOM globals to `never` under
+      `tsc` — the reason the original comment gave for having no guard at all.
+- [x] 7.10 Spec: `specs/studio-erd-editing/spec.md`'s relation Requirement rewritten. The old
+      title — "appends a `@relation` attribute on the source field" — mandated the defect, so
+      the implementation and its tests were faithful to a spec that was wrong about the
+      language. Now carries the resolve-to-a-foreign-key obligation, the FK-side rule, the
+      refusal, the naming rule, and five scenarios each mapped to a test.
+- [x] 7.11 Standing obligation gains clause 4: every new `ErdEdit` kind needs at least one
+      test that feeds the emitted buffer through the real compiler and asserts on the IR.
+- [x] 7.12 Mutation proof: reintroducing the shipped defect (append to the scalar) fails 8
+      tests; ignoring the `@id` side fails 4. Each failure names its own assertion — no
+      crash-only or hang-only failures. Both mutations reverted with a clean `git diff`.
+- [x] 7.13 Re-run task 6.7's manual E2E against the fix — **RUN 2026-09-08, PASSES.** The
+      earlier "blocked on a human" note was wrong: `window.prompt()` gates the *naming* steps
+      (add table, rename, add field), but relation drawing is a handle-to-handle drag through
+      `onConnect` and opens no dialog, so preparing the two tables in the file makes this
+      fully automatable. Dragging from `Post.authorId` toward `User.id` — the direction that
+      previously produced the backwards form — emitted
+      `author User @relation(fields: [authorId], references: [id])` on `Post`, the canvas drew
+      the edge, `authorId` gained its link icon, and `authorId Int @map("author_id")` stayed
+      byte-unchanged. `db push --print` plans
+      `ALTER TABLE "Post" ADD CONSTRAINT "Post_author_id_fkey" FOREIGN KEY ("author_id")
+      REFERENCES "User" ("id");`. After Save and reload the relation and the edge both come
+      back from the file.
+
+### Phase 7 follow-through on the verify report (2026-09-08)
+
+- [x] 7.14 RED: the both-`@id` tie branch (`patch.ts`) — a 1:1 shape where neither side is
+      "the FK side" by schema, so the gesture is the only signal left and the code keeps it.
+      Flagged untested by verify. Mutation (`toIsPk && !fromIsPk`) fails exactly this test.
+- [x] 7.15 RED: `toField` absent from the fresh parse refuses `anchor-missing`. Sibling of the
+      absent-table case; verify flagged the branch untested. Mutation (fall back to
+      `toModel.fields[0]` instead of refusing) fails exactly this test.
+- [x] 7.16 RED: a FK field named literally `Id` strips to the empty string, so the
+      `stripped.length > 0` guard is load-bearing rather than redundant with
+      `stripped !== foreignKeyFieldName`. Mutation (drop that clause) fails exactly this test.
+      The first version of this test asserted a substring that the CORRECT output also
+      contains — it would have passed against the bug. Replaced with an exact-line assertion.
+- [x] 7.17 Review-budget correction: the ≈250-line claim was wrong; real figure recorded in
+      `apply-progress.md`. Needs a maintainer `size:exception` decision, not a re-estimate.
+
+### Follow-ups raised by 6.7, deliberately NOT absorbed into this phase
+
+- `TableNode.tsx` drives table/field naming through `window.prompt()` at 5 sites. The proposal
+  specified *inline* field editing; a native modal is not inline, is unstyleable, offers no
+  type picker or validation, and makes the flow untestable by browser automation. Needs its
+  own change.
+- ERD table and field delete have **no confirmation** — one click on the trash icon mutates
+  the buffer. Recoverable by undo or by not saving (unlike `real-row-crud`, whose DELETE hits
+  the database and is gated behind confirm + Safe Updates), but a designer should not lose a
+  table to a mis-click.
+- The layout sidecar accumulates entries for tables that no longer exist in the schema.
