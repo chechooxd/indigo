@@ -1980,7 +1980,11 @@ await check("R5/R6 --rolled-back removes a success row and a failure row identic
       );
       ok(okLines.some((l) => /Migration record removed/.test(l)));
 
-      // And the failed id is pending again, not silently gone.
+      // I7b: the ids are pending again AND re-deploy leaves clean success rows.
+      // Asserting only that deploy says "applied" proves the delete half twice
+      // over and says nothing about what the re-insert wrote — which is the
+      // half of I7b that actually matters, since the failed id had to survive
+      // the deploy refusal gate to get here at all.
       const deployLines = await captureLogs(() =>
         migrateDeploy("unused", { createClient, cwd }),
       );
@@ -1988,6 +1992,16 @@ await check("R5/R6 --rolled-back removes a success row and a failure row identic
         deployLines.some((l) => /applied/.test(l)),
         `expected the rolled-back ids to be applied again, got:\n${deployLines.join("\n")}`,
       );
+
+      const after = await historyRows(db);
+      strictEqual(after.length, 2, `expected both ids re-recorded, got:\n${JSON.stringify(after)}`);
+      for (const row of after) {
+        strictEqual(row.success, true, `${row.name} must come back as a success row`);
+        ok(row.installed_by != null, `${row.name} must carry identity`);
+        strictEqual(typeof row.execution_time_ms, "number", `${row.name} must carry a duration`);
+      }
+      ok(await tableExists(db, "r5"), "the re-deployed migration must have actually run");
+      ok(await tableExists(db, "r6"), "the re-deployed migration must have actually run");
     } finally {
       cleanup();
     }

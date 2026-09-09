@@ -383,7 +383,7 @@ earned its place: **two rows were never scheduled as tasks at all.**
 | I5 | `I5 a failed id is not counted as applied…` | rewritten to assert through `status`, see Work Unit D |
 | I6 | `I6 deploy refuses when ANY pending id…` | |
 | **I7a** | **`R3 resolve --applied flips a matching failure row…`** | **never scheduled as a task — covered anyway** |
-| **I7b** | **`R5/R6 --rolled-back removes a success row and a failure row identically`** | **never scheduled as a task — covered anyway** |
+| **I7b** | **`R5/R6 …identically`, extended after verify** | **never scheduled as a task; my first "covered anyway" claim was too generous — see below** |
 | I8 | `I8 installed_by is recorded from current_user…` | |
 | I9 | `I4/I9…` (failure half) and `I9 execution_time_ms…` (success half) | |
 | I10 | `I10 status distinguishes failed…` | |
@@ -448,3 +448,47 @@ the whole candidate — `openspec/` artifacts included. So my numbers ran consis
 vs 371 for C, 255 vs 341 for D, 347 vs 452 for E. Work Unit A's budget breach earlier in this
 change had the same root cause and was blamed on deletions alone; that explanation was
 incomplete.
+
+
+---
+
+# Post-verify corrections
+
+Final verification came back PASS WITH WARNINGS, 0 CRITICAL, with six of the sixteen mutations
+independently re-applied and all six reproducing. Two things it raised are worth recording
+precisely, because one of them was my claim and the other is a real omission.
+
+## I7b was not as covered as I said
+
+F2's table above claimed I7b — "retry after `--rolled-back` re-inserts cleanly" — was "covered
+anyway" by R5/R6. That was too generous.
+
+The verify's stated evidence was wrong: it reported that no test calls `migrateDeploy` after a
+`--rolled-back`, and R5/R6 did. But its conclusion was right. The assertion there was
+`deployLines.some(l => /applied/.test(l))` — which proves the ids became pending again, and
+says **nothing about what the re-insert wrote**. That is the half of I7b that matters, since a
+failed id has to survive the Work Unit D refusal gate to reach a re-deploy at all.
+
+R5/R6 now asserts the resulting rows: two of them, both `success = true`, both carrying
+identity and a duration, and both tables actually created. Proven by mutation — making
+`--rolled-back` select instead of delete fails R5/R6 and nothing else.
+
+The general lesson is the one this whole change keeps producing: **"covered anyway" is a claim
+about a test, and it has to be read against what the test asserts, not against what its name
+suggests.** I made exactly the error I had warned about two sections earlier.
+
+## `execution_time_ms` overflow now has a stated position
+
+The column is `integer`, so it caps at 2^31−1 ms ≈ 24.8 days. Neither spec nor design said what
+happens past that. The position is now written into the DDL: a single migration running longer
+than that is a pathology the history table is not the right place to survive, and an overflow
+makes the write fail — surfacing through the failure path rather than silently recording a
+wrong number. Named rather than left to be discovered.
+
+## Two edges confirmed as already-documented, not new
+
+`--rolled-back` on a failure row whose file is also missing is refused by the file-existence
+guard, leaving an unclearable orphan (`design.md:423`, known Low risk). Two same-second
+`migrate dev` runs now upsert rather than raising a unique violation (`design.md:359-364`,
+accepted behaviour change). Both were independently reconfirmed by the verify rather than taken
+on trust.

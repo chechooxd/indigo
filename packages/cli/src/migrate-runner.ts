@@ -166,6 +166,12 @@ async function defaultCreateClient(connectionString: string): Promise<MigrationC
  * no installed base to upgrade, and carrying that machinery would mean
  * shipping a migration path for a version that never shipped.
  *
+ * `execution_time_ms` is `integer`, not `bigint`, deliberately: 2^31-1 ms is
+ * about 24.8 days, and a single migration running longer than that is a
+ * pathology the history table is not the right place to survive. Past it the
+ * write overflows and fails, which surfaces through the failure path rather
+ * than silently recording a wrong duration.
+ *
  * The consequence is worth stating: a table created by an older local build is
  * left exactly as it is. It is not widened, and a write naming a column it does
  * not have fails loudly rather than being silently repaired. That is the
