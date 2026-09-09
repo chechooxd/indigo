@@ -197,7 +197,7 @@ Spec: `migration-history-resolve`.
 Spec: `migration-history-integrity` — filtered `appliedMigrations()`, deploy
 refusal. Design's found-consequence: `recordedMigrations()` must filter too.
 
-- [ ] **D1. RED — I5, X1 (seed failure rows directly by SQL; no deploy-failure code needed yet).**
+- [x] **D1. RED — I5, X1 (seed failure rows directly by SQL; no deploy-failure code needed yet).** *(I5's `✗ failed` status-marker half sequenced into Work Unit E; I5 rewritten to assert through `migrateStatus`, see apply-progress.)*
       I5: seed a `success = false` row for an on-disk id; run `migrateStatus`
       (id counted as pending — this half already holds; the `✗ failed` marker
       half depends on Work Unit E, write it expecting red until then) and run
@@ -211,7 +211,7 @@ refusal. Design's found-consequence: `recordedMigrations()` must filter too.
       Both fail today: `appliedMigrations()` (`:174-177`) and
       `recordedMigrations()` (`:210-218`) have no `WHERE success = true`.
 
-- [ ] **D2. GREEN — filter `appliedMigrations()` and `recordedMigrations()` on `success = true`; add `failedMigrations()`.**
+- [x] **D2. GREEN — filter `appliedMigrations()` and `recordedMigrations()` on `success = true`; add `failedMigrations()`.**
       `appliedMigrations()` → `SELECT name FROM ... WHERE success = true`.
       `recordedMigrations()` → same filter added to its query — this is the
       design's named "found beyond the brief" consequence: without it,
@@ -222,7 +222,7 @@ refusal. Design's found-consequence: `recordedMigrations()` must filter too.
       Add `failedMigrations()`: `SELECT name FROM ... WHERE success = false`,
       for the refusal gate (D3) below. Confirms I5's non-status half and X1.
 
-- [ ] **D3. RED then GREEN — I6 (deploy refusal gate, D6's any-not-just-next semantics).**
+- [x] **D3. RED then GREEN — I6 (deploy refusal gate, D6's any-not-just-next semantics).**
       RED: seed a `success = false` row for an on-disk pending id; run
       `migrateDeploy`; assert stderr names the id, `process.exitCode === 1`,
       and the migration's table was **not** created. Fails today: no gate
@@ -236,7 +236,7 @@ refusal. Design's found-consequence: `recordedMigrations()` must filter too.
       no throw. Confirms I6 and closes C3's R3 cross-reference.
       Test command: `node packages/cli/test/migrate-runner.mjs 2>&1 | rg "refus"`
 
-- [ ] **D4. RED then GREEN — X2a, X2b (D2's "dev is not blocked, dev writes nothing").**
+- [x] **D4. RED then GREEN — X2a, X2b.** *(X2a's premise was wrong — `migrate dev` IS refused, by a pre-existing shadow-replay guard, not by the new gate. See apply-progress; the design note was incomplete, the behaviour is correct and safer.)*
       X2a: with D1's X1 fixture, assert `migrateDev` completes (no refusal)
       and `process.exitCode` is untouched. This should already pass once D3 is
       scoped to `migrateDeploy` only — write it explicitly so a future change

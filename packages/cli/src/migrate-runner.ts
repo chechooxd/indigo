@@ -186,8 +186,26 @@ async function ensureHistory(client: MigrationClient): Promise<void> {
   );
 }
 
+/**
+ * The ids this database counts as applied — `success = true` only.
+ *
+ * The filter is what makes a failure row safe to record at all. Without it a
+ * `success = false` row would make its migration look applied and be skipped
+ * forever, which is worse than the missing row it replaced: a silent no-op
+ * instead of a loud gap.
+ */
 async function appliedMigrations(client: MigrationClient): Promise<Set<string>> {
-  const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}"`);
+  const result = await client.query(
+    `SELECT name FROM "${HISTORY_TABLE}" WHERE success = true`,
+  );
+  return new Set(result.rows.map((r: { name: string }) => r.name));
+}
+
+/** The ids recorded as having failed — the deploy refusal gate's input. */
+async function failedMigrations(client: MigrationClient): Promise<Set<string>> {
+  const result = await client.query(
+    `SELECT name FROM "${HISTORY_TABLE}" WHERE success = false`,
+  );
   return new Set(result.rows.map((r: { name: string }) => r.name));
 }
 
@@ -225,7 +243,13 @@ async function checksumPreflight(client: MigrationClient, cwd: string): Promise<
 async function recordedMigrations(
   client: MigrationClient,
 ): Promise<{ recorded: string[]; checksums: Record<string, string | null> }> {
-  const result = await client.query(`SELECT name, checksum FROM "${HISTORY_TABLE}" ORDER BY id`);
+  // Same `success = true` filter as `appliedMigrations`, and for a sharper
+  // reason: this feeds `buildShadowSchema`. Replaying a migration that never
+  // applied would have `migrate dev` diff against a schema the database does
+  // not have — planning nothing for tables it believes already exist.
+  const result = await client.query(
+    `SELECT name, checksum FROM "${HISTORY_TABLE}" WHERE success = true ORDER BY id`,
+  );
   const rows = result.rows as { name: string; checksum: string | null }[];
   const checksums: Record<string, string | null> = {};
   for (const row of rows) checksums[row.name] = row.checksum;
@@ -464,6 +488,25 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     const pending = dirs.filter((d) => !applied.has(d));
     if (pending.length === 0) {
       console.log("✅ No pending migrations.");
+      return;
+    }
+
+    // Same doctrine as the destructive pre-scan below, for the same reason:
+    // check EVERY pending id, not just the next one. A gate that looked only at
+    // `pending[0]` would apply file 1 and then refuse file 2, which is the
+    // half-migrated database this function already goes out of its way to
+    // avoid.
+    const failed = await failedMigrations(client);
+    const blocked = pending.filter((id) => failed.has(id));
+    if (blocked.length > 0) {
+      console.error(
+        `❌ migrate deploy refused: ${blocked.join(", ")} previously failed and is still recorded as failed.`,
+      );
+      console.error(
+        "   Re-run it with `indigodb migrate resolve --applied <id>` once the database is in the state it describes,",
+      );
+      console.error("   or discard the record with `indigodb migrate resolve --rolled-back <id>`.");
+      process.exitCode = 1;
       return;
     }
 

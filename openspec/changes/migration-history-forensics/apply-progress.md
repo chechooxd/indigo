@@ -2,7 +2,7 @@
 
 ## Scope of this batch
 
-**Work Units A, B and C** (tasks A1–A3, B1–B3, C1–C5). Work Units D and E are not started.
+**Work Units A, B, C and D** — the whole of PR 1. Work Unit E (PR 2) is not started.
 
 **Mode**: Strict TDD.
 **Delivery**: chained, split at the A–D | E seam (maintainer decision, recorded at the top of
@@ -76,7 +76,7 @@ re-introduction of the backfill path, which is the one way this change could be 
 
 ## Not started
 
-Work Units D, E. After this batch no code path writes a `success = false` row and
+Work Unit E (PR 2). After this batch no code path writes a `success = false` row and
 nothing reads `success` as a filter — the new columns exist and are never populated. That is
 the intended intermediate state for this seam, and `tasks.md` records the standing commitment
 that it must not be where the change stops.
@@ -200,3 +200,77 @@ equality assertion proves the two sides match; it says nothing about what they m
 - `pnpm lint` — 21/21, exit 0
 - `pnpm test` — exit 0, `cli migrate-runner: all green`
 - `git diff --numstat -- packages/cli` — +285 / −10 = 295 changed lines, inside the 400 budget
+
+
+---
+
+# Work Unit D — filtered readers and the refusal gate
+
+`appliedMigrations()` and `recordedMigrations()` now filter `success = true`, `failedMigrations()`
+is added, and `migrateDeploy` refuses when **any** pending id carries a failure row — checking
+every id, not just the next one, on the same reasoning the destructive pre-scan already uses:
+applying file 1 and then refusing file 2 leaves the half-migrated database this function exists
+to avoid.
+
+## Two findings that changed what got written
+
+### 1. The design's X2a was wrong, and the real behaviour is better
+
+X2a expected `migrate dev` to complete without refusal, on the reasoning that the new gate is
+scoped to `deploy`. It is — but `migrate dev` refuses anyway, through a **pre-existing**
+shadow-replay desync guard in `@indigodb/migrator` (`shadow.ts:199`): once
+`recordedMigrations()` filters on success, a failed migration becomes "on disk but not recorded
+as applied", which that guard already refuses.
+
+That is the safe outcome and the right one. Planning a new migration on top of one whose real
+effect on the database is unknown is exactly what must not happen quietly. The design note was
+incomplete — it reasoned about the new gate and missed the old guard — so X1 was rewritten to
+assert the true property (a failed migration is not replayed as applied, and nothing is
+planned) rather than the assumed one.
+
+**A follow-up this creates, named rather than absorbed:** that guard's message says
+`Run \`indigodb migrate deploy\``, and deploy now refuses for this id and points at
+`migrate resolve`. The operator path terminates — dev → deploy → resolve → dev — but the first
+hop's advice is wrong for this case. Fixing it means threading failure state into a second
+package, which is its own change, not a smuggled extra in this one.
+
+### 2. I5 passed for the wrong reason, and a mutation caught it
+
+I5 was first written against `migrateDeploy`, asserting it does not report "No pending
+migrations" for a failed id. **Removing the `success = true` filter from `appliedMigrations()`
+left that test green** — because D3's refusal gate returns before deploy ever reaches that
+message. The test was proving the gate, not the reader it was named for.
+
+Rewritten to assert through `migrateStatus`, which has no gate and reads straight through
+`appliedMigrations()`. It now fails under that mutation, as it always should have.
+
+This is the same failure class this change exists to remove, and the same one found in the ERD
+work earlier: something that appears covered because a different mechanism happens to produce
+the observable outcome.
+
+## TDD Cycle Evidence
+
+| Task | RED — as actually observed | GREEN | Mutation proof |
+|------|----------------------------|-------|----------------|
+| D1/I5 | `FAIL I5 … a failed id must not read as applied` | `WHERE success = true` on `appliedMigrations()` | remove that filter → **I5 fails, X1/X2a pass** (only after the rewrite above; before it, this mutation left I5 green) |
+| D1/X1 | `FAIL X1 …` — the failed migration was replayed as applied | `WHERE success = true` on `recordedMigrations()` | remove that filter → **X1 fails** |
+| D3/I6 | `FAIL I6 … a failed pending id must refuse with exit code 1` | the refusal gate | check only `pending[0]` → **I6 fails, all others pass** |
+| D4/X2b | `FAIL X2a/X2b … migrateDev must leave NO history row on failure` | no change — scoping was already correct | wire `HISTORY_UPSERT` into `migrateDev`'s catch → **X2b fails, all others pass** |
+
+X2b's fixture needed a second attempt worth recording: the first version injected a broken
+table name, which PGlite accepted as a legal quoted identifier, so `migrateDev` **succeeded**
+and the test was asserting against a row from a run that never failed. Replaced with a genuine
+apply failure — the table pre-created so the migration's exact `CREATE TABLE` collides.
+
+## Gates
+
+- `pnpm build --force` — 11/11, exit 0
+- `pnpm lint` — 21/21, exit 0
+- `pnpm test` — exit 0, `cli migrate-runner: all green`
+- `git diff --numstat -- packages/cli` for Work Unit D — +253 / −2 = 255 changed lines
+
+## PR 1 is complete
+
+Work Units A–D are done. After this, a `success = false` row is impossible to produce through
+any code path — nothing writes one. Every reader and the gate that consume them are in place
+and tested against rows seeded directly by SQL. Work Unit E makes them reachable.
