@@ -2,7 +2,7 @@
 
 ## Scope of this batch
 
-**Work Units A and B** (tasks A1–A3, B1–B3). Work Units C, D and E are not started.
+**Work Units A, B and C** (tasks A1–A3, B1–B3, C1–C5). Work Units D and E are not started.
 
 **Mode**: Strict TDD.
 **Delivery**: chained, split at the A–D | E seam (maintainer decision, recorded at the top of
@@ -76,7 +76,7 @@ re-introduction of the backfill path, which is the one way this change could be 
 
 ## Not started
 
-Work Units C, D, E. After this batch no code path writes a `success = false` row and
+Work Units D, E. After this batch no code path writes a `success = false` row and
 nothing reads `success` as a filter — the new columns exist and are never populated. That is
 the intended intermediate state for this seam, and `tasks.md` records the standing commitment
 that it must not be where the change stops.
@@ -138,3 +138,65 @@ justification left.
 - `pnpm lint` — 21/21, exit 0
 - `pnpm test` — exit 0, `cli migrate-runner: all green`
 - `git diff --numstat -- packages/cli` — +155 / −9 = 164 changed lines
+
+
+---
+
+# Work Unit C — `resolve --applied`, and the dead end it removes
+
+## The dead end, shown rather than described
+
+Before this unit, `migrateResolve --applied` selected only `checksum` and branched on it. A
+`success = false` row whose checksum still matched the file therefore hit the
+`stored === computed` arm and printed:
+
+```
+✅ Already recorded as applied: 20250101000000_r3 — nothing to do.
+```
+
+That is the console output of R3's RED run. A failed migration was told it was fine and left
+`false` forever, with no operator command able to move it — the exact dead end the proposal's
+risk table named.
+
+## What landed
+
+`--applied` now runs D7's five-way branch: no row, or a row with no checksum, records it;
+**drift refuses, checked above the success/failure split**; matching + already-success is a
+no-op; matching + failure flips to success. The new-row and flip arms both go through
+`HISTORY_UPSERT` with `execution_time_ms = null`.
+
+The branch order is the whole point. Putting the success test above the drift check would make
+`--applied` a way to launder a drifted migration into the history without any checksum ever
+being compared. R4 is what pins that ordering.
+
+`execution_time_ms` stays `null` on both arms rather than 0: no SQL ran, and a zero reads as
+"applied instantly" instead of "never executed here". On the flip arm it also means the failed
+attempt's duration is not carried onto the row that now stands.
+
+## TDD Cycle Evidence
+
+| Task | RED — as actually observed | GREEN | Mutation proof |
+|------|----------------------------|-------|----------------|
+| C1/R1 | `FAIL … expected installed_by to be recorded, got: null` | resolve's new-row arm on `HISTORY_UPSERT` | covered by M7 below and by B's I8 |
+| C1/R2 | Passed on first run — it asserts applied/pending states that already worked. Recorded as confirmatory, not claimed as a RED. | — | — |
+| C3/R3 | `FAIL R3 … a matching failure row must flip to success`, with the console showing the dead-end message above | D7's fifth arm | carry the failed attempt's duration onto the flipped row (`999` instead of `null`) → **R3 fails, R4 passes** |
+| C3/R4 | Passed on first run: the pre-D7 chain happened to reach its drift arm last. Not a RED — it is the guard for the ordering C4 introduces, which is why it was written before C4 rather than after. | drift arm above the success split | move the success test above the drift check → **R4 fails, R3 passes** |
+| C5/R5–R7 | No RED and none expected: `--rolled-back` already deleted on `name` regardless of `success`. Added while the behaviour is provably correct so a future edit trips a named test. | no code change | genuinely special-case the failure row's message (`RETURNING name, success` + a branch) → **R5/R6 fails, R7 passes** |
+
+## A boundary of R5/R6 worth recording
+
+R5/R6 asserts the two removal paths produce *identical* output. A first mutation attempt —
+changing the removal message for both paths at once — **did not fail it**, because the two
+outputs stayed equal to each other. That is correct: the assertion guards against
+special-casing failure rows, not against the message text changing. The mutation that actually
+targets it is M8b, which branches on `success` and does fail it.
+
+Both are recorded because the first one marks the edge of what this assertion covers. An
+equality assertion proves the two sides match; it says nothing about what they match to.
+
+## Gates
+
+- `pnpm build --force` — 11/11, exit 0
+- `pnpm lint` — 21/21, exit 0
+- `pnpm test` — exit 0, `cli migrate-runner: all green`
+- `git diff --numstat -- packages/cli` — +285 / −10 = 295 changed lines, inside the 400 budget

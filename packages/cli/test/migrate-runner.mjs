@@ -1406,7 +1406,268 @@ await check("resolve --applied records the row without executing migration SQL",
       strictEqual(rows[0].checksum, migrationChecksum(readFileSync(file, "utf-8")));
       strictEqual(rows[0].success, true);
 
+      // R1: the row goes through the same shared write as every other path, so
+      // it carries identity — but NOT a duration, because no SQL ran. A zero
+      // here would be a lie of the most plausible kind: it reads as "instant"
+      // rather than "never happened".
+      ok(
+        rows[0].installed_by != null,
+        `expected installed_by to be recorded, got: ${rows[0].installed_by}`,
+      );
+      strictEqual(
+        rows[0].execution_time_ms,
+        null,
+        "no SQL executed, so there is no elapsed time to record",
+      );
+
       ok(!(await tableExists(db, "foo")), "migration SQL must NOT have been executed");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── R5/R6/R7: --rolled-back treats a failure row identically ────────────────
+
+// No code change accompanies these. `--rolled-back` already deletes on `name`
+// regardless of `success`, so they are confirmatory regression tests, added
+// while the behaviour is provably correct: a future edit to the delete branch
+// now trips a named test instead of passing in silence.
+
+/** Creates the current seven-column history table with one seeded row. */
+async function seedHistory(db, id, { checksum = null, success = true } = {}) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS "_indigo_migrations" (
+      id serial PRIMARY KEY,
+      name text NOT NULL UNIQUE,
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      checksum text,
+      success boolean NOT NULL DEFAULT true,
+      installed_by text,
+      execution_time_ms integer
+    );
+  `);
+  await db.query(
+    `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+    [id, checksum, success],
+  );
+}
+
+await check("R5/R6 --rolled-back removes a success row and a failure row identically", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const okId = "20250101000000_r5";
+      const failId = "20250101000001_r6";
+      const okFile = writeMigrationFile(cwd, okId, `CREATE TABLE "r5" (id serial PRIMARY KEY);\n`);
+      const failFile = writeMigrationFile(cwd, failId, `CREATE TABLE "r6" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await seedHistory(db, okId, {
+        checksum: migrationChecksum(readFileSync(okFile, "utf-8")),
+        success: true,
+      });
+      await db.query(
+        `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [failId, migrationChecksum(readFileSync(failFile, "utf-8")), false],
+      );
+
+      const okLines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: okId, createClient, cwd }),
+      );
+      const failLines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: failId, createClient, cwd }),
+      );
+
+      strictEqual((await historyRows(db)).length, 0, "both rows must be gone");
+      ok(!(await tableExists(db, "r5")), "no migration SQL may run");
+      ok(!(await tableExists(db, "r6")), "no migration SQL may run");
+
+      // "Identically" made testable: the removal message must be the SAME for a
+      // failure row as for a success row, id aside. A future branch that
+      // special-cased failures would show up right here.
+      const normalise = (lines) => lines.map((l) => l.replace(okId, "<id>").replace(failId, "<id>"));
+      strictEqual(
+        JSON.stringify(normalise(failLines)),
+        JSON.stringify(normalise(okLines)),
+        `expected identical output, got:\n${failLines.join("\n")}\n---\n${okLines.join("\n")}`,
+      );
+      ok(okLines.some((l) => /Migration record removed/.test(l)));
+
+      // And the failed id is pending again, not silently gone.
+      const deployLines = await captureLogs(() =>
+        migrateDeploy("unused", { createClient, cwd }),
+      );
+      ok(
+        deployLines.some((l) => /applied/.test(l)),
+        `expected the rolled-back ids to be applied again, got:\n${deployLines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R7 --rolled-back on an unrecorded id is a clean no-op", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r7";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r7" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: id, createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      ok(exitCode !== 1, "an unrecorded id is nothing to do, not a failure");
+      strictEqual((await historyRows(db)).length, 0);
+      ok(
+        lines.some((l) => /Not recorded as applied/.test(l)),
+        `expected a "nothing to do" line, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── R3/R4: D7 — the drift check runs BEFORE the success/failure branch ──────
+
+await check("R3 resolve --applied flips a matching failure row to success", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r3";
+      const file = writeMigrationFile(cwd, id, `CREATE TABLE "r3" (id serial PRIMARY KEY);\n`);
+      const checksum = migrationChecksum(readFileSync(file, "utf-8"));
+
+      // A failure row carrying the TRUE on-disk checksum. Before D7 this hit
+      // the `stored === computed` no-op branch and stayed false forever — the
+      // dead end the proposal's risk table names.
+      await db.exec(`
+        CREATE TABLE "_indigo_migrations" (
+          id serial PRIMARY KEY,
+          name text NOT NULL UNIQUE,
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true,
+          installed_by text,
+          execution_time_ms integer
+        );
+        INSERT INTO "_indigo_migrations" (name, checksum, success, execution_time_ms)
+        VALUES ('${id}', '${checksum}', false, 999);
+      `);
+      const before = await db.query(
+        `SELECT applied_at FROM "_indigo_migrations" WHERE name = '${id}'`,
+      );
+
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, true, "a matching failure row must flip to success");
+      strictEqual(
+        rows[0].execution_time_ms,
+        null,
+        "the failed attempt's duration must not be carried onto the success row",
+      );
+
+      const after = await db.query(
+        `SELECT applied_at FROM "_indigo_migrations" WHERE name = '${id}'`,
+      );
+      ok(
+        new Date(after.rows[0].applied_at) >= new Date(before.rows[0].applied_at),
+        "applied_at must describe the attempt that stands, not the one that failed",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R4 resolve --applied refuses a DRIFTED failure row instead of flipping it", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r4";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r4" (id serial PRIMARY KEY);\n`);
+
+      // A failure row whose stored checksum does NOT match the file. If the
+      // success/failure branch were consulted before the drift check, this
+      // would be flipped to true with no checksum comparison at all — which is
+      // the entire point of D7's ordering, and what this test pins.
+      await db.exec(`
+        CREATE TABLE "_indigo_migrations" (
+          id serial PRIMARY KEY,
+          name text NOT NULL UNIQUE,
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true,
+          installed_by text,
+          execution_time_ms integer
+        );
+        INSERT INTO "_indigo_migrations" (name, checksum, success)
+        VALUES ('${id}', 'a-checksum-that-does-not-match', false);
+      `);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a drifted id must refuse with exit code 1");
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, false, "a refused resolve must leave the row untouched");
+      strictEqual(rows[0].checksum, "a-checksum-that-does-not-match");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R2 after resolve --applied the id reads as applied, not pending", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r2";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r2" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+
+      const statusLines = await captureLogs(() =>
+        migrateStatus("unused", { createClient, cwd }),
+      );
+      ok(
+        statusLines.some((l) => l.includes(id) && /✓/.test(l)),
+        `expected status to show ${id} as applied, got:\n${statusLines.join("\n")}`,
+      );
+
+      const deployLines = await captureLogs(() =>
+        migrateDeploy("unused", { createClient, cwd }),
+      );
+      ok(
+        deployLines.some((l) => /No pending migrations/.test(l)),
+        `expected deploy to find nothing pending, got:\n${deployLines.join("\n")}`,
+      );
+      ok(!(await tableExists(db, "r2")), "deploy must not have applied a resolved migration");
     } finally {
       cleanup();
     }

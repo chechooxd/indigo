@@ -583,24 +583,38 @@ export async function migrateResolve(options: ResolveOptions): Promise<void> {
 
     if (options.applied) {
       const { rows } = await client.query(
-        `SELECT checksum FROM "${HISTORY_TABLE}" WHERE name = $1`,
+        `SELECT checksum, success FROM "${HISTORY_TABLE}" WHERE name = $1`,
         [id],
       );
-      const stored = (rows[0] as { checksum: string | null } | undefined)?.checksum;
+      const recorded = rows[0] as { checksum: string | null; success: boolean } | undefined;
       const computed = migrationChecksum(readFileSync(file, "utf-8"));
-      if (stored == null) {
-        await client.query(
-          `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-          [id, computed, true],
-        );
+
+      // Branch order is load-bearing (design D7). The drift check sits ABOVE
+      // the success/failure split, so a failure row whose file has since been
+      // edited is refused rather than flipped to applied without any checksum
+      // ever being compared. Moving the success test above it would make
+      // `--applied` a way to launder a drifted migration into the history.
+      if (recorded === undefined || recorded.checksum == null) {
+        // No row at all, or a row that never carried a checksum. Either way
+        // there is nothing to compare against, so record it.
+        // `execution_time_ms` is null, not 0: no SQL ran, and a zero would read
+        // as "applied instantly" rather than "never executed here".
+        await client.query(HISTORY_UPSERT, [id, computed, true, null]);
         console.log(`✅ Migration recorded as applied: ${id}`);
         console.log("   No SQL was executed — _indigo_migrations only.");
-      } else if (stored === computed) {
-        console.log(`✅ Already recorded as applied: ${id} — nothing to do.`);
-      } else {
+      } else if (recorded.checksum !== computed) {
         console.error(`❌ migrate resolve refused: ${id} no longer matches its recorded checksum.`);
         console.error("   Revert the on-disk file, or reconcile with --rolled-back first.");
         process.exitCode = 1;
+      } else if (recorded.success) {
+        console.log(`✅ Already recorded as applied: ${id} — nothing to do.`);
+      } else {
+        // Matching checksum, recorded failure: this is the documented exit from
+        // a failed deploy. The failed attempt's duration is deliberately NOT
+        // carried onto the row that now stands.
+        await client.query(HISTORY_UPSERT, [id, computed, true, null]);
+        console.log(`✅ Migration recorded as applied: ${id}`);
+        console.log("   Previously recorded as failed — no SQL was executed.");
       }
     } else {
       const { rows } = await client.query(

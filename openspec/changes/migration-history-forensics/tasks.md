@@ -135,7 +135,7 @@ treated as applied"; `migration-history-resolve` — applied-resolve columns.
 
 Spec: `migration-history-resolve`.
 
-- [ ] **C1. RED — R1, R2.**
+- [x] **C1. RED — R1, R2.**
       R1: migration on disk, no recorded row; `migrateResolve --applied`;
       assert `checksum` = sha256 of the file, `success === true`,
       `installed_by` non-null, `execution_time_ms === null`, and the
@@ -148,10 +148,10 @@ Spec: `migration-history-resolve`.
       Both fail today: the no-existing-row branch (`:578-584`) writes only
       `(name, checksum, success)`, no `installed_by`/`execution_time_ms`.
 
-- [ ] **C2. GREEN — wire `migrateResolve --applied`'s new-row branch to `HISTORY_UPSERT` with `execution_time_ms = null`.**
+- [x] **C2. GREEN — wire `migrateResolve --applied`'s new-row branch to `HISTORY_UPSERT` with `execution_time_ms = null`.**
       Confirms R1, R2.
 
-- [ ] **C3. RED — R3, R4 (D7 branch ordering).**
+- [x] **C3. RED — R3, R4 (D7 branch ordering).** *(R3's deploy-no-longer-refuses half is sequenced into Work Unit D, where the refusal gate exists — same ordering as B3, see apply-progress.)*
       R3: seed a `success = false` row with the *true* on-disk checksum;
       `migrateResolve --applied`; assert `success === true`,
       `execution_time_ms === null`, refreshed `applied_at`; then
@@ -166,7 +166,7 @@ Spec: `migration-history-resolve`.
       `stored === computed` no-op branch and stays `false` forever — the exact
       dead end the proposal's risk table names).
 
-- [ ] **C4. GREEN — implement D7's five-way branch, drift check first.**
+- [x] **C4. GREEN — implement D7's five-way branch, drift check first.**
       Rewrite the `--applied` branch per design.md's table: no row → upsert;
       `checksum IS NULL` → upsert; checksum drifted → refuse regardless of
       `success` (**checked before** the success/failure distinction — this
@@ -176,7 +176,7 @@ Spec: `migration-history-resolve`.
       B3's third I3 sub-case.
       Test command: `node packages/cli/test/migrate-runner.mjs 2>&1 | rg "resolve"`
 
-- [ ] **C5. RED then GREEN (no code change expected) — R5, R6, R7.**
+- [x] **C5. RED then GREEN (no code change expected) — R5, R6, R7.**
       `--rolled-back` already deletes unconditionally on `name` regardless of
       `success`, so these are confirmatory regression tests, not
       code-changing ones — add them now while the behavior is provably
