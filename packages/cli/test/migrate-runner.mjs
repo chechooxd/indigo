@@ -14,7 +14,7 @@
  * statements could have been protecting.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { strictEqual, ok } from "node:assert";
 import { parse, resolve as resolveSchema } from "@indigodb/core";
@@ -1421,6 +1421,284 @@ await check("resolve --applied records the row without executing migration SQL",
       );
 
       ok(!(await tableExists(db, "foo")), "migration SQL must NOT have been executed");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I4/I9(failure): a failed deploy leaves a durable record ─────────────────
+
+await check("I4/I9 a failed deploy records success = false with a real duration", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_i4";
+      // A genuine RUNTIME error, not a syntax error: the simple-query protocol
+      // parses the whole string up front, so a syntax error would abort before
+      // pg_sleep ever ran and the duration assertion would be meaningless.
+      const file = writeMigrationFile(
+        cwd,
+        id,
+        `SELECT pg_sleep(0.05);\nDROP TABLE does_not_exist;\n`,
+      );
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      try {
+        await migrateDeploy("unused", {
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        });
+      } finally {
+        console.error = originalError;
+      }
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a failed deploy must exit 1");
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, `expected exactly one row, got:\n${JSON.stringify(rows)}`);
+      strictEqual(rows[0].name, id);
+      strictEqual(rows[0].success, false, "the failure must be durably recorded");
+      strictEqual(
+        rows[0].checksum,
+        migrationChecksum(readFileSync(file, "utf-8")),
+        "the failure row carries the checksum of what was attempted",
+      );
+
+      // I9's failure half: the sleep really ran before the error, so the
+      // duration describes the attempt rather than defaulting to zero or null.
+      strictEqual(typeof rows[0].execution_time_ms, "number");
+      ok(
+        rows[0].execution_time_ms >= 40,
+        `expected the failure row to carry the elapsed time, got ${rows[0].execution_time_ms}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I11: the mid-crash gap is documented, and deliberately not tested ───────
+
+// This is NOT a test of crash recovery and must never be described as one.
+// The design refuses a functional test here on purpose: the only mechanical
+// option — making the failure write throw — re-asserts X3 while appearing to
+// cover process death, which is worse than an admitted gap because it reads as
+// coverage. PGlite cannot model a process dying between the ROLLBACK and the
+// failure-row write, so that window is an accepted limitation.
+//
+// What this DOES check is that the limitation stays written down where a reader
+// of the code will meet it. If someone deletes the comment, the gap becomes
+// silent, and a silent gap is the thing this whole change exists to remove.
+
+await check("I11 the mid-crash limitation is documented in the failure path", async () => {
+  const source = readFileSync(
+    join(import.meta.dirname, "..", "src", "migrate-runner.ts"),
+    "utf-8",
+  );
+  ok(
+    /If the process dies between the ROLLBACK above and this write/.test(source),
+    "the failure-write path must carry the mid-crash-gap comment",
+  );
+
+  const spec = readFileSync(
+    join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "openspec",
+      "changes",
+      "migration-history-forensics",
+      "specs",
+      "migration-history-integrity",
+      "spec.md",
+    ),
+    "utf-8",
+  );
+  ok(
+    /crash|dies|limitation/i.test(spec),
+    "the same limitation must be stated in the spec, not only in the code",
+  );
+});
+
+// ─── X4: a failure is never recorded against a migration that succeeded ──────
+
+// Found by mutation, not by the task list: removing `attempt = null` after
+// COMMIT left every other test green. Without it, a failure raised AFTER one
+// migration commits but BEFORE the next one is assigned would flip the
+// already-applied migration's row to `success = false` — turning a successful
+// deploy into a recorded failure, which the deploy gate then refuses forever.
+
+await check("X4 a mid-loop failure is not blamed on the migration that already committed", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const first = "20250101000000_x4a";
+      const second = "20250101000001_x4b";
+      writeMigrationFile(cwd, first, `CREATE TABLE "x4a" (id serial PRIMARY KEY);\n`);
+      const secondPath = writeMigrationFile(
+        cwd,
+        second,
+        `CREATE TABLE "x4b" (id serial PRIMARY KEY);\n`,
+      );
+
+      // Delete the second migration's file the moment the first one commits.
+      // That lands the failure in the window between COMMIT and the next
+      // iteration's `attempt` assignment — the exact window `attempt = null`
+      // exists to protect.
+      const { client: spyClient } = spyMigrationClient(createMigrationClient(db), {
+        onQuery: (sql) => {
+          if (/^COMMIT/i.test(String(sql).trim())) rmSync(secondPath, { force: true });
+          return undefined;
+        },
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        await migrateDeploy("unused", { createClient: async () => spyClient, cwd });
+      } catch {
+        // the deploy failing is the premise, not the assertion
+      } finally {
+        console.error = originalError;
+        process.exitCode = savedExitCode;
+      }
+
+      const rows = await historyRows(db);
+      const firstRow = rows.find((r) => r.name === first);
+      ok(firstRow, `expected a row for the committed migration, got:\n${JSON.stringify(rows)}`);
+      strictEqual(
+        firstRow.success,
+        true,
+        "a migration that committed must not be recorded as failed because a LATER one broke",
+      );
+      ok(
+        !rows.some((r) => r.name === second),
+        "the migration that was never attempted must have no row at all",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I10: status has a fourth state ──────────────────────────────────────────
+
+await check("I10 status distinguishes failed from applied and pending, exit 0", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const appliedId = "20250101000000_ok";
+      const failedId = "20250101000001_bad";
+      const pendingId = "20250101000002_next";
+      const appliedFile = writeMigrationFile(cwd, appliedId, `CREATE TABLE "s1" (id serial PRIMARY KEY);\n`);
+      const failedFile = writeMigrationFile(cwd, failedId, `CREATE TABLE "s2" (id serial PRIMARY KEY);\n`);
+      writeMigrationFile(cwd, pendingId, `CREATE TABLE "s3" (id serial PRIMARY KEY);\n`);
+
+      await seedHistory(db, appliedId, {
+        checksum: migrationChecksum(readFileSync(appliedFile, "utf-8")),
+        success: true,
+      });
+      await db.query(
+        `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [failedId, migrationChecksum(readFileSync(failedFile, "utf-8")), false],
+      );
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateStatus("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      const lineFor = (id) => lines.find((l) => l.includes(id)) ?? "";
+      ok(/✓ applied/.test(lineFor(appliedId)), `applied: ${lineFor(appliedId)}`);
+      ok(/✗ failed/.test(lineFor(failedId)), `failed: ${lineFor(failedId)}`);
+      ok(/· pending/.test(lineFor(pendingId)), `pending: ${lineFor(pendingId)}`);
+
+      // A failed row must NOT also read as pending — the fourth state replaces
+      // the third for that id, it does not sit alongside it.
+      ok(!/pending/.test(lineFor(failedId)), `a failed id must not also read as pending`);
+
+      ok(
+        lines.some((l) => /1 failed/.test(l)),
+        `expected a footer naming the failure count, got:\n${lines.join("\n")}`,
+      );
+
+      // Exit stays 0. `status` is the command an operator runs to find out what
+      // a failed deploy did; failing it in exactly that situation breaks it for
+      // its one purpose. The refusal lives in `deploy`, which does exit 1.
+      ok(exitCode !== 1, "status must not exit non-zero because of a failed row");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── X3: the failure write must never mask the original error ────────────────
+
+await check("X3 a failing failure-write warns and leaves the real cause last", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_x3";
+      writeMigrationFile(cwd, id, `DROP TABLE does_not_exist;\n`);
+
+      // Break ONLY the failure write: params[2] === false is the `success`
+      // argument, which no other statement in this flow passes.
+      const { client: spyClient } = spyMigrationClient(createMigrationClient(db), {
+        onQuery: (_sql, params) => {
+          if (params?.[2] === false) throw new Error("connection terminated");
+          return undefined;
+        },
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      let rejected = null;
+      try {
+        await migrateDeploy("unused", { createClient: async () => spyClient, cwd });
+      } catch (error) {
+        rejected = error;
+      } finally {
+        console.error = originalError;
+      }
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(rejected, null, "a failed bookkeeping write must not reject the command");
+      strictEqual(exitCode, 1, "the deploy still failed, so exit code stays 1");
+
+      ok(
+        errors.some((l) => /does_not_exist/.test(l)),
+        `the ORIGINAL migration error must still be reported, got:\n${errors.join("\n")}`,
+      );
+      ok(
+        errors.some((l) => /Could not record/.test(l)),
+        `the bookkeeping failure must be surfaced too, got:\n${errors.join("\n")}`,
+      );
+
+      // Ordering is the point: the operator's LAST line must be the real cause,
+      // not a secondary complaint about bookkeeping. A warning printed after it
+      // would bury the thing they actually need to read.
+      const lastLine = errors[errors.length - 1];
+      ok(
+        /Deploy failed/.test(lastLine),
+        `expected the deploy failure to be the last line, got: ${lastLine}`,
+      );
     } finally {
       cleanup();
     }

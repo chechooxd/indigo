@@ -464,6 +464,13 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
   const dirs = listMigrationDirs(cwd);
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   let locked = false;
+  // Which migration is mid-flight, for the failure row the catch writes.
+  // Declared outside the `try` because the `catch` is what reads it. Set only
+  // AFTER the file has been read — a missing file is a broken migrations
+  // directory, not a migration that was attempted and failed — and cleared
+  // after COMMIT, so a failure in the NEXT iteration cannot be recorded
+  // against the migration that already succeeded.
+  let attempt: { id: string; checksum: string; startedAt: number } | null = null;
   try {
     const lockResult = await client.query("SELECT pg_try_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
     if (!lockResult.rows[0]?.pg_try_advisory_lock) {
@@ -531,17 +538,48 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
 
     for (const id of pending) {
       const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
+      const checksum = migrationChecksum(sql);
       const startedAt = performance.now();
+      attempt = { id, checksum, startedAt };
       await applyMigrationSql(client, sql);
       const elapsedMs = Math.round(performance.now() - startedAt);
-      const checksum = migrationChecksum(sql);
       await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
+      attempt = null;
       console.log(`  ✓ applied ${id}`);
     }
     console.log(`✅ Applied ${pending.length} migration(s).`);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
+
+    // The failure row is written AFTER the rollback, as its own autocommit
+    // statement on the same connection — a rollback ends the transaction, not
+    // the connection. Inside the transaction it would be discarded along with
+    // the migration, which is exactly why a failed deploy used to leave no
+    // trace at all.
+    //
+    // If the process dies between the ROLLBACK above and this write, no row is
+    // recorded and the failure is invisible to `migrate status`, exactly as it
+    // was before this change. That gap is accepted and documented rather than
+    // closed: doing better needs two-phase machinery this codebase has no
+    // precedent for, and a test cannot model process death under PGlite.
+    if (attempt) {
+      const elapsedMs = Math.round(performance.now() - attempt.startedAt);
+      try {
+        await client.query(HISTORY_UPSERT, [attempt.id, attempt.checksum, false, elapsedMs]);
+      } catch (recordError) {
+        // Bookkeeping must never speak over the thing it is bookkeeping about.
+        // This warning is printed BEFORE the deploy failure below so the
+        // operator's last line is the real cause; it never rethrows, and it
+        // never touches `process.exitCode`, which already reflects the
+        // migration failure rather than this secondary one.
+        console.error(
+          `⚠️  Could not record the failure of ${attempt.id}: ${(recordError as Error).message}`,
+        );
+        console.error("   The migration below failed; its history row is missing.");
+      }
+    }
+
     console.error("❌ Deploy failed, rolled back:", (error as Error).message);
     process.exitCode = 1;
   } finally {
@@ -570,13 +608,34 @@ export async function migrateStatus(connectionString: string, seams: RunnerSeams
   try {
     await ensureHistory(client);
     const applied = await appliedMigrations(client);
+    const failed = await failedMigrations(client);
     const drifted = new Set(await checksumPreflight(client, cwd));
     for (const id of dirs) {
-      const state = drifted.has(id) ? "⚠ modified" : applied.has(id) ? "✓ applied" : "· pending";
+      // `failed` sits above `pending` because a recorded failure is strictly
+      // more informative: both mean "not applied", but only one of them means
+      // the database may already carry part of this migration's effect.
+      const state = drifted.has(id)
+        ? "⚠ modified"
+        : applied.has(id)
+          ? "✓ applied"
+          : failed.has(id)
+            ? "✗ failed"
+            : "· pending";
       console.log(`  ${state}  ${id}`);
     }
-    const pending = dirs.filter((d) => !applied.has(d)).length;
-    console.log(`\n${dirs.length} migration(s), ${pending} pending.`);
+    const failedCount = dirs.filter((d) => failed.has(d) && !applied.has(d)).length;
+    const pending = dirs.filter((d) => !applied.has(d) && !failed.has(d)).length;
+    const summary = `\n${dirs.length} migration(s), ${pending} pending`;
+    if (failedCount > 0) {
+      // Exit code stays 0 on purpose: `status` is the command an operator runs
+      // to find out what a failed deploy did, so failing it in exactly that
+      // situation breaks it for its one purpose. `deploy` is what refuses.
+      console.log(
+        `${summary}, ${failedCount} failed — run \`indigodb migrate resolve --applied <id>\` or \`--rolled-back <id>\`.`,
+      );
+    } else {
+      console.log(`${summary}.`);
+    }
   } finally {
     await client.end();
   }

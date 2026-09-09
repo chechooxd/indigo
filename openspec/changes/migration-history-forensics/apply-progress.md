@@ -2,7 +2,7 @@
 
 ## Scope of this batch
 
-**Work Units A, B, C and D** — the whole of PR 1. Work Unit E (PR 2) is not started.
+**Work Units A–E** — the whole change, PR 1 (A–D) and PR 2 (E).
 
 **Mode**: Strict TDD.
 **Delivery**: chained, split at the A–D | E seam (maintainer decision, recorded at the top of
@@ -76,7 +76,7 @@ re-introduction of the backfill path, which is the one way this change could be 
 
 ## Not started
 
-Work Unit E (PR 2). After this batch no code path writes a `success = false` row and
+Nothing. All five work units are complete. After this batch no code path writes a `success = false` row and
 nothing reads `success` as a filter — the new columns exist and are never populated. That is
 the intended intermediate state for this seam, and `tasks.md` records the standing commitment
 that it must not be where the change stops.
@@ -274,3 +274,177 @@ apply failure — the table pre-created so the migration's exact `CREATE TABLE` 
 Work Units A–D are done. After this, a `success = false` row is impossible to produce through
 any code path — nothing writes one. Every reader and the gate that consume them are in place
 and tested against rows seeded directly by SQL. Work Unit E makes them reachable.
+
+
+---
+
+# Work Unit E — the failure row becomes reachable
+
+The columns, the readers and the gate from PR 1 now have something to read. A failed
+`migrate deploy` writes a durable `success = false` row, and `migrate status` gained a fourth
+state.
+
+## The write, and where it sits
+
+`attempt` tracks the mid-flight migration, declared outside the `try` because the `catch` is
+what reads it. Set only **after** the file read — a missing file is a broken migrations
+directory, not a migration that was attempted — and cleared **after** `COMMIT`.
+
+The row is written after `ROLLBACK`, as its own autocommit statement on the same connection: a
+rollback ends the transaction, not the connection. Inside the transaction it would be discarded
+along with the migration, which is precisely why a failed deploy used to leave nothing behind.
+
+## X3: bookkeeping must never speak over what it is bookkeeping about
+
+Its RED is the clearest one in this change. Without the inner guard, `migrateDeploy` **rejected
+with `connection terminated`** — the bookkeeping error escaped and replaced the migration error
+the operator actually needed. The guard warns, never rethrows, never touches
+`process.exitCode`, and prints its warning *before* the `❌ Deploy failed` line so the last
+thing on screen is still the real cause.
+
+## X4 — found by mutation, not by the plan
+
+Removing `attempt = null` after `COMMIT` left **every** test green. The task list had explained
+why the line exists; nothing proved it.
+
+Without it, a failure raised after one migration commits but before the next is assigned would
+record the **already-applied** migration as failed. That is not a cosmetic slip: the deploy gate
+from Work Unit D would then refuse that id forever, so a successful deploy would become a
+permanent block requiring `migrate resolve` to clear.
+
+X4 forces that window deterministically — it deletes the second migration's file on the first
+`COMMIT`, so the next iteration's read throws between the two states — and fails under the
+mutation.
+
+## I11 — deliberately not a test, and not dressed as one
+
+The mid-crash gap (process dies between `ROLLBACK` and the failure write) has **no functional
+test**. The only mechanical option, making the write throw, re-asserts X3 while appearing to
+cover process death — coverage theatre, which is worse than an admitted gap because it stops
+anyone looking again.
+
+What I11 does check is that the limitation stays written where a reader of the code meets it,
+and that the same sentence survives in the spec. Delete the comment and the gap goes silent;
+a silent gap is the thing this whole change exists to remove.
+
+## TDD Cycle Evidence
+
+| Task | RED — as actually observed | GREEN | Mutation proof |
+|------|----------------------------|-------|----------------|
+| E1/I4+I9 | `FAIL I4/I9 … expected exactly one row, got: []` — the gap itself | attempt tracking + autocommit write | remove the failure write → **I4 and X3 fail** |
+| E3/X3 | `FAIL X3 … a failed bookkeeping write must not reject the command`, actual `Error: connection terminated` | inner try/catch, warn-before-fail ordering | rethrow from the guard → **X3 fails, I4 and I10 pass** |
+| E5/I10 | `FAIL I10 … failed:   · pending  20250101000001_bad` — the failed row read as pending | fourth state above `pending` | drop the `✗ failed` branch → **I10 fails only** |
+| E6/X4 | Written after the fact, from a mutation that nothing caught | `attempt = null` (already present; the test is what proves it load-bearing) | remove `attempt = null` → **X4 fails only** |
+| E4/I11 | No RED and no mutation, by design decision — see above | — | none scheduled, on purpose |
+
+**A methodology note.** Three of the four mutations in the first pass appeared not to bite,
+and that was wrong: `sd`'s line-oriented matching had silently failed to apply them. Re-run with
+the change confirmed before each test run, M14 and M16 both bit exactly their own test — and
+M15 turned out to be a genuine gap rather than a tooling artefact. A mutation that was never
+applied looks identical to a mutation that did not matter, so applying it must be verified,
+not assumed.
+
+## Gates
+
+- `pnpm build --force` — 11/11, exit 0
+- `pnpm lint` — 21/21, exit 0
+- `pnpm test` — exit 0, `cli migrate-runner: all green`
+- `git diff --numstat -- packages/cli` for Work Unit E — +342 / −5 = 347 changed lines, inside
+  the 400 budget
+
+## The change is complete
+
+`success` is no longer a column that cannot be false. A failed deploy leaves a durable,
+attributable record; no reader mistakes it for applied; deploy refuses to build on it; and
+`migrate resolve` is the documented, tested way out. The standing commitment recorded at the
+top of `tasks.md` — that Work Unit E must land or PR 1 be reverted — is discharged.
+
+
+---
+
+# F1/F2 — final verification and the row-for-row coverage check
+
+## F1 — gates on the complete change
+
+`pnpm build --force` 11/11 exit 0, `pnpm lint` 21/21 exit 0 (studio on `tsc -b`), `pnpm test`
+exit 0 with `cli migrate-runner: all green`.
+
+## F2 — every Testing Strategy row mapped to the test that covers it
+
+This is the check that catches a scenario quietly dropped between design and apply, and it
+earned its place: **two rows were never scheduled as tasks at all.**
+
+| Design row | Covered by | Note |
+|------------|-----------|------|
+| I1 | `I1 fresh install…` | |
+| I2 | `I2 a legacy table is left as-is…` | |
+| I3 | `I3 success = true after…` | dev + deploy; resolve's third sub-case is R1/R3 |
+| I4 | `I4/I9 a failed deploy records…` | |
+| I5 | `I5 a failed id is not counted as applied…` | rewritten to assert through `status`, see Work Unit D |
+| I6 | `I6 deploy refuses when ANY pending id…` | |
+| **I7a** | **`R3 resolve --applied flips a matching failure row…`** | **never scheduled as a task — covered anyway** |
+| **I7b** | **`R5/R6 --rolled-back removes a success row and a failure row identically`** | **never scheduled as a task — covered anyway** |
+| I8 | `I8 installed_by is recorded from current_user…` | |
+| I9 | `I4/I9…` (failure half) and `I9 execution_time_ms…` (success half) | |
+| I10 | `I10 status distinguishes failed…` | |
+| I11 | `I11 the mid-crash limitation is documented…` | artifact check, NOT a functional test — by design |
+| R1 | `resolve --applied records the row without executing migration SQL` | extended in place rather than renamed |
+| R2 | `R2 after resolve --applied the id reads as applied…` | |
+| R3 | `R3 resolve --applied flips…` | |
+| R4 | `R4 resolve --applied refuses a DRIFTED failure row…` | |
+| R5 | `R5/R6 …identically` | |
+| R6 | `R5/R6 …identically` | named jointly; the message-equality assertion is R6's half |
+| R7 | `R7 --rolled-back on an unrecorded id…` | |
+| X1 | `X1 a failed migration is not replayed…` | rewritten; the design's premise was wrong, see Work Unit D |
+| X2a | `X2a/X2b migrateDev never writes a failure row…` | |
+| X2b | `X2a/X2b …` | named jointly |
+| X3 | `X3 a failing failure-write warns…` | |
+| — | **`X4 a mid-loop failure is not blamed…`** | **not in the design's table; found by mutation** |
+
+## The I7a/I7b finding, and why it matters more than it looks
+
+Neither `I7a` nor `I7b` appears anywhere in `tasks.md`. The design's table listed them; the task
+breakdown dropped them. That is the exact failure this project has recorded before, running the
+other way: a gap between the design's Testing Strategy table and what apply actually schedules.
+
+It matters here specifically because **I7a was the only planned coverage for the
+`ON CONFLICT (name) DO UPDATE` clause**, which Work Unit B's own notes flagged as shipping
+unproven — removing the clause left the suite green at the time.
+
+Re-run now, that mutation **fails `R3`**. The clause is covered, by a test that arrived in Work
+Unit C for a different stated reason. So this is a traceability gap rather than a coverage gap:
+the property is proven, it was simply never proven under the name the design gave it.
+
+Recorded rather than quietly ticked off, because "covered by accident" and "covered on purpose"
+look identical in a green suite, and only one of them survives the next refactor.
+
+## What the mutation log says about the whole change
+
+Every mutation run in this change, and what it broke:
+
+| Mutation | Broke |
+|----------|-------|
+| Drop `installed_by`/`execution_time_ms` from the DDL | I1 |
+| Re-introduce `ALTER TABLE … ADD COLUMN` | I2 |
+| `installed_by` from a client constant instead of `current_user` | I8 |
+| Stopwatch started after `applyMigrationSql` | I9 |
+| Remove `ON CONFLICT` | R3 (nothing, at the time it was introduced) |
+| Success test above the drift check | R4 |
+| Carry the failed attempt's duration onto the flipped row | R3 |
+| Special-case the failure row in `--rolled-back` | R5/R6 |
+| `appliedMigrations()` unfiltered | I5, I6 |
+| `recordedMigrations()` unfiltered | X1 |
+| Gate checks only `pending[0]` | I6 |
+| Wire `HISTORY_UPSERT` into `migrateDev`'s catch | X2b |
+| Remove the failure-row write | I4, X3 |
+| Rethrow from the inner guard | X3 |
+| Remove `attempt = null` after COMMIT | X4 |
+| Drop status's `✗ failed` branch | I10 |
+
+## A measurement error of mine, recorded
+
+I sized every work unit's budget by `git diff --numstat -- packages/cli`, and the ledger counts
+the whole candidate — `openspec/` artifacts included. So my numbers ran consistently low: 295
+vs 371 for C, 255 vs 341 for D, 347 vs 452 for E. Work Unit A's budget breach earlier in this
+change had the same root cause and was blamed on deletions alone; that explanation was
+incomplete.

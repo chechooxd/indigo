@@ -257,7 +257,7 @@ refusal. Design's found-consequence: `recordedMigrations()` must filter too.
 Spec: `migration-history-integrity` — failed deploy leaves a durable row;
 `migrate status` distinguishes it.
 
-- [ ] **E1. RED — I4, and the failure-path half of I9.**
+- [x] **E1. RED — I4, and the failure-path half of I9.**
       I4: pending migration whose SQL fails at runtime (a genuine runtime
       error, not a syntax error — simple-query protocol parses the whole
       string up front); run `migrateDeploy`; assert exactly one row for that
@@ -269,7 +269,7 @@ Spec: `migration-history-integrity` — failed deploy leaves a durable row;
       Both fail today: a failed `migrateDeploy` writes no row at all — this is
       the exact gap the proposal exists to close.
 
-- [ ] **E2. GREEN — implement D5's attempt-tracking and autocommit failure write in `migrateDeploy`.**
+- [x] **E2. GREEN — implement D5's attempt-tracking and autocommit failure write in `migrateDeploy`.**
       Track `attempt: { id, checksum, startedAt } | null` across the pending
       loop, set **after** the file read (a missing file is not a failed
       migration attempt) and cleared **after** `COMMIT`. In the `catch`, after
@@ -279,7 +279,7 @@ Spec: `migration-history-integrity` — failed deploy leaves a durable row;
       Confirms I4 and I9's failure half.
       Test command: `node packages/cli/test/migrate-runner.mjs 2>&1 | rg "failed deploy|execution_time"`
 
-- [ ] **E3. RED then GREEN — X3 (the failure write must never mask the original error).**
+- [x] **E3. RED then GREEN — X3 (the failure write must never mask the original error).**
       RED: `spyMigrationClient` with `onQuery` that throws
       `new Error("connection terminated")` when `params?.[2] === false` (only
       the failure write is affected). Run a failing `migrateDeploy` under
@@ -294,7 +294,7 @@ Spec: `migration-history-integrity` — failed deploy leaves a durable row;
       consequential mutation named in the design — do not fold it into E2's
       GREEN; keep it a separately provable step.
 
-- [ ] **E4. Documentation/artifact check — I11 (no functional test, by design decision).**
+- [x] **E4. Documentation/artifact check — I11 (no functional test, by design decision).**
       Add one lightweight assertion — read `migrate-runner.ts`'s source text
       and assert the failure-`catch` block carries the mid-crash-gap comment
       (the string documenting "if the process dies between ROLLBACK and this
@@ -307,7 +307,7 @@ Spec: `migration-history-integrity` — failed deploy leaves a durable row;
       test is scheduled for I11 — this line exists so a future reader does
       not mistake the omission for an oversight.
 
-- [ ] **E5. RED then GREEN — I10, D3's fourth status state.**
+- [x] **E5. RED then GREEN — I10, D3's fourth status state.** *(also closes D1's deferred `✗ failed` marker half.)*
       RED: fixture with one applied, one failed (`success = false`), one
       on-disk-only pending migration; `captureLogs(migrateStatus)`; assert one
       `✗ failed` line naming the id, one `✓ applied`, one `· pending`, a
@@ -331,14 +331,14 @@ Spec: `migration-history-integrity` — failed deploy leaves a durable row;
 
 ## Full-suite verification
 
-- [ ] **F1. Run the complete package suite and the workspace build/lint.**
+- [x] **F1. Run the complete package suite and the workspace build/lint.**
       `pnpm build --filter=@indigodb/cli && pnpm test --filter=@indigodb/cli`,
       then the full `pnpm build && pnpm lint && pnpm test` before landing, per
       this repo's pre-push hook. Confirm the three legacy tests are gone (not
       merely skipped) and the suite's total test count reflects
       `-3 legacy +22 new/extended` scenarios.
 
-- [ ] **F2. Re-read design.md's Testing Strategy table against the final test file and tick off all 22 rows (I1–I11, R1–R7, X1–X3) by name in the PR description**, so a reviewer can check row-for-row coverage without re-deriving it.
+- [x] **F2. Re-read design.md's Testing Strategy table against the final test file and tick off all 22 rows (I1–I11, R1–R7, X1–X3) by name in the PR description**, so a reviewer can check row-for-row coverage without re-deriving it.
 
 ---
 
@@ -396,3 +396,16 @@ test-selection support.
 | E — Failure write + status | I4, I9 (failure half), I10, I11, X3 | `node packages/cli/test/migrate-runner.mjs 2>&1 \| rg "failed\|status"` |
 
 Full run before any PR: `pnpm build --filter=@indigodb/cli && pnpm test --filter=@indigodb/cli`.
+
+
+- [x] **E6. Found by mutation, not planned — X4.** Removing `attempt = null` after `COMMIT`
+      left every other test green. Without it, a failure raised after one migration commits
+      but before the next is assigned would record the **already-applied** migration as
+      failed, which the deploy gate then refuses forever. X4 forces that exact window by
+      deleting the next migration's file on the first `COMMIT`, and fails under the mutation.
+
+- [x] **F3. Coverage finding from F2**: `I7a` and `I7b` were in design.md's Testing Strategy
+      table but never scheduled as tasks. Both turn out to be covered — I7a by `R3`, I7b by
+      `R5/R6` — and the `ON CONFLICT` mutation that left the suite green in Work Unit B now
+      fails `R3`. Traceability gap, not a coverage gap; mapped explicitly in apply-progress so
+      the coverage is deliberate from here rather than accidental.
