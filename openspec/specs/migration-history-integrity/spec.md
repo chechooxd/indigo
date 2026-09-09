@@ -4,32 +4,29 @@
 
 Defines the shape and enforcement of `_indigo_migrations` as an integrity
 ledger, not just an applied-set: a `checksum` of each migration's exact
-on-disk bytes and a forward-compatible `success` flag, computed at apply
-time and enforced at deploy time and reported at status time, so an
-already-applied `migration.sql` cannot be silently edited and replayed.
+on-disk bytes and a `success` flag, computed at apply time and enforced at
+deploy time and reported at status time, so an already-applied
+`migration.sql` cannot be silently edited and replayed, and a failed
+migration is recorded durably with full context.
 
 ## Requirements
 
-### Requirement: `_indigo_migrations` records a checksum and a success flag per row
+### Requirement: `_indigo_migrations` records checksum, success, installed_by, and execution_time_ms, created once with no backfill
 
-The system MUST add a `checksum` (text) column and a `success` (boolean)
-column to `_indigo_migrations`, in addition to the existing
-`id, name, applied_at` columns. Both columns MUST be created idempotently:
-`CREATE TABLE IF NOT EXISTS` for a fresh install, and an
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` path for a table that already
-exists without them.
+The system MUST create `_indigo_migrations` with `id, name, applied_at, checksum, success, installed_by, execution_time_ms` columns in a single `CREATE TABLE IF NOT EXISTS` statement. The system MUST NOT issue any `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` backfill. Nothing is published (v0.0.1), so there is no installed base to upgrade in place; this is a deliberate pre-publish simplification, not an oversight.
+(Previously: created checksum/success idempotently — `CREATE TABLE IF NOT EXISTS` for a fresh install plus an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` backfill path for a pre-existing table.)
 
 #### Scenario: Fresh install creates the full column set
 
 - GIVEN no `_indigo_migrations` table exists in the target database
 - WHEN `ensureHistory` runs
-- THEN the created table has `id`, `name`, `applied_at`, `checksum`, and `success` columns
+- THEN the created table has `id`, `name`, `applied_at`, `checksum`, `success`, `installed_by`, and `execution_time_ms` columns
 
-#### Scenario: Existing table without checksum/success is upgraded in place
+#### Scenario: An existing table is left as-is, with no backfill of missing columns
 
-- GIVEN `_indigo_migrations` already exists with only `id`, `name`, `applied_at`
-- WHEN `ensureHistory` runs against it
-- THEN `checksum` and `success` columns are added without dropping or altering any existing row
+- GIVEN `_indigo_migrations` already exists with only the pre-change columns (`id`, `name`, `applied_at`, `checksum`, `success`)
+- WHEN `ensureHistory` runs against it, followed by an INSERT that references `installed_by`
+- THEN `ensureHistory` does not alter the existing table, and the INSERT fails because `installed_by` was never added — demonstrating no backfill path exists
 
 ### Requirement: Checksum is a sha256 hex digest of the exact `migration.sql` bytes
 
@@ -44,26 +41,30 @@ elsewhere for migration content, and store it alongside the recorded row.
 - WHEN `migrate dev` or `migrate deploy` applies it successfully
 - THEN the recorded row's `checksum` equals the sha256 hex digest of that file's exact bytes at apply time
 
-### Requirement: A legacy history table silently backfills checksums on first touch
+### Requirement: A pre-existing history table is left exactly as it is
 
-If `_indigo_migrations` already contains rows recorded before the
-`checksum` column existed (legacy rows with no stored checksum), the system
-MUST compute and store a checksum for each such row from its current
-on-disk `migration.sql` content the first time the new code runs against
-that table. This backfill MUST happen automatically, without any user
-prompt, flag, or confirmation step.
+The system MUST NOT alter a `_indigo_migrations` table that already exists.
+There is no `ALTER TABLE ... ADD COLUMN` upgrade path and no checksum
+backfill: `ensureHistory` issues one `CREATE TABLE IF NOT EXISTS`, which is a
+no-op against any existing table whatever its shape.
 
-#### Scenario: Legacy table backfills without prompting
+A table created by an older local build is therefore left narrow, and a write
+naming a column it does not have fails loudly rather than being silently
+repaired. That is the intended behaviour — the operator drops the table and
+lets it be recreated.
 
-- GIVEN a pre-existing `_indigo_migrations` table with rows recorded under the old three-column schema
-- WHEN the new code first runs `migrate dev`, `migrate deploy`, or `migrate status` against it
-- THEN each legacy row is backfilled with a checksum computed from its current on-disk file, and no prompt or confirmation is presented to the user
+(Previously: "A legacy history table silently backfills checksums on first
+touch", which required an automatic, unprompted `ALTER`-and-backfill upgrade.
+That machinery existed to migrate tables created by an earlier published
+version. Nothing has ever been published at v0.0.1, so there was no installed
+base for it to protect, and carrying it meant shipping a migration path for a
+version that never shipped. Removed by `migration-history-forensics`.)
 
-#### Scenario: Backfilled checksum trusts current on-disk content once
+#### Scenario: An existing table is left as-is, with no backfill of missing columns
 
-- GIVEN a legacy row is backfilled from its current on-disk `migration.sql`
-- WHEN a later run recomputes that migration's checksum
-- THEN drift is detected only relative to the content present at backfill time, not any earlier unknown state
+- GIVEN a `_indigo_migrations` table created by an older build, without `installed_by`
+- WHEN any migration command runs against it
+- THEN the table is unchanged, and a write naming `installed_by` is rejected by the database rather than silently enabled by an added column
 
 ### Requirement: `migrate deploy` refuses on checksum drift before applying any pending migration
 
@@ -132,23 +133,70 @@ status` MUST NOT fail or exit non-zero solely because drift was detected.
 - WHEN `migrate status` runs
 - THEN every applied row is reported as applied-unmodified, matching current behavior
 
-### Requirement: `success` is recorded as a forward-compatible column with no enforcement yet
+### Requirement: `success` gates which migrations are treated as applied and is enforced on the failure path
 
-The system MUST record a `success` boolean on every applied migration row.
-Because failed migrations are currently rolled back and discarded before
-any row is written (dev: file removal; deploy: transaction rollback), this
-change MUST NOT introduce any new behavior that persists a failed-migration
-row or gates re-application based on `success`. The column exists to avoid
-a future breaking schema change, not to change today's failure handling.
+The system MUST write a durable row for every applied migration attempt, including a failed `migrate deploy`, and MUST use `success` to gate applied-state, not merely record it.
 
-#### Scenario: Successful migrations record `success = true`
+- `migrate dev`, `migrate deploy`, and `migrate resolve --applied` MUST write `success = true` on their respective success paths.
+- When `migrate deploy` fails applying a migration, after the transaction `ROLLBACK` the system MUST write a `success = false` row for that migration on the same connection via an autocommit `INSERT ... ON CONFLICT (name) DO UPDATE` (retry-safe against `name`'s `UNIQUE` constraint).
+- Every recorded row MUST carry `installed_by` set from `current_user` at apply time and `execution_time_ms` measuring that attempt's elapsed time.
+- `appliedMigrations()` MUST filter on `success = true`; a `success = false` row MUST NOT make a migration appear applied.
+- `migrate deploy` MUST refuse to proceed when the next pending id already carries a `success = false` row, naming that id and directing the operator to `migrate resolve`.
+- `migrate status` MUST render a `success = false` row distinguishably from an applied or pending row.
+- If the process is terminated between the `ROLLBACK` and the failure-row write, no row is recorded and the id reverts to plain pending. This is a documented best-effort limitation, not a tested guarantee: the test suite runs against PGlite, which cannot model process death.
 
-- GIVEN a migration applies without error
+(Previously: "`success` is recorded as a forward-compatible column with no enforcement yet" — failed migrations left no row at all, `success` carried no gating behavior, and `success = false` rows were explicitly out of scope.)
+
+#### Scenario: Successful migrations record `success = true` on all three write paths
+
+- GIVEN a migration applies without error via `migrate dev`, `migrate deploy`, or `migrate resolve --applied`
 - WHEN its row is recorded in `_indigo_migrations`
 - THEN `success` is stored as `true`
 
-#### Scenario: A failed migration still leaves no row, unchanged from today
+#### Scenario: A failed deploy leaves a durable failure row after rollback
 
-- GIVEN a migration fails during application
-- WHEN the failure is handled (dev: file removal; deploy: transaction rollback)
-- THEN no row for that migration is recorded, and `success = false` rows do not yet appear in `_indigo_migrations`
+- GIVEN a pending migration whose SQL fails during `migrate deploy`
+- WHEN the transaction is rolled back
+- THEN a row for that migration is written with `success = false`, on the same connection, outside the rolled-back transaction
+
+#### Scenario: A failure row does not make its migration look applied
+
+- GIVEN a `success = false` row exists for a migration id
+- WHEN `appliedMigrations()` is queried
+- THEN that id is absent from the result, and pending-migration detection still reports it as pending
+
+#### Scenario: Deploy refuses when the next pending id already carries a failure row
+
+- GIVEN the next pending migration id already has a `success = false` row
+- WHEN `migrate deploy` runs
+- THEN it refuses before applying anything, names that id, and directs the operator to `migrate resolve` rather than skipping or retrying automatically
+
+#### Scenario: Retrying a previously failed migration upserts instead of violating the UNIQUE constraint
+
+- GIVEN a migration id has a recorded `success = false` row
+- WHEN that same migration is applied again and succeeds
+- THEN the existing row is updated in place (`ON CONFLICT (name) DO UPDATE`) to `success = true` with fresh `applied_at`, `installed_by`, and `execution_time_ms`, and no duplicate row or unique-constraint violation occurs
+
+#### Scenario: `installed_by` is recorded from `current_user`
+
+- GIVEN a database session authenticated as a given role
+- WHEN any row is written to `_indigo_migrations` (success or failure)
+- THEN `installed_by` equals that session's `current_user` value
+
+#### Scenario: `execution_time_ms` is recorded on both outcomes
+
+- GIVEN a migration attempt that either succeeds or fails
+- WHEN its row is written
+- THEN `execution_time_ms` holds a non-null elapsed-time measurement for that attempt, on both the success row and the failure row
+
+#### Scenario: `migrate status` distinguishes a failed row from applied and pending rows
+
+- GIVEN `_indigo_migrations` contains one applied row, one `success = false` row, and one migration with no row at all
+- WHEN `migrate status` runs
+- THEN its output marks the failed row distinguishably from both the applied row and the pending migration, and exits successfully
+
+#### Scenario: A crash between rollback and the failure-row write is a stated limitation, not a guarantee
+
+- GIVEN the documentation and code comments for the failure-row write path
+- WHEN the process is terminated after `ROLLBACK` but before the autocommit failure-row INSERT completes
+- THEN no row is recorded for that attempt, the id reverts to plain pending on the next run, and this gap is stated as a documented best-effort limitation rather than a tested guarantee

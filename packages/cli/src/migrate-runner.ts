@@ -48,6 +48,31 @@ const SNAPSHOT_FILE = ".snapshot.json";
 const HISTORY_TABLE = "_indigo_migrations";
 
 /**
+ * The single statement every history write goes through.
+ *
+ * `installed_by` is `current_user`, evaluated server-side: it is the role
+ * Postgres authenticated, not a value this process chose, so it cannot claim an
+ * identity the database would not confirm. Nothing here accepts a caller-
+ * supplied name — an override would be a self-reported claim wearing the same
+ * column as a database-enforced fact.
+ *
+ * `ON CONFLICT (name) DO UPDATE` rather than a plain INSERT because `name` is
+ * UNIQUE and a migration may legitimately be written twice: retrying one that
+ * previously recorded a failure has to replace that row, not collide with it.
+ * `applied_at` is refreshed so the timestamp describes the attempt that
+ * actually stands, not the one that failed.
+ */
+const HISTORY_UPSERT = `INSERT INTO "${HISTORY_TABLE}"
+     (name, checksum, success, installed_by, execution_time_ms)
+   VALUES ($1, $2, $3, current_user, $4)
+   ON CONFLICT (name) DO UPDATE SET
+     checksum = EXCLUDED.checksum,
+     success = EXCLUDED.success,
+     installed_by = EXCLUDED.installed_by,
+     execution_time_ms = EXCLUDED.execution_time_ms,
+     applied_at = now()`;
+
+/**
  * Session-level advisory-lock key `migrateDeploy` uses to serialize
  * concurrent deploys against the same database. `0x494E4449474F` = ASCII
  * "INDIGO" — a fixed, non-configurable, per-database key (advisory locks
@@ -132,47 +157,61 @@ async function defaultCreateClient(connectionString: string): Promise<MigrationC
 }
 
 /**
- * Idempotent DDL + silent legacy upgrade. Fresh install: creates the full
- * 5-column shape in one statement. Existing (pre-checksum) table: the two
- * `ADD COLUMN IF NOT EXISTS` statements are no-ops on a fresh table and
- * upgrade a legacy one in place. Backfill then hashes every unbackfilled
- * row's on-disk `migration.sql` (silently, no prompt/output) — a row whose
- * file is missing is left `NULL`, deferred to the existing shadow-replay
- * desync rules rather than guessed at here. A second call is a no-op: the
- * `WHERE checksum IS NULL` selection is empty once backfill has run once.
+ * Idempotent DDL: one `CREATE TABLE IF NOT EXISTS` carrying the full column
+ * set, and nothing else.
+ *
+ * There is deliberately no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and no
+ * checksum backfill loop. Both existed to upgrade a table created by an older
+ * version in place — but nothing has ever been published (v0.0.1), so there is
+ * no installed base to upgrade, and carrying that machinery would mean
+ * shipping a migration path for a version that never shipped.
+ *
+ * `execution_time_ms` is `integer`, not `bigint`, deliberately: 2^31-1 ms is
+ * about 24.8 days, and a single migration running longer than that is a
+ * pathology the history table is not the right place to survive. Past it the
+ * write overflows and fails, which surfaces through the failure path rather
+ * than silently recording a wrong duration.
+ *
+ * The consequence is worth stating: a table created by an older local build is
+ * left exactly as it is. It is not widened, and a write naming a column it does
+ * not have fails loudly rather than being silently repaired. That is the
+ * intended behaviour, not an oversight — drop the table and let this recreate
+ * it.
  */
-async function ensureHistory(client: MigrationClient, cwd: string): Promise<void> {
+async function ensureHistory(client: MigrationClient): Promise<void> {
   await client.query(
     `CREATE TABLE IF NOT EXISTS "${HISTORY_TABLE}" (
        id serial PRIMARY KEY,
        name text NOT NULL UNIQUE,
        applied_at timestamptz NOT NULL DEFAULT now(),
        checksum text,
-       success boolean NOT NULL DEFAULT true
+       success boolean NOT NULL DEFAULT true,
+       installed_by text,
+       execution_time_ms integer
      );`,
   );
-  await client.query(`ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS checksum text;`);
-  await client.query(
-    `ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS success boolean NOT NULL DEFAULT true;`,
-  );
-
-  const root = migrationsRoot(cwd);
-  const { rows } = await client.query(
-    `SELECT name FROM "${HISTORY_TABLE}" WHERE checksum IS NULL ORDER BY id`,
-  );
-  for (const row of rows as { name: string }[]) {
-    const file = join(root, row.name, "migration.sql");
-    if (!existsSync(file)) continue; // left NULL — existing desync rules own missing files
-    const checksum = migrationChecksum(readFileSync(file, "utf-8"));
-    await client.query(
-      `UPDATE "${HISTORY_TABLE}" SET checksum = $1 WHERE name = $2 AND checksum IS NULL`,
-      [checksum, row.name],
-    );
-  }
 }
 
+/**
+ * The ids this database counts as applied — `success = true` only.
+ *
+ * The filter is what makes a failure row safe to record at all. Without it a
+ * `success = false` row would make its migration look applied and be skipped
+ * forever, which is worse than the missing row it replaced: a silent no-op
+ * instead of a loud gap.
+ */
 async function appliedMigrations(client: MigrationClient): Promise<Set<string>> {
-  const result = await client.query(`SELECT name FROM "${HISTORY_TABLE}"`);
+  const result = await client.query(
+    `SELECT name FROM "${HISTORY_TABLE}" WHERE success = true`,
+  );
+  return new Set(result.rows.map((r: { name: string }) => r.name));
+}
+
+/** The ids recorded as having failed — the deploy refusal gate's input. */
+async function failedMigrations(client: MigrationClient): Promise<Set<string>> {
+  const result = await client.query(
+    `SELECT name FROM "${HISTORY_TABLE}" WHERE success = false`,
+  );
   return new Set(result.rows.map((r: { name: string }) => r.name));
 }
 
@@ -210,7 +249,13 @@ async function checksumPreflight(client: MigrationClient, cwd: string): Promise<
 async function recordedMigrations(
   client: MigrationClient,
 ): Promise<{ recorded: string[]; checksums: Record<string, string | null> }> {
-  const result = await client.query(`SELECT name, checksum FROM "${HISTORY_TABLE}" ORDER BY id`);
+  // Same `success = true` filter as `appliedMigrations`, and for a sharper
+  // reason: this feeds `buildShadowSchema`. Replaying a migration that never
+  // applied would have `migrate dev` diff against a schema the database does
+  // not have — planning nothing for tables it believes already exist.
+  const result = await client.query(
+    `SELECT name, checksum FROM "${HISTORY_TABLE}" WHERE success = true ORDER BY id`,
+  );
   const rows = result.rows as { name: string; checksum: string | null }[];
   const checksums: Record<string, string | null> = {};
   for (const row of rows) checksums[row.name] = row.checksum;
@@ -342,7 +387,7 @@ export async function migrateDev(options: DevOptions): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     let prev: ResolvedSchema | null;
     try {
@@ -399,12 +444,11 @@ export async function migrateDev(options: DevOptions): Promise<void> {
     }
 
     try {
+      const startedAt = performance.now();
       await applyMigrationSql(client, sql);
+      const elapsedMs = Math.round(performance.now() - startedAt);
       const checksum = migrationChecksum(sql);
-      await client.query(
-        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-        [id, checksum, true],
-      );
+      await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
       saveSnapshot(options.resolved, cwd);
       console.log(`✅ Migration created and applied: ${id}`);
@@ -426,6 +470,13 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
   const dirs = listMigrationDirs(cwd);
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   let locked = false;
+  // Which migration is mid-flight, for the failure row the catch writes.
+  // Declared outside the `try` because the `catch` is what reads it. Set only
+  // AFTER the file has been read — a missing file is a broken migrations
+  // directory, not a migration that was attempted and failed — and cleared
+  // after COMMIT, so a failure in the NEXT iteration cannot be recorded
+  // against the migration that already succeeded.
+  let attempt: { id: string; checksum: string; startedAt: number } | null = null;
   try {
     const lockResult = await client.query("SELECT pg_try_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
     if (!lockResult.rows[0]?.pg_try_advisory_lock) {
@@ -435,7 +486,7 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     }
     locked = true;
 
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     const drifted = await checksumPreflight(client, cwd);
     if (drifted.length > 0) {
@@ -450,6 +501,25 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     const pending = dirs.filter((d) => !applied.has(d));
     if (pending.length === 0) {
       console.log("✅ No pending migrations.");
+      return;
+    }
+
+    // Same doctrine as the destructive pre-scan below, for the same reason:
+    // check EVERY pending id, not just the next one. A gate that looked only at
+    // `pending[0]` would apply file 1 and then refuse file 2, which is the
+    // half-migrated database this function already goes out of its way to
+    // avoid.
+    const failed = await failedMigrations(client);
+    const blocked = pending.filter((id) => failed.has(id));
+    if (blocked.length > 0) {
+      console.error(
+        `❌ migrate deploy refused: ${blocked.join(", ")} previously failed and is still recorded as failed.`,
+      );
+      console.error(
+        "   Re-run it with `indigodb migrate resolve --applied <id>` once the database is in the state it describes,",
+      );
+      console.error("   or discard the record with `indigodb migrate resolve --rolled-back <id>`.");
+      process.exitCode = 1;
       return;
     }
 
@@ -474,18 +544,48 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
 
     for (const id of pending) {
       const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
-      await applyMigrationSql(client, sql);
       const checksum = migrationChecksum(sql);
-      await client.query(
-        `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-        [id, checksum, true],
-      );
+      const startedAt = performance.now();
+      attempt = { id, checksum, startedAt };
+      await applyMigrationSql(client, sql);
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
+      attempt = null;
       console.log(`  ✓ applied ${id}`);
     }
     console.log(`✅ Applied ${pending.length} migration(s).`);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
+
+    // The failure row is written AFTER the rollback, as its own autocommit
+    // statement on the same connection — a rollback ends the transaction, not
+    // the connection. Inside the transaction it would be discarded along with
+    // the migration, which is exactly why a failed deploy used to leave no
+    // trace at all.
+    //
+    // If the process dies between the ROLLBACK above and this write, no row is
+    // recorded and the failure is invisible to `migrate status`, exactly as it
+    // was before this change. That gap is accepted and documented rather than
+    // closed: doing better needs two-phase machinery this codebase has no
+    // precedent for, and a test cannot model process death under PGlite.
+    if (attempt) {
+      const elapsedMs = Math.round(performance.now() - attempt.startedAt);
+      try {
+        await client.query(HISTORY_UPSERT, [attempt.id, attempt.checksum, false, elapsedMs]);
+      } catch (recordError) {
+        // Bookkeeping must never speak over the thing it is bookkeeping about.
+        // This warning is printed BEFORE the deploy failure below so the
+        // operator's last line is the real cause; it never rethrows, and it
+        // never touches `process.exitCode`, which already reflects the
+        // migration failure rather than this secondary one.
+        console.error(
+          `⚠️  Could not record the failure of ${attempt.id}: ${(recordError as Error).message}`,
+        );
+        console.error("   The migration below failed; its history row is missing.");
+      }
+    }
+
     console.error("❌ Deploy failed, rolled back:", (error as Error).message);
     process.exitCode = 1;
   } finally {
@@ -512,15 +612,36 @@ export async function migrateStatus(connectionString: string, seams: RunnerSeams
   }
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
     const applied = await appliedMigrations(client);
+    const failed = await failedMigrations(client);
     const drifted = new Set(await checksumPreflight(client, cwd));
     for (const id of dirs) {
-      const state = drifted.has(id) ? "⚠ modified" : applied.has(id) ? "✓ applied" : "· pending";
+      // `failed` sits above `pending` because a recorded failure is strictly
+      // more informative: both mean "not applied", but only one of them means
+      // the database may already carry part of this migration's effect.
+      const state = drifted.has(id)
+        ? "⚠ modified"
+        : applied.has(id)
+          ? "✓ applied"
+          : failed.has(id)
+            ? "✗ failed"
+            : "· pending";
       console.log(`  ${state}  ${id}`);
     }
-    const pending = dirs.filter((d) => !applied.has(d)).length;
-    console.log(`\n${dirs.length} migration(s), ${pending} pending.`);
+    const failedCount = dirs.filter((d) => failed.has(d) && !applied.has(d)).length;
+    const pending = dirs.filter((d) => !applied.has(d) && !failed.has(d)).length;
+    const summary = `\n${dirs.length} migration(s), ${pending} pending`;
+    if (failedCount > 0) {
+      // Exit code stays 0 on purpose: `status` is the command an operator runs
+      // to find out what a failed deploy did, so failing it in exactly that
+      // situation breaks it for its one purpose. `deploy` is what refuses.
+      console.log(
+        `${summary}, ${failedCount} failed — run \`indigodb migrate resolve --applied <id>\` or \`--rolled-back <id>\`.`,
+      );
+    } else {
+      console.log(`${summary}.`);
+    }
   } finally {
     await client.end();
   }
@@ -566,28 +687,42 @@ export async function migrateResolve(options: ResolveOptions): Promise<void> {
 
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     if (options.applied) {
       const { rows } = await client.query(
-        `SELECT checksum FROM "${HISTORY_TABLE}" WHERE name = $1`,
+        `SELECT checksum, success FROM "${HISTORY_TABLE}" WHERE name = $1`,
         [id],
       );
-      const stored = (rows[0] as { checksum: string | null } | undefined)?.checksum;
+      const recorded = rows[0] as { checksum: string | null; success: boolean } | undefined;
       const computed = migrationChecksum(readFileSync(file, "utf-8"));
-      if (stored == null) {
-        await client.query(
-          `INSERT INTO "${HISTORY_TABLE}" (name, checksum, success) VALUES ($1, $2, $3)`,
-          [id, computed, true],
-        );
+
+      // Branch order is load-bearing (design D7). The drift check sits ABOVE
+      // the success/failure split, so a failure row whose file has since been
+      // edited is refused rather than flipped to applied without any checksum
+      // ever being compared. Moving the success test above it would make
+      // `--applied` a way to launder a drifted migration into the history.
+      if (recorded === undefined || recorded.checksum == null) {
+        // No row at all, or a row that never carried a checksum. Either way
+        // there is nothing to compare against, so record it.
+        // `execution_time_ms` is null, not 0: no SQL ran, and a zero would read
+        // as "applied instantly" rather than "never executed here".
+        await client.query(HISTORY_UPSERT, [id, computed, true, null]);
         console.log(`✅ Migration recorded as applied: ${id}`);
         console.log("   No SQL was executed — _indigo_migrations only.");
-      } else if (stored === computed) {
-        console.log(`✅ Already recorded as applied: ${id} — nothing to do.`);
-      } else {
+      } else if (recorded.checksum !== computed) {
         console.error(`❌ migrate resolve refused: ${id} no longer matches its recorded checksum.`);
         console.error("   Revert the on-disk file, or reconcile with --rolled-back first.");
         process.exitCode = 1;
+      } else if (recorded.success) {
+        console.log(`✅ Already recorded as applied: ${id} — nothing to do.`);
+      } else {
+        // Matching checksum, recorded failure: this is the documented exit from
+        // a failed deploy. The failed attempt's duration is deliberately NOT
+        // carried onto the row that now stands.
+        await client.query(HISTORY_UPSERT, [id, computed, true, null]);
+        console.log(`✅ Migration recorded as applied: ${id}`);
+        console.log("   Previously recorded as failed — no SQL was executed.");
       }
     } else {
       const { rows } = await client.query(

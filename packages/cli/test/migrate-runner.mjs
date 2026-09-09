@@ -3,14 +3,18 @@
  * `migrate-runner.ts`). Mirrors `pull.mjs`'s style: plain Node, no test
  * framework, real PGlite via `migrate-harness.mjs` (never a mocked `pg`).
  *
- * Slice 1 (this file, initial cases): `MigrationClient`/`cwd` seams, the
- * new DDL + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` upgrade shape,
- * silent backfill of legacy NULL checksums, and checksum/success recorded
- * on every `migrateDev`/`migrateDeploy` INSERT. NO enforcement yet — that
- * is Slice 2, added to this same file.
+ * Covers the `MigrationClient`/`cwd` seams, the history table's DDL, and
+ * what each write path records on it.
+ *
+ * `migration-history-forensics` removed the legacy upgrade path: there is no
+ * `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and no silent backfill of NULL
+ * checksums any more, so the four tests that covered them were deleted rather
+ * than adapted — their names described behaviour that no longer exists.
+ * Nothing was ever published at v0.0.1, so there is no installed base those
+ * statements could have been protecting.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { strictEqual, ok } from "node:assert";
 import { parse, resolve as resolveSchema } from "@indigodb/core";
@@ -77,9 +81,16 @@ async function historyColumns(db) {
 
 async function historyRows(db) {
   const result = await db.query(
-    `SELECT name, checksum, success FROM "_indigo_migrations" ORDER BY id`,
+    `SELECT name, checksum, success, installed_by, execution_time_ms
+       FROM "_indigo_migrations" ORDER BY id`,
   );
   return result.rows;
+}
+
+/** The database's own idea of who is connected, for `installed_by` assertions. */
+async function currentUser(db) {
+  const result = await db.query(`SELECT current_user AS who`);
+  return result.rows[0].who;
 }
 
 /** Captures stdout `console.log` calls for the duration of `fn`. */
@@ -110,129 +121,193 @@ async function captureErrors(fn) {
 
 // ─── fresh install: full 5-column shape ──────────────────────────────────────
 
-await check("fresh install: ensureHistory creates checksum + success columns", async () => {
+await check("I1 fresh install: ensureHistory creates the full seven-column shape", async () => {
   await withDatabase(async (db) => {
     const { cwd, cleanup } = createMigrationsRoot();
     try {
       await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
       const columns = await historyColumns(db);
-      ok(columns.has("checksum"), `expected a checksum column, got: ${[...columns].join(", ")}`);
-      ok(columns.has("success"), `expected a success column, got: ${[...columns].join(", ")}`);
+      const expected = [
+        "id",
+        "name",
+        "applied_at",
+        "checksum",
+        "success",
+        "installed_by",
+        "execution_time_ms",
+      ];
+      for (const column of expected) {
+        ok(columns.has(column), `expected an ${column} column, got: ${[...columns].join(", ")}`);
+      }
+      strictEqual(
+        columns.size,
+        expected.length,
+        `expected exactly ${expected.length} columns, got: ${[...columns].join(", ")}`,
+      );
     } finally {
       cleanup();
     }
   });
 });
 
-// ─── legacy upgrade: ALTER TABLE ADD COLUMN IF NOT EXISTS ────────────────────
+// ─── I2: a pre-existing table is left as-is, never widened ───────────────────
 
-await check("legacy 3-column table: ensureHistory adds checksum + success via ALTER", async () => {
+await check("I2 a legacy table is left as-is: a write naming a new column is rejected", async () => {
   await withDatabase(async (db) => {
     const { cwd, cleanup } = createMigrationsRoot();
     try {
+      // The exact pre-change shape, hand-created so `CREATE TABLE IF NOT EXISTS`
+      // is a no-op and cannot be the thing under test.
       await db.exec(`
         CREATE TABLE "_indigo_migrations" (
           id serial PRIMARY KEY,
           name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true
         );
       `);
+
       await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
       const columns = await historyColumns(db);
-      ok(columns.has("checksum"), `expected checksum added, got: ${[...columns].join(", ")}`);
-      ok(columns.has("success"), `expected success added, got: ${[...columns].join(", ")}`);
+      ok(
+        !columns.has("installed_by"),
+        `expected installed_by NOT to be added to a legacy table, got: ${[...columns].join(", ")}`,
+      );
+
+      // Asserted through a real write rather than through the column list
+      // alone: the property that matters is that the database refuses, not
+      // that information_schema happens to agree.
+      let rejected = null;
+      try {
+        await db.exec(
+          `INSERT INTO "_indigo_migrations" (name, installed_by) VALUES ('x', 'someone');`,
+        );
+      } catch (error) {
+        rejected = error;
+      }
+      ok(rejected, "expected the INSERT naming installed_by to be rejected, but it succeeded");
+      ok(
+        /installed_by/.test(String(rejected.message)),
+        `expected the rejection to name installed_by, got: ${rejected.message}`,
+      );
     } finally {
       cleanup();
     }
   });
 });
 
-// ─── silent backfill ──────────────────────────────────────────────────────────
+// ─── I3: success = true on every write path ──────────────────────────────────
 
-await check("legacy row with NULL checksum is silently backfilled from on-disk SQL", async () => {
+// Two of the three sub-cases live here; `migrateResolve --applied` is the
+// third and lands in Work Unit C, where its write path exists. Sequencing it
+// there rather than writing an assertion that stays red across two work units
+// is the ordering `tasks.md` sanctions first, and it keeps every commit green.
+// It is NOT dropped: C's task list owns it explicitly.
+
+await check("I3 success = true after a successful migrateDev and migrateDeploy", async () => {
   await withDatabase(async (db) => {
     const { cwd, cleanup } = createMigrationsRoot();
     try {
-      const id = "20240101000000_init";
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      let rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, true, "migrateDev must record success = true");
+
+      const id = "20240101000000_i3";
       const dir = join(cwd, "migrations", id);
       mkdirSync(dir, { recursive: true });
-      const sql = `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`;
-      writeFileSync(join(dir, "migration.sql"), sql);
+      writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "i3" (id serial PRIMARY KEY);\n`);
 
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('${id}');
-      `);
+      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
+      rows = await historyRows(db);
+      const deployed = rows.find((r) => r.name === id);
+      ok(deployed, `expected a row for ${id}`);
+      strictEqual(deployed.success, true, "migrateDeploy must record success = true");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I8: installed_by comes from the database, not from the client ───────────
+
+await check("I8 installed_by is recorded from current_user on dev and deploy", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      // Compared against a value read live from this same database rather than
+      // a hard-coded 'postgres': the property is "whatever Postgres says the
+      // connected role is", and a literal would still pass if the code wrote a
+      // constant of its own.
+      const expected = await currentUser(db);
+
+      await migrateDev({
+        resolved: minimalResolved(),
+        name: "init",
+        connectionString: "unused",
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      let rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].installed_by, expected);
+
+      // And again through the deploy path, which is a separate write site.
+      const id = "20240101000000_second";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), `CREATE TABLE "b2" (id serial PRIMARY KEY);\n`);
+
+      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
+      rows = await historyRows(db);
+      const deployed = rows.find((r) => r.name === id);
+      ok(deployed, `expected a row for ${id}, got: ${rows.map((r) => r.name).join(", ")}`);
+      strictEqual(deployed.installed_by, expected);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I9 (success half): execution_time_ms measures the apply, not zero ───────
+
+await check("I9 execution_time_ms is a real elapsed measurement on a successful apply", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20240101000000_slow";
+      const dir = join(cwd, "migrations", id);
+      mkdirSync(dir, { recursive: true });
+      // A real 50ms sleep followed by real DDL. The >= 40 threshold bites: a
+      // stopwatch started or stopped on the wrong side of applyMigrationSql
+      // would report a value near zero, which >= 0 would not catch.
+      writeFileSync(
+        join(dir, "migration.sql"),
+        `SELECT pg_sleep(0.05);\nCREATE TABLE "slow" (id serial PRIMARY KEY);\n`,
+      );
 
       await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
 
       const rows = await historyRows(db);
-      strictEqual(rows.length, 1);
-      strictEqual(rows[0].name, id);
-      strictEqual(rows[0].checksum, migrationChecksum(sql));
-      strictEqual(rows[0].success, true);
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-await check("backfill is idempotent: a second ensureHistory call touches zero rows", async () => {
-  await withDatabase(async (db) => {
-    const { cwd, cleanup } = createMigrationsRoot();
-    try {
-      const id = "20240101000000_init";
-      const dir = join(cwd, "migrations", id);
-      mkdirSync(dir, { recursive: true });
-      const sql = `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`;
-      writeFileSync(join(dir, "migration.sql"), sql);
-
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('${id}');
-      `);
-
-      const client = () => createMigrationClient(db);
-      await migrateDeploy("unused", { createClient: client, cwd });
-      const first = await historyRows(db);
-
-      await migrateDeploy("unused", { createClient: client, cwd });
-      const second = await historyRows(db);
-
-      strictEqual(first.length, second.length);
-      strictEqual(first[0].checksum, second[0].checksum);
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-await check("legacy row with a missing on-disk file is left NULL, not guessed at", async () => {
-  await withDatabase(async (db) => {
-    const { cwd, cleanup } = createMigrationsRoot();
-    try {
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('20240101000000_gone');
-      `);
-
-      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
-
-      const rows = await historyRows(db);
-      strictEqual(rows.length, 1);
-      strictEqual(rows[0].checksum, null);
+      const row = rows.find((r) => r.name === id);
+      ok(row, `expected a row for ${id}`);
+      strictEqual(typeof row.execution_time_ms, "number");
+      ok(
+        row.execution_time_ms >= 40,
+        `expected execution_time_ms to cover a 50ms sleep, got ${row.execution_time_ms}`,
+      );
     } finally {
       cleanup();
     }
@@ -1331,7 +1406,768 @@ await check("resolve --applied records the row without executing migration SQL",
       strictEqual(rows[0].checksum, migrationChecksum(readFileSync(file, "utf-8")));
       strictEqual(rows[0].success, true);
 
+      // R1: the row goes through the same shared write as every other path, so
+      // it carries identity — but NOT a duration, because no SQL ran. A zero
+      // here would be a lie of the most plausible kind: it reads as "instant"
+      // rather than "never happened".
+      ok(
+        rows[0].installed_by != null,
+        `expected installed_by to be recorded, got: ${rows[0].installed_by}`,
+      );
+      strictEqual(
+        rows[0].execution_time_ms,
+        null,
+        "no SQL executed, so there is no elapsed time to record",
+      );
+
       ok(!(await tableExists(db, "foo")), "migration SQL must NOT have been executed");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I4/I9(failure): a failed deploy leaves a durable record ─────────────────
+
+await check("I4/I9 a failed deploy records success = false with a real duration", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_i4";
+      // A genuine RUNTIME error, not a syntax error: the simple-query protocol
+      // parses the whole string up front, so a syntax error would abort before
+      // pg_sleep ever ran and the duration assertion would be meaningless.
+      const file = writeMigrationFile(
+        cwd,
+        id,
+        `SELECT pg_sleep(0.05);\nDROP TABLE does_not_exist;\n`,
+      );
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      try {
+        await migrateDeploy("unused", {
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        });
+      } finally {
+        console.error = originalError;
+      }
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a failed deploy must exit 1");
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1, `expected exactly one row, got:\n${JSON.stringify(rows)}`);
+      strictEqual(rows[0].name, id);
+      strictEqual(rows[0].success, false, "the failure must be durably recorded");
+      strictEqual(
+        rows[0].checksum,
+        migrationChecksum(readFileSync(file, "utf-8")),
+        "the failure row carries the checksum of what was attempted",
+      );
+
+      // I9's failure half: the sleep really ran before the error, so the
+      // duration describes the attempt rather than defaulting to zero or null.
+      strictEqual(typeof rows[0].execution_time_ms, "number");
+      ok(
+        rows[0].execution_time_ms >= 40,
+        `expected the failure row to carry the elapsed time, got ${rows[0].execution_time_ms}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I11: the mid-crash gap is documented, and deliberately not tested ───────
+
+// This is NOT a test of crash recovery and must never be described as one.
+// The design refuses a functional test here on purpose: the only mechanical
+// option — making the failure write throw — re-asserts X3 while appearing to
+// cover process death, which is worse than an admitted gap because it reads as
+// coverage. PGlite cannot model a process dying between the ROLLBACK and the
+// failure-row write, so that window is an accepted limitation.
+//
+// What this DOES check is that the limitation stays written down where a reader
+// of the code will meet it. If someone deletes the comment, the gap becomes
+// silent, and a silent gap is the thing this whole change exists to remove.
+
+await check("I11 the mid-crash limitation is documented in the failure path", async () => {
+  const source = readFileSync(
+    join(import.meta.dirname, "..", "src", "migrate-runner.ts"),
+    "utf-8",
+  );
+  ok(
+    /If the process dies between the ROLLBACK above and this write/.test(source),
+    "the failure-write path must carry the mid-crash-gap comment",
+  );
+
+  const spec = readFileSync(
+    join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "openspec",
+      "changes",
+      "migration-history-forensics",
+      "specs",
+      "migration-history-integrity",
+      "spec.md",
+    ),
+    "utf-8",
+  );
+  ok(
+    /crash|dies|limitation/i.test(spec),
+    "the same limitation must be stated in the spec, not only in the code",
+  );
+});
+
+// ─── X4: a failure is never recorded against a migration that succeeded ──────
+
+// Found by mutation, not by the task list: removing `attempt = null` after
+// COMMIT left every other test green. Without it, a failure raised AFTER one
+// migration commits but BEFORE the next one is assigned would flip the
+// already-applied migration's row to `success = false` — turning a successful
+// deploy into a recorded failure, which the deploy gate then refuses forever.
+
+await check("X4 a mid-loop failure is not blamed on the migration that already committed", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const first = "20250101000000_x4a";
+      const second = "20250101000001_x4b";
+      writeMigrationFile(cwd, first, `CREATE TABLE "x4a" (id serial PRIMARY KEY);\n`);
+      const secondPath = writeMigrationFile(
+        cwd,
+        second,
+        `CREATE TABLE "x4b" (id serial PRIMARY KEY);\n`,
+      );
+
+      // Delete the second migration's file the moment the first one commits.
+      // That lands the failure in the window between COMMIT and the next
+      // iteration's `attempt` assignment — the exact window `attempt = null`
+      // exists to protect.
+      const { client: spyClient } = spyMigrationClient(createMigrationClient(db), {
+        onQuery: (sql) => {
+          if (/^COMMIT/i.test(String(sql).trim())) rmSync(secondPath, { force: true });
+          return undefined;
+        },
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        await migrateDeploy("unused", { createClient: async () => spyClient, cwd });
+      } catch {
+        // the deploy failing is the premise, not the assertion
+      } finally {
+        console.error = originalError;
+        process.exitCode = savedExitCode;
+      }
+
+      const rows = await historyRows(db);
+      const firstRow = rows.find((r) => r.name === first);
+      ok(firstRow, `expected a row for the committed migration, got:\n${JSON.stringify(rows)}`);
+      strictEqual(
+        firstRow.success,
+        true,
+        "a migration that committed must not be recorded as failed because a LATER one broke",
+      );
+      ok(
+        !rows.some((r) => r.name === second),
+        "the migration that was never attempted must have no row at all",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I10: status has a fourth state ──────────────────────────────────────────
+
+await check("I10 status distinguishes failed from applied and pending, exit 0", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const appliedId = "20250101000000_ok";
+      const failedId = "20250101000001_bad";
+      const pendingId = "20250101000002_next";
+      const appliedFile = writeMigrationFile(cwd, appliedId, `CREATE TABLE "s1" (id serial PRIMARY KEY);\n`);
+      const failedFile = writeMigrationFile(cwd, failedId, `CREATE TABLE "s2" (id serial PRIMARY KEY);\n`);
+      writeMigrationFile(cwd, pendingId, `CREATE TABLE "s3" (id serial PRIMARY KEY);\n`);
+
+      await seedHistory(db, appliedId, {
+        checksum: migrationChecksum(readFileSync(appliedFile, "utf-8")),
+        success: true,
+      });
+      await db.query(
+        `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [failedId, migrationChecksum(readFileSync(failedFile, "utf-8")), false],
+      );
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateStatus("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      const lineFor = (id) => lines.find((l) => l.includes(id)) ?? "";
+      ok(/✓ applied/.test(lineFor(appliedId)), `applied: ${lineFor(appliedId)}`);
+      ok(/✗ failed/.test(lineFor(failedId)), `failed: ${lineFor(failedId)}`);
+      ok(/· pending/.test(lineFor(pendingId)), `pending: ${lineFor(pendingId)}`);
+
+      // A failed row must NOT also read as pending — the fourth state replaces
+      // the third for that id, it does not sit alongside it.
+      ok(!/pending/.test(lineFor(failedId)), `a failed id must not also read as pending`);
+
+      ok(
+        lines.some((l) => /1 failed/.test(l)),
+        `expected a footer naming the failure count, got:\n${lines.join("\n")}`,
+      );
+
+      // Exit stays 0. `status` is the command an operator runs to find out what
+      // a failed deploy did; failing it in exactly that situation breaks it for
+      // its one purpose. The refusal lives in `deploy`, which does exit 1.
+      ok(exitCode !== 1, "status must not exit non-zero because of a failed row");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── X3: the failure write must never mask the original error ────────────────
+
+await check("X3 a failing failure-write warns and leaves the real cause last", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_x3";
+      writeMigrationFile(cwd, id, `DROP TABLE does_not_exist;\n`);
+
+      // Break ONLY the failure write: params[2] === false is the `success`
+      // argument, which no other statement in this flow passes.
+      const { client: spyClient } = spyMigrationClient(createMigrationClient(db), {
+        onQuery: (_sql, params) => {
+          if (params?.[2] === false) throw new Error("connection terminated");
+          return undefined;
+        },
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      let rejected = null;
+      try {
+        await migrateDeploy("unused", { createClient: async () => spyClient, cwd });
+      } catch (error) {
+        rejected = error;
+      } finally {
+        console.error = originalError;
+      }
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(rejected, null, "a failed bookkeeping write must not reject the command");
+      strictEqual(exitCode, 1, "the deploy still failed, so exit code stays 1");
+
+      ok(
+        errors.some((l) => /does_not_exist/.test(l)),
+        `the ORIGINAL migration error must still be reported, got:\n${errors.join("\n")}`,
+      );
+      ok(
+        errors.some((l) => /Could not record/.test(l)),
+        `the bookkeeping failure must be surfaced too, got:\n${errors.join("\n")}`,
+      );
+
+      // Ordering is the point: the operator's LAST line must be the real cause,
+      // not a secondary complaint about bookkeeping. A warning printed after it
+      // would bury the thing they actually need to read.
+      const lastLine = errors[errors.length - 1];
+      ok(
+        /Deploy failed/.test(lastLine),
+        `expected the deploy failure to be the last line, got: ${lastLine}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── I5/X1/I6: a failure row is not an applied migration ─────────────────────
+
+// I5's `✗ failed` status-marker half is sequenced into Work Unit E, where the
+// fourth state exists. Everything here is the half that can pass now: a failed
+// id must not be treated as applied by ANY reader.
+
+await check("I5 a failed id is not counted as applied by appliedMigrations()", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_i5";
+      const file = writeMigrationFile(cwd, id, `CREATE TABLE "i5" (id serial PRIMARY KEY);\n`);
+      await seedHistory(db, id, {
+        checksum: migrationChecksum(readFileSync(file, "utf-8")),
+        success: false,
+      });
+
+      // Asserted through `migrateStatus`, deliberately, NOT through
+      // `migrateDeploy`. Deploy's refusal gate would satisfy a
+      // "does not say nothing-to-do" assertion on its own, so a deploy-based
+      // test passes even with the filter removed — it would be proving the
+      // gate, not the reader. `migrateStatus` has no gate and reads straight
+      // through `appliedMigrations()`, which is the property under test.
+      const lines = await captureLogs(() =>
+        migrateStatus("unused", { createClient: async () => createMigrationClient(db), cwd }),
+      );
+
+      const row = lines.find((l) => l.includes(id));
+      ok(row, `expected status to mention ${id}, got:\n${lines.join("\n")}`);
+      ok(
+        !/✓/.test(row),
+        `a failed id must not read as applied in status, got: ${row}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("X1 a failed migration is not replayed as applied by shadow replay", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      // A recorded-but-FAILED migration that would have created "User".
+      const id = "20250101000000_x1";
+      const sql = `CREATE TABLE "User" (id serial PRIMARY KEY, name text NOT NULL);\n`;
+      const file = writeMigrationFile(cwd, id, sql);
+      await seedHistory(db, id, {
+        checksum: migrationChecksum(readFileSync(file, "utf-8")),
+        success: false,
+      });
+
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      try {
+        await migrateDev({
+          resolved: minimalResolved(),
+          name: "next",
+          connectionString: "unused",
+          createClient: async () => createMigrationClient(db),
+          cwd,
+          createOnly: true,
+        });
+      } finally {
+        console.error = originalError;
+        process.exitCode = savedExitCode;
+      }
+
+      // The property under test is that the failed migration is NOT counted as
+      // applied. Once `recordedMigrations()` filters on `success = true`, shadow
+      // replay sees it as on-disk-but-unapplied and refuses — which is the safe
+      // outcome: planning a new migration on top of one whose real effect is
+      // unknown is exactly what must not happen silently.
+      //
+      // The design's X2a expected `migrate dev` to complete here. That
+      // expectation was written against the NEW deploy gate only and missed
+      // this pre-existing desync guard in `@indigodb/migrator`'s shadow.ts.
+      // The guard's behaviour is right; the design note is what was incomplete.
+      ok(
+        errors.some((l) => /shadow replay refused/.test(l) && l.includes(id)),
+        `expected shadow replay to refuse and name ${id}, got:\n${errors.join("\n")}`,
+      );
+
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && d.name !== id)
+        .map((d) => d.name);
+      strictEqual(
+        dirs.length,
+        0,
+        `no migration may be planned against an untrusted schema, got: ${dirs.join(", ")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("X2a/X2b migrateDev never writes a failure row, and cleans its directory", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      // Force a migrateDev failure through the invalid-generated-SQL path.
+      // `migrateDev`'s catch removes the migration directory, so a history row
+      // written there would point at a directory that no longer exists: an
+      // orphan invisible to `migrate status` and unremovable by
+      // `resolve --rolled-back`, which needs the file to exist.
+      //
+      // This is the one place a later refactor could wire the shared
+      // HISTORY_UPSERT into migrateDev's catch "for consistency" and create
+      // exactly that. If this test ever goes red, it is that regression, not a
+      // test bug.
+      // The generated migration will be an exact `CREATE TABLE "User"` (versioned
+      // migrations emit exact DDL, not the idempotent `IF NOT EXISTS` form that
+      // `db push` uses). Pre-creating that table makes the apply fail for a
+      // real, ordinary reason rather than a contrived one.
+      await db.exec(`CREATE TABLE "User" (id serial PRIMARY KEY);`);
+      const bad = minimalResolved();
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      try {
+        await migrateDev({
+          resolved: bad,
+          name: "boom",
+          connectionString: "unused",
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        });
+      } catch {
+        // a throw is an acceptable failure shape here; the assertions below are
+        // about what was left behind, not how it surfaced
+      } finally {
+        console.error = originalError;
+        process.exitCode = savedExitCode;
+      }
+
+      const rows = await historyRows(db);
+      strictEqual(
+        rows.length,
+        0,
+        `migrateDev must leave NO history row on failure, got:\n${JSON.stringify(rows)}`,
+      );
+
+      const dirs = readdirSync(join(cwd, "migrations"), { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      strictEqual(dirs.length, 0, `migrateDev must clean up its directory, got: ${dirs.join(", ")}`);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("I6 deploy refuses when ANY pending id carries a failure row", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      // Two pending ids; only the SECOND has a failure row. A gate that checked
+      // pending[0] alone would apply the first and then refuse — the same
+      // half-migrated outcome the destructive pre-scan already exists to avoid.
+      const first = "20250101000000_i6a";
+      const second = "20250101000001_i6b";
+      writeMigrationFile(cwd, first, `CREATE TABLE "i6a" (id serial PRIMARY KEY);\n`);
+      const secondFile = writeMigrationFile(
+        cwd,
+        second,
+        `CREATE TABLE "i6b" (id serial PRIMARY KEY);\n`,
+      );
+      await seedHistory(db, second, {
+        checksum: migrationChecksum(readFileSync(secondFile, "utf-8")),
+        success: false,
+      });
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const errors = [];
+      const originalError = console.error;
+      console.error = (...args) => errors.push(args.join(" "));
+      try {
+        await migrateDeploy("unused", {
+          createClient: async () => createMigrationClient(db),
+          cwd,
+        });
+      } finally {
+        console.error = originalError;
+      }
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a failed pending id must refuse with exit code 1");
+      ok(
+        errors.some((l) => l.includes(second)),
+        `expected the refusal to name ${second}, got:\n${errors.join("\n")}`,
+      );
+      ok(!(await tableExists(db, "i6a")), "the FIRST migration must not have been applied");
+      ok(!(await tableExists(db, "i6b")), "the failed migration must not have been applied");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── R5/R6/R7: --rolled-back treats a failure row identically ────────────────
+
+// No code change accompanies these. `--rolled-back` already deletes on `name`
+// regardless of `success`, so they are confirmatory regression tests, added
+// while the behaviour is provably correct: a future edit to the delete branch
+// now trips a named test instead of passing in silence.
+
+/** Creates the current seven-column history table with one seeded row. */
+async function seedHistory(db, id, { checksum = null, success = true } = {}) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS "_indigo_migrations" (
+      id serial PRIMARY KEY,
+      name text NOT NULL UNIQUE,
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      checksum text,
+      success boolean NOT NULL DEFAULT true,
+      installed_by text,
+      execution_time_ms integer
+    );
+  `);
+  await db.query(
+    `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+    [id, checksum, success],
+  );
+}
+
+await check("R5/R6 --rolled-back removes a success row and a failure row identically", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const okId = "20250101000000_r5";
+      const failId = "20250101000001_r6";
+      const okFile = writeMigrationFile(cwd, okId, `CREATE TABLE "r5" (id serial PRIMARY KEY);\n`);
+      const failFile = writeMigrationFile(cwd, failId, `CREATE TABLE "r6" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await seedHistory(db, okId, {
+        checksum: migrationChecksum(readFileSync(okFile, "utf-8")),
+        success: true,
+      });
+      await db.query(
+        `INSERT INTO "_indigo_migrations" (name, checksum, success) VALUES ($1, $2, $3)`,
+        [failId, migrationChecksum(readFileSync(failFile, "utf-8")), false],
+      );
+
+      const okLines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: okId, createClient, cwd }),
+      );
+      const failLines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: failId, createClient, cwd }),
+      );
+
+      strictEqual((await historyRows(db)).length, 0, "both rows must be gone");
+      ok(!(await tableExists(db, "r5")), "no migration SQL may run");
+      ok(!(await tableExists(db, "r6")), "no migration SQL may run");
+
+      // "Identically" made testable: the removal message must be the SAME for a
+      // failure row as for a success row, id aside. A future branch that
+      // special-cased failures would show up right here.
+      const normalise = (lines) => lines.map((l) => l.replace(okId, "<id>").replace(failId, "<id>"));
+      strictEqual(
+        JSON.stringify(normalise(failLines)),
+        JSON.stringify(normalise(okLines)),
+        `expected identical output, got:\n${failLines.join("\n")}\n---\n${okLines.join("\n")}`,
+      );
+      ok(okLines.some((l) => /Migration record removed/.test(l)));
+
+      // I7b: the ids are pending again AND re-deploy leaves clean success rows.
+      // Asserting only that deploy says "applied" proves the delete half twice
+      // over and says nothing about what the re-insert wrote — which is the
+      // half of I7b that actually matters, since the failed id had to survive
+      // the deploy refusal gate to get here at all.
+      const deployLines = await captureLogs(() =>
+        migrateDeploy("unused", { createClient, cwd }),
+      );
+      ok(
+        deployLines.some((l) => /applied/.test(l)),
+        `expected the rolled-back ids to be applied again, got:\n${deployLines.join("\n")}`,
+      );
+
+      const after = await historyRows(db);
+      strictEqual(after.length, 2, `expected both ids re-recorded, got:\n${JSON.stringify(after)}`);
+      for (const row of after) {
+        strictEqual(row.success, true, `${row.name} must come back as a success row`);
+        ok(row.installed_by != null, `${row.name} must carry identity`);
+        strictEqual(typeof row.execution_time_ms, "number", `${row.name} must carry a duration`);
+      }
+      ok(await tableExists(db, "r5"), "the re-deployed migration must have actually run");
+      ok(await tableExists(db, "r6"), "the re-deployed migration must have actually run");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R7 --rolled-back on an unrecorded id is a clean no-op", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r7";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r7" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const lines = await captureLogs(() =>
+        migrateResolve({ connectionString: "unused", rolledBack: id, createClient, cwd }),
+      );
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      ok(exitCode !== 1, "an unrecorded id is nothing to do, not a failure");
+      strictEqual((await historyRows(db)).length, 0);
+      ok(
+        lines.some((l) => /Not recorded as applied/.test(l)),
+        `expected a "nothing to do" line, got:\n${lines.join("\n")}`,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ─── R3/R4: D7 — the drift check runs BEFORE the success/failure branch ──────
+
+await check("R3 resolve --applied flips a matching failure row to success", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r3";
+      const file = writeMigrationFile(cwd, id, `CREATE TABLE "r3" (id serial PRIMARY KEY);\n`);
+      const checksum = migrationChecksum(readFileSync(file, "utf-8"));
+
+      // A failure row carrying the TRUE on-disk checksum. Before D7 this hit
+      // the `stored === computed` no-op branch and stayed false forever — the
+      // dead end the proposal's risk table names.
+      await db.exec(`
+        CREATE TABLE "_indigo_migrations" (
+          id serial PRIMARY KEY,
+          name text NOT NULL UNIQUE,
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true,
+          installed_by text,
+          execution_time_ms integer
+        );
+        INSERT INTO "_indigo_migrations" (name, checksum, success, execution_time_ms)
+        VALUES ('${id}', '${checksum}', false, 999);
+      `);
+      const before = await db.query(
+        `SELECT applied_at FROM "_indigo_migrations" WHERE name = '${id}'`,
+      );
+
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, true, "a matching failure row must flip to success");
+      strictEqual(
+        rows[0].execution_time_ms,
+        null,
+        "the failed attempt's duration must not be carried onto the success row",
+      );
+
+      const after = await db.query(
+        `SELECT applied_at FROM "_indigo_migrations" WHERE name = '${id}'`,
+      );
+      ok(
+        new Date(after.rows[0].applied_at) >= new Date(before.rows[0].applied_at),
+        "applied_at must describe the attempt that stands, not the one that failed",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R4 resolve --applied refuses a DRIFTED failure row instead of flipping it", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r4";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r4" (id serial PRIMARY KEY);\n`);
+
+      // A failure row whose stored checksum does NOT match the file. If the
+      // success/failure branch were consulted before the drift check, this
+      // would be flipped to true with no checksum comparison at all — which is
+      // the entire point of D7's ordering, and what this test pins.
+      await db.exec(`
+        CREATE TABLE "_indigo_migrations" (
+          id serial PRIMARY KEY,
+          name text NOT NULL UNIQUE,
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true,
+          installed_by text,
+          execution_time_ms integer
+        );
+        INSERT INTO "_indigo_migrations" (name, checksum, success)
+        VALUES ('${id}', 'a-checksum-that-does-not-match', false);
+      `);
+
+      const savedExitCode = process.exitCode;
+      process.exitCode = undefined;
+      await migrateResolve({
+        connectionString: "unused",
+        applied: id,
+        createClient: async () => createMigrationClient(db),
+        cwd,
+      });
+      const exitCode = process.exitCode;
+      process.exitCode = savedExitCode;
+
+      strictEqual(exitCode, 1, "a drifted id must refuse with exit code 1");
+      const rows = await historyRows(db);
+      strictEqual(rows.length, 1);
+      strictEqual(rows[0].success, false, "a refused resolve must leave the row untouched");
+      strictEqual(rows[0].checksum, "a-checksum-that-does-not-match");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+await check("R2 after resolve --applied the id reads as applied, not pending", async () => {
+  await withDatabase(async (db) => {
+    const { cwd, cleanup } = createMigrationsRoot();
+    try {
+      const id = "20250101000000_r2";
+      writeMigrationFile(cwd, id, `CREATE TABLE "r2" (id serial PRIMARY KEY);\n`);
+      const createClient = async () => createMigrationClient(db);
+
+      await migrateResolve({ connectionString: "unused", applied: id, createClient, cwd });
+
+      const statusLines = await captureLogs(() =>
+        migrateStatus("unused", { createClient, cwd }),
+      );
+      ok(
+        statusLines.some((l) => l.includes(id) && /✓/.test(l)),
+        `expected status to show ${id} as applied, got:\n${statusLines.join("\n")}`,
+      );
+
+      const deployLines = await captureLogs(() =>
+        migrateDeploy("unused", { createClient, cwd }),
+      );
+      ok(
+        deployLines.some((l) => /No pending migrations/.test(l)),
+        `expected deploy to find nothing pending, got:\n${deployLines.join("\n")}`,
+      );
+      ok(!(await tableExists(db, "r2")), "deploy must not have applied a resolved migration");
     } finally {
       cleanup();
     }
