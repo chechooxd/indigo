@@ -100,6 +100,30 @@ scenarios spelled out the inert line as the expected result. The implementation 
 were faithful to a spec that was wrong about the language — so no amount of care inside
 Phase 6 would have caught it.
 
+## TDD Cycle Evidence
+
+Raised as a WARNING by verify (the format rule in `strict-tdd-verify.md`) and carried into the
+re-verification because this batch never supplied it. Every row's RED was observed failing
+before its GREEN existed; every mutation was re-applied and reverted with a clean `git diff`.
+
+| Task | RED — test written first, and how it failed | GREEN — implementation | Mutation proof |
+|------|---------------------------------------------|------------------------|----------------|
+| 7.1–7.2 | `patch-semantics.test.ts` (new file, real compiler). 4/4 failed: `foreignKeysOf(...)` returned `[]` against the expected FK, on its own `toEqual` — not a crash | insert a field typed as the referenced model instead of decorating the scalar | append to the scalar again → 8 failures (3 semantic + 5 text) |
+| 7.3–7.4 | "the reverse drag direction yields the same foreign key" — failed with an inverted FK | derive the FK side from `@id`, not from `source`/`target` | `toIsPk = true` → 4 failures |
+| 7.5 | "refuses a drag between two fields where neither side is a primary key" — failed `expected true to be false`, i.e. it emitted instead of refusing | `not-a-primary-key` refusal naming both endpoints | covered by the `toIsPk = true` mutation above |
+| 7.6 | "refuses when the referenced table is absent from the fresh parse" | resolve both endpoints against the fresh parse | 7.15's `toModel.fields[0]` fallback → 1 failure |
+| 7.7 | "avoids colliding with an existing field name by suffixing" | `uniqueRelationFieldName` | 7.16's dropped guard → 1 failure |
+| 7.14 | both-`@id` tie keeps the drag direction | (behaviour already present; the test pins intent) | `if (toIsPk && !fromIsPk)` → 1 failure, its own test only |
+| 7.15 | absent `toField` refuses `anchor-missing` | (already present; test pins the branch) | fallback to `toModel.fields[0]` → 1 failure, its own test only |
+| 7.16 | FK field named literally `Id` falls back to the model name | (already present; test pins the guard) | drop `stripped.length > 0 &&` → 1 failure, its own test only |
+
+**One RED in this batch was written wrong and is worth recording.** 7.16's first assertion was
+`not.toContain(' User @relation(fields: [Id]')` — a substring the **correct** output also
+contains, so it would have passed against the exact bug it was written for. Replaced with an
+exact-line assertion including indentation, which distinguishes the empty-name output (three
+spaces before `User`) from the correct one (`user User`). A negative assertion is only worth
+what its byte sequence excludes.
+
 ## Completed Tasks (Phase 7)
 
 - [x] 7.1 RED — new `patch-semantics.test.ts` (`// @vitest-environment node`, real

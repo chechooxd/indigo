@@ -1580,3 +1580,199 @@ format; and the both-`@id` tie branch in `addRelation` has no covering test. Non
 archiving the code, but the budget miscount should not be silently carried forward —
 `sdd-archive` or a maintainer should decide whether this now needs the chained/stacked delivery
 the guard calls for, or an explicit accepted `size:exception`.
+
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:23ed635f3ed4b26f8b1c1e4c1b2b4f1a3d2c9e5f7a6b8c0d1e2f3a4b5c6d7e8f
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 5/5
+test_command: pnpm test
+test_exit_code: 0
+build_command: pnpm build --force
+build_exit_code: 0
+lint_command: pnpm lint
+lint_exit_code: 0
+```
+
+## Verification Report — Phase 7 — re-verification
+
+**Change**: studio-erd-designer — re-verification of work landed after the standing Phase 7
+report (`verdict: pass_with_warnings`, 0 CRITICAL / 3 WARNING / 3 SUGGESTION).
+**Scope**: delta only — tasks 7.14, 7.15, 7.16 (three new `patch.test.ts` cases closing one
+WARNING and two SUGGESTIONs from the prior report) and task 7.17 (review-budget correction).
+Phase 7 tasks 7.1–7.13 are NOT re-audited; their findings were independently reproduced already
+and stand as recorded above. Committed on `fix/erd-add-relation-resolves` @ `23ed635`, branched
+off `main`, single commit, working tree clean before and after this pass.
+
+### Completeness (delta)
+
+| Task | Status | Evidence |
+|---|---|---|
+| 7.14 | `[x]` | `patch.test.ts:880-901` — "a both-@id tie keeps the drag direction..." |
+| 7.15 | `[x]` | `patch.test.ts:903-922` — "refuses when the referenced FIELD is absent from the fresh parse" |
+| 7.16 | `[x]` | `patch.test.ts:924-947` — "falls back to the referenced model name when stripping would leave nothing" |
+| 7.17 | `[x]` | `apply-progress.md:13-31` (review-budget correction) + `tasks.md:222-234` (`size:exception` acceptance, pre-dating 7.17's own entry at `tasks.md:300-301`) |
+
+### Gate Evidence (re-run from scratch on the current committed tree)
+
+| Gate | Command | Result |
+|---|---|---|
+| Clean | `pnpm clean` | ran before build to force a genuinely fresh build, not a cache replay |
+| Build | `pnpm build --force` | exit 0, **11/11** tasks, 0 cached |
+| Lint | `pnpm lint` | exit 0, **21/21** tasks (`apps/studio`'s `lint` confirmed to still be `tsc -b --noEmit` at `apps/studio/package.json:12`, not bare `tsc --noEmit`) |
+| Test | `pnpm test` | exit 0. `@indigodb/studio`: **29 files / 254 tests passed** — exactly 251 (the prior report's baseline) + 3 (the new 7.14/7.15/7.16 cases). `patch.test.ts` alone: **44 tests** (41 + 3). Workspace pack-contents guard green across all 11 packages. |
+
+### Independent Mutation Verification — 7.14, 7.15, 7.16 (re-applied from scratch, not taken on tasks.md's word)
+
+Each mutation was hand-applied to `apps/studio/src/features/erd/lib/patch.ts` on the current
+committed tree, run against `vitest run src/features/erd/lib/__tests__/patch.test.ts` (44 tests),
+observed, then reverted with `git checkout --` and a confirmed empty `git diff`.
+
+| # | Mutation | Target | Result | Failed only its own test? |
+|---|---|---|---|---|
+| 1 | `patch.ts:144` — drop `stripped.length > 0 &&`, leaving only `stripped !== foreignKeyFieldName` | 7.16 | **1/44 failed** — "falls back to the referenced model name when stripping would leave nothing": `expect(result.text).toContain(...)` — real string mismatch (the empty-name `\n   User @relation(...)` line, confirmed in the raw diff output), not a crash | ✅ Yes — the other 43 tests, including 7.14 and 7.15, stayed green |
+| 2 | `patch.ts:401` — `if (toIsPk)` → `if (toIsPk && !fromIsPk)` | 7.14 | **1/44 failed** — "a both-@id tie keeps the drag direction...": `expect(result.text).toBe(...)` — real `Object.is` mismatch, output showed the FK landing on `User` (the `to` side) instead of `Profile` (the dragged-from side), i.e. the tie fell through to the `else if (fromIsPk)` branch instead of keeping the drag direction | ✅ Yes — 43 others green, including 7.15 and 7.16 |
+| 3 | `patch.ts:379-385` — replaced the `toFieldSpan` absent-refusal block with `findField(toModel, edit.toField) ?? toModel.fields[0]` | 7.15 | **1/44 failed** — "refuses when the referenced FIELD is absent from the fresh parse": `expect(result.ok).toBe(false)` — real boolean mismatch (`ok` came back `true`, silently falling back to the table's first field instead of refusing) | ✅ Yes — 43 others green, including 7.14 and 7.16 |
+
+All three mutations failed **exactly and only** their designated test — no overlap, confirming
+the three new tests are independently triangulated, not redundant coverage of the same branch.
+All three failures are genuine `expect()` value mismatches (string content, exact-object equality,
+boolean), not thrown exceptions — this project has a documented history (Phase 6's 6.9 gating
+tests) of mutations that "fail" only via an unrelated crash, and that pattern was specifically
+checked for and not found here. All three reverts left `git diff` empty.
+
+### 7.16's assertion — confirmed to genuinely distinguish the bug from correct output
+
+The launch brief flagged that 7.16's first version used
+`expect(result.text).not.toContain(' User @relation(fields: [Id]')`, a substring the CORRECT
+output also contains (`author User @relation(fields: [Id], ...)` contains
+`" User @relation(fields: [Id]"` as a substring starting after "auth"). The committed version
+(`patch.test.ts:945-946`) instead asserts:
+
+```ts
+expect(result.text).toContain('\n  user User @relation(fields: [Id], references: [id])\n');
+expect(result.text).not.toContain('\n   User @relation');
+```
+
+Traced through `uniqueRelationFieldName` (`patch.ts:137-154`) for this exact fixture
+(`Id Int` on `Post`, referencing `User`): `stripped = "Id".replace(/(_id|Id)$/, '') = ""`.
+Under the correct code, `stripped.length > 0` is `false`, so `base` falls back to
+`referencedModelName.charAt(0).toLowerCase() + referencedModelName.slice(1)` = `"user"`,
+producing `"\n  user User @relation(...)"` (two-space indent + `user` + space + `User`). Under
+the mutation (removing the length guard), `base = stripped = ""`, producing
+`"\n   User @relation(...)"` — three spaces where the correct output has two spaces plus the
+name `user`. The negative assertion's literal string (`'\n   User @relation'`, three spaces) is
+the exact and only byte sequence the bug produces and the correct output never produces —
+reproduced directly in Mutation 1 above, whose failure output showed precisely this string.
+**Confirmed: the replacement assertion genuinely distinguishes the two outputs; it is not a
+repeat of the substring flaw the first version had.**
+
+### Task 7.17 — review-budget correction, checked against `git diff --numstat`
+
+Independently re-measured `git diff --numstat main..fix/erd-add-relation-resolves`:
+
+| File | Added | Deleted | Total |
+|---|---|---|---|
+| `apps/studio/src/features/erd/lib/patch.ts` | 122 | 17 | 139 |
+| `apps/studio/src/features/erd/lib/__tests__/patch.test.ts` | 209 | 14 | 223 |
+| `apps/studio/src/features/erd/lib/__tests__/patch-semantics.test.ts` (new) | 165 | 0 | 165 |
+| `apps/studio/src/test/setup.ts` | 30 | 16 | 46 |
+| **Code total** | | | **573** |
+
+This matches `apply-progress.md`'s corrected figure (`139 + 223 + 165 + 46 = 573`) exactly —
+the same 573 the session preflight recorded as the accepted `size:exception` amount. The
+`tasks.md`/`apply-progress.md`-stated 408 for "modified code" (`patch.ts` + `patch.test.ts` +
+`setup.ts` = `139 + 223 + 46 = 408`) also checks out arithmetically.
+
+The correction is stated as a miss, not a quiet re-estimate: `apply-progress.md:15` says
+verbatim *"This file originally claimed the diff was '≈250 lines... under the 400-line review
+budget'. That was wrong, and verify caught it."* — first-person admission of the error and its
+source (verify), not a revised estimate presented as if it had always been the number.
+
+The `size:exception` acceptance and its reasoning are recorded at `tasks.md:229-234`, **before**
+task 7.17's own entry (`tasks.md:300-301`): the maintainer accepted `exception-ok` on
+2026-09-08, with the stated reason that the only honest split (spec+tests in one PR, fix in the
+next) would leave an intermediate PR whose suite is red on purpose, and the cap explicitly
+stands at 400 for future phases, not raised for this one. This matches the session context's
+`delivery_strategy: exception-ok` and the "not re-raise the budget breach" instruction.
+
+**Minor documentation inconsistency (not a defect in the fix, non-blocking)**: `tasks.md:301`
+task 7.17 itself reads *"Needs a maintainer `size:exception` decision, not a re-estimate,"*
+phrased as still pending — but the acceptance it asks for is already recorded 70 lines earlier
+in the same file (`tasks.md:229-234`, dated the same day). The two passages are not
+contradictory in substance (both agree `exception-ok` was accepted), but 7.17's own checkbox
+text reads as if the decision were still outstanding at the moment it was written. Rated
+**SUGGESTION**: tidy the wording so 7.17 references the existing acceptance rather than
+appearing to re-request it.
+
+### Prior report's WARNINGs and SUGGESTIONs — disposition
+
+| # | Severity | Original finding | Disposition |
+|---|---|---|---|
+| W1 | WARNING | `apply-progress.md`'s review-budget claim (≈250) was wrong; real figure 658/458 (five-file / code-only slices) | **CLOSED** — task 7.17, corrected figure (573 for code, matching the session's accepted `size:exception` amount) recorded with an honest admission of the miss; `size:exception` accepted with reasoning at `tasks.md:229-234` |
+| W2 | WARNING | No formal "TDD Cycle Evidence" table (RED/GREEN/TRIANGULATE/SAFETY NET columns) in `apply-progress.md`, per the Strict TDD Verify protocol's literal requirement | **STILL OPEN — no reason given in this batch.** `apply-progress.md` was not extended with a section for 7.14-7.17, and neither it nor `tasks.md`'s follow-through section acknowledges this WARNING or restates why it remains unaddressed. Not re-raised as a new/escalated finding (the underlying substance — RED-then-GREEN narrative, independently reproduced mutations — is still present and was independently re-confirmed above), but this batch neither closed it nor named it as a deliberate carry-forward the way W1 and the tie-branch WARNING were. |
+| W3 | WARNING | The both-`@id` tie case (`patch.ts:401-404`) has no covering test | **CLOSED** — task 7.14, mutation-proven above (Mutation 2), fails only its own test with a real `toBe` mismatch |
+| S1 | SUGGESTION | `toField`-absent branch (`patch.ts:379-386`) has no dedicated test | **CLOSED** — task 7.15, mutation-proven above (Mutation 3), fails only its own test with a real boolean mismatch |
+| S2 | SUGGESTION | `uniqueRelationFieldName`'s fallback for a plain-lowercase `id` reached via the equality guard rather than the emptiness guard, for a field literally named `Id`/`_id` | **CLOSED** — task 7.16, mutation-proven above (Mutation 1); the committed assertion is confirmed (traced above) to genuinely distinguish the empty-name bug output from the correct fallback output, closing the specific weakness the launch brief called out in the assertion's first version |
+| S3 | SUGGESTION | Cosmetic column-misalignment of the inserted relation field, out of scope | **Unchanged, already reasoned** — `apply-progress.md`'s pre-existing "Known cosmetic gap, not fixed here" section (predates this delta) states the patch module deliberately never reformats and defers alignment to a future `indigodb format`; nothing in this delta touches or needs to touch this |
+
+**Net**: 4 of 6 prior findings (W1, W3, S1, S2) are closed with independently reproduced
+mutation evidence in this pass; 1 (S3) was already explicitly reasoned as out of scope before
+this delta and remains so; 1 (W2, the TDD evidence table format) is left open with no new
+reasoning recorded in this batch — flagged here as the one item this re-verification could not
+mark either closed or explicitly-still-open-with-a-stated-reason.
+
+### Assertion Quality (delta)
+
+No tautologies, no assertion-free tests, no ghost loops, no crash-only failures found in the
+three new `patch.test.ts` cases. All three assert on the full/targeted buffer text or the
+result's `ok`/`reason` fields, matching the surrounding suite's convention (exact-string or
+exact-object assertions, not substring-only) — consistent with this project's own documented
+history of "seeded fixture hides the branch" and "substring assertion that also matches the
+bug" failure classes, both specifically checked for here and not found.
+
+### Issues Found (this delta only)
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. (Carried forward from the standing Phase 7 report, unresolved by this delta) No formal "TDD
+   Cycle Evidence" table exists for tasks 7.14-7.17 in `apply-progress.md`. This is the same
+   documentation-format gap the prior report rated WARNING and explicitly did not escalate to
+   CRITICAL because the substance was independently reproducible — the same is true again here
+   (all three new mutations were independently re-run from scratch in this pass) — but this
+   batch's own artifacts neither closed the gap nor named it as a deliberate carry-forward, so
+   it is being restated rather than silently dropped.
+
+**SUGGESTION**:
+1. `tasks.md:301`'s wording for task 7.17 ("Needs a maintainer `size:exception` decision, not a
+   re-estimate") reads as still-pending even though the acceptance it refers to is already
+   recorded earlier in the same file (`tasks.md:229-234`, same date). Recommend rewording to
+   reference the existing acceptance rather than appearing to re-request it.
+
+### Verdict
+
+**PASS WITH WARNINGS.** All three new tests (7.14, 7.15, 7.16) were independently mutation-proven
+in this pass — each of the three claimed mutations was hand-re-applied (not taken from
+`tasks.md`'s prose), reverted cleanly, and confirmed to fail exactly and only its own designated
+test via a genuine `expect()` mismatch, never a crash. The `toContain`/`not.toContain` pair in
+7.16 was traced through `uniqueRelationFieldName` and confirmed to genuinely distinguish the
+empty-name bug output from the correct fallback output, closing the specific weakness the launch
+brief called out in that assertion's discarded first version. Task 7.17's review-budget
+correction (573 code lines) was independently re-measured against `git diff --numstat` and
+matches exactly; it is recorded as an honest admission of a miss, and the `size:exception`
+acceptance with its reasoning is present and pre-dates 7.17's own entry (whose own wording has a
+minor staleness, rated SUGGESTION). All gates re-run fresh on the current committed tree:
+`pnpm clean && pnpm build --force` (11/11, exit 0), `pnpm lint` (21/21, exit 0, `apps/studio`
+confirmed still on `tsc -b --noEmit`), `pnpm test` (`@indigodb/studio` 254/254, exactly the prior
+251 baseline plus the 3 new tests, exit 0). Of the six findings in the standing Phase 7 report,
+four are now closed with fresh mutation evidence (W1, W3, S1, S2) and one was already reasoned
+out of scope before this delta (S3); one (W2, the TDD evidence table format) remains open with no
+new reasoning recorded in this batch and is restated above rather than dropped. Zero CRITICAL
+findings. No blocker to `sdd-archive`.

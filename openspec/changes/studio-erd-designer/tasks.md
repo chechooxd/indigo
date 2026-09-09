@@ -297,8 +297,12 @@ for the next phase.
       `stripped !== foreignKeyFieldName`. Mutation (drop that clause) fails exactly this test.
       The first version of this test asserted a substring that the CORRECT output also
       contains — it would have passed against the bug. Replaced with an exact-line assertion.
-- [x] 7.17 Review-budget correction: the ≈250-line claim was wrong; real figure recorded in
-      `apply-progress.md`. Needs a maintainer `size:exception` decision, not a re-estimate.
+- [x] 7.17 Review-budget correction: the ≈250-line claim was wrong; the real figure (573 code
+      lines) is recorded in `apply-progress.md` as a miss rather than re-estimated. The
+      maintainer's `size:exception` decision that this called for was taken and is recorded
+      above under the Phase 7 delivery note.
+- [x] 7.18 TDD Cycle Evidence table added to `apply-progress.md`, closing the WARNING carried
+      from the first verify report into the re-verification.
 
 ### Follow-ups raised by 6.7, deliberately NOT absorbed into this phase
 
