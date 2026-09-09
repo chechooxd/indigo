@@ -132,43 +132,33 @@ async function defaultCreateClient(connectionString: string): Promise<MigrationC
 }
 
 /**
- * Idempotent DDL + silent legacy upgrade. Fresh install: creates the full
- * 5-column shape in one statement. Existing (pre-checksum) table: the two
- * `ADD COLUMN IF NOT EXISTS` statements are no-ops on a fresh table and
- * upgrade a legacy one in place. Backfill then hashes every unbackfilled
- * row's on-disk `migration.sql` (silently, no prompt/output) — a row whose
- * file is missing is left `NULL`, deferred to the existing shadow-replay
- * desync rules rather than guessed at here. A second call is a no-op: the
- * `WHERE checksum IS NULL` selection is empty once backfill has run once.
+ * Idempotent DDL: one `CREATE TABLE IF NOT EXISTS` carrying the full column
+ * set, and nothing else.
+ *
+ * There is deliberately no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and no
+ * checksum backfill loop. Both existed to upgrade a table created by an older
+ * version in place — but nothing has ever been published (v0.0.1), so there is
+ * no installed base to upgrade, and carrying that machinery would mean
+ * shipping a migration path for a version that never shipped.
+ *
+ * The consequence is worth stating: a table created by an older local build is
+ * left exactly as it is. It is not widened, and a write naming a column it does
+ * not have fails loudly rather than being silently repaired. That is the
+ * intended behaviour, not an oversight — drop the table and let this recreate
+ * it.
  */
-async function ensureHistory(client: MigrationClient, cwd: string): Promise<void> {
+async function ensureHistory(client: MigrationClient): Promise<void> {
   await client.query(
     `CREATE TABLE IF NOT EXISTS "${HISTORY_TABLE}" (
        id serial PRIMARY KEY,
        name text NOT NULL UNIQUE,
        applied_at timestamptz NOT NULL DEFAULT now(),
        checksum text,
-       success boolean NOT NULL DEFAULT true
+       success boolean NOT NULL DEFAULT true,
+       installed_by text,
+       execution_time_ms integer
      );`,
   );
-  await client.query(`ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS checksum text;`);
-  await client.query(
-    `ALTER TABLE "${HISTORY_TABLE}" ADD COLUMN IF NOT EXISTS success boolean NOT NULL DEFAULT true;`,
-  );
-
-  const root = migrationsRoot(cwd);
-  const { rows } = await client.query(
-    `SELECT name FROM "${HISTORY_TABLE}" WHERE checksum IS NULL ORDER BY id`,
-  );
-  for (const row of rows as { name: string }[]) {
-    const file = join(root, row.name, "migration.sql");
-    if (!existsSync(file)) continue; // left NULL — existing desync rules own missing files
-    const checksum = migrationChecksum(readFileSync(file, "utf-8"));
-    await client.query(
-      `UPDATE "${HISTORY_TABLE}" SET checksum = $1 WHERE name = $2 AND checksum IS NULL`,
-      [checksum, row.name],
-    );
-  }
 }
 
 async function appliedMigrations(client: MigrationClient): Promise<Set<string>> {
@@ -342,7 +332,7 @@ export async function migrateDev(options: DevOptions): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     let prev: ResolvedSchema | null;
     try {
@@ -435,7 +425,7 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     }
     locked = true;
 
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     const drifted = await checksumPreflight(client, cwd);
     if (drifted.length > 0) {
@@ -512,7 +502,7 @@ export async function migrateStatus(connectionString: string, seams: RunnerSeams
   }
   const client = await (seams.createClient ?? (() => defaultCreateClient(connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
     const applied = await appliedMigrations(client);
     const drifted = new Set(await checksumPreflight(client, cwd));
     for (const id of dirs) {
@@ -566,7 +556,7 @@ export async function migrateResolve(options: ResolveOptions): Promise<void> {
 
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
-    await ensureHistory(client, cwd);
+    await ensureHistory(client);
 
     if (options.applied) {
       const { rows } = await client.query(

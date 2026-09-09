@@ -3,11 +3,15 @@
  * `migrate-runner.ts`). Mirrors `pull.mjs`'s style: plain Node, no test
  * framework, real PGlite via `migrate-harness.mjs` (never a mocked `pg`).
  *
- * Slice 1 (this file, initial cases): `MigrationClient`/`cwd` seams, the
- * new DDL + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` upgrade shape,
- * silent backfill of legacy NULL checksums, and checksum/success recorded
- * on every `migrateDev`/`migrateDeploy` INSERT. NO enforcement yet — that
- * is Slice 2, added to this same file.
+ * Covers the `MigrationClient`/`cwd` seams, the history table's DDL, and
+ * what each write path records on it.
+ *
+ * `migration-history-forensics` removed the legacy upgrade path: there is no
+ * `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and no silent backfill of NULL
+ * checksums any more, so the four tests that covered them were deleted rather
+ * than adapted — their names described behaviour that no longer exists.
+ * Nothing was ever published at v0.0.1, so there is no installed base those
+ * statements could have been protecting.
  */
 
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
@@ -110,129 +114,77 @@ async function captureErrors(fn) {
 
 // ─── fresh install: full 5-column shape ──────────────────────────────────────
 
-await check("fresh install: ensureHistory creates checksum + success columns", async () => {
+await check("I1 fresh install: ensureHistory creates the full seven-column shape", async () => {
   await withDatabase(async (db) => {
     const { cwd, cleanup } = createMigrationsRoot();
     try {
       await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
       const columns = await historyColumns(db);
-      ok(columns.has("checksum"), `expected a checksum column, got: ${[...columns].join(", ")}`);
-      ok(columns.has("success"), `expected a success column, got: ${[...columns].join(", ")}`);
+      const expected = [
+        "id",
+        "name",
+        "applied_at",
+        "checksum",
+        "success",
+        "installed_by",
+        "execution_time_ms",
+      ];
+      for (const column of expected) {
+        ok(columns.has(column), `expected an ${column} column, got: ${[...columns].join(", ")}`);
+      }
+      strictEqual(
+        columns.size,
+        expected.length,
+        `expected exactly ${expected.length} columns, got: ${[...columns].join(", ")}`,
+      );
     } finally {
       cleanup();
     }
   });
 });
 
-// ─── legacy upgrade: ALTER TABLE ADD COLUMN IF NOT EXISTS ────────────────────
+// ─── I2: a pre-existing table is left as-is, never widened ───────────────────
 
-await check("legacy 3-column table: ensureHistory adds checksum + success via ALTER", async () => {
+await check("I2 a legacy table is left as-is: a write naming a new column is rejected", async () => {
   await withDatabase(async (db) => {
     const { cwd, cleanup } = createMigrationsRoot();
     try {
+      // The exact pre-change shape, hand-created so `CREATE TABLE IF NOT EXISTS`
+      // is a no-op and cannot be the thing under test.
       await db.exec(`
         CREATE TABLE "_indigo_migrations" (
           id serial PRIMARY KEY,
           name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
+          applied_at timestamptz NOT NULL DEFAULT now(),
+          checksum text,
+          success boolean NOT NULL DEFAULT true
         );
       `);
+
       await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
+
       const columns = await historyColumns(db);
-      ok(columns.has("checksum"), `expected checksum added, got: ${[...columns].join(", ")}`);
-      ok(columns.has("success"), `expected success added, got: ${[...columns].join(", ")}`);
-    } finally {
-      cleanup();
-    }
-  });
-});
+      ok(
+        !columns.has("installed_by"),
+        `expected installed_by NOT to be added to a legacy table, got: ${[...columns].join(", ")}`,
+      );
 
-// ─── silent backfill ──────────────────────────────────────────────────────────
-
-await check("legacy row with NULL checksum is silently backfilled from on-disk SQL", async () => {
-  await withDatabase(async (db) => {
-    const { cwd, cleanup } = createMigrationsRoot();
-    try {
-      const id = "20240101000000_init";
-      const dir = join(cwd, "migrations", id);
-      mkdirSync(dir, { recursive: true });
-      const sql = `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`;
-      writeFileSync(join(dir, "migration.sql"), sql);
-
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
+      // Asserted through a real write rather than through the column list
+      // alone: the property that matters is that the database refuses, not
+      // that information_schema happens to agree.
+      let rejected = null;
+      try {
+        await db.exec(
+          `INSERT INTO "_indigo_migrations" (name, installed_by) VALUES ('x', 'someone');`,
         );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('${id}');
-      `);
-
-      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
-
-      const rows = await historyRows(db);
-      strictEqual(rows.length, 1);
-      strictEqual(rows[0].name, id);
-      strictEqual(rows[0].checksum, migrationChecksum(sql));
-      strictEqual(rows[0].success, true);
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-await check("backfill is idempotent: a second ensureHistory call touches zero rows", async () => {
-  await withDatabase(async (db) => {
-    const { cwd, cleanup } = createMigrationsRoot();
-    try {
-      const id = "20240101000000_init";
-      const dir = join(cwd, "migrations", id);
-      mkdirSync(dir, { recursive: true });
-      const sql = `CREATE TABLE "foo" (id serial PRIMARY KEY);\n`;
-      writeFileSync(join(dir, "migration.sql"), sql);
-
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('${id}');
-      `);
-
-      const client = () => createMigrationClient(db);
-      await migrateDeploy("unused", { createClient: client, cwd });
-      const first = await historyRows(db);
-
-      await migrateDeploy("unused", { createClient: client, cwd });
-      const second = await historyRows(db);
-
-      strictEqual(first.length, second.length);
-      strictEqual(first[0].checksum, second[0].checksum);
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-await check("legacy row with a missing on-disk file is left NULL, not guessed at", async () => {
-  await withDatabase(async (db) => {
-    const { cwd, cleanup } = createMigrationsRoot();
-    try {
-      await db.exec(`
-        CREATE TABLE "_indigo_migrations" (
-          id serial PRIMARY KEY,
-          name text NOT NULL UNIQUE,
-          applied_at timestamptz NOT NULL DEFAULT now()
-        );
-        INSERT INTO "_indigo_migrations" (name) VALUES ('20240101000000_gone');
-      `);
-
-      await migrateDeploy("unused", { createClient: async () => createMigrationClient(db), cwd });
-
-      const rows = await historyRows(db);
-      strictEqual(rows.length, 1);
-      strictEqual(rows[0].checksum, null);
+      } catch (error) {
+        rejected = error;
+      }
+      ok(rejected, "expected the INSERT naming installed_by to be rejected, but it succeeded");
+      ok(
+        /installed_by/.test(String(rejected.message)),
+        `expected the rejection to name installed_by, got: ${rejected.message}`,
+      );
     } finally {
       cleanup();
     }
