@@ -1,5 +1,322 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:bf7e7c8e03ec111c3415c76dd9035f53df62de98d906e628de97d218720b5e93
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 22/22
+scenarios: 62/62
+test_command: pnpm exec turbo test --force
+test_exit_code: 0
+test_output_hash: sha256:8a9daf89b4b1ebb908955a1bbde55dc130a63d299e373278b4308ede3f2c0717
+build_command: pnpm clean && pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:ad9ed2cbf7d083be05164916f260448fb71cbff7b9cf6cd0a5a0eb103e70536d
+```
+
+## Independent gate re-run — orchestrator, with outputs attached
+
+**Change**: `studio-erd-designer`
+
+**This is a separate execution, not the same one as the entry below.** The two entries share
+`evidence_revision` because they verify the same change at the same tree, but their
+`test_output_hash` and `build_output_hash` differ, and that difference is real: these are the
+hashes of *this* entry's runs, committed under `evidence/`. The entry below reports a different
+execution whose logs no longer exist. Read the shared `evidence_revision` as "same subject",
+never as "same evidence".
+
+### Why this entry exists
+
+Review `review-f3fe98aacd813d4e` raised finding **R3-1 (CRITICAL, reliability)** against the
+report itself, not against the change:
+
+> The candidate's entire content is a newly inserted, self-authored gate-passing report ...
+> No log, CI artifact, or any other changed file accompanies this changeset to substantiate the
+> claimed command outputs or hashes -- the only evidence for `pnpm exec turbo test --force` and
+> `pnpm build --force` having actually run and exited 0 is this document's own prose. Since this
+> report is explicitly the artifact the automated archive gate reads and trusts, an unverifiable
+> self-attestation used to flip that gate from blocked to unblocked is a reliability defect in
+> the candidate itself, independent of whether the underlying claims happen to be true.
+
+The finding is about **contrastability, not veracity**, and it is correct. It holds whether or
+not the claims are true, because nothing in the changeset let a later reader check them.
+
+### What was re-run, by whom
+
+Every gate below was re-executed by the orchestrator from a clean tree — not copied from the
+delegated agent's summary. The agent that produced the entry below removed its own temporary
+logs, so reusing its hashes would have reproduced the exact defect this entry answers.
+
+| Gate | Command | Result | Exit | Agreed with the entry below |
+|---|---|---|---|---|
+| Lint | `pnpm exec turbo lint --force` | 21/21, 0 cached | 0 | yes |
+| Build | `pnpm clean && pnpm build --force` | 11/11, 0 cached | 0 | yes |
+| Test | `pnpm exec turbo test --force` | 20/20, 0 cached | 0 | yes |
+
+Requirement and scenario totals were also re-counted independently, by grepping
+`### Requirement:` and `#### Scenario:` headers across the four delta specs rather than trusting
+the prior total:
+
+| Spec | Requirements | Scenarios |
+|---|---|---|
+| `ast-source-spans` | 6 | 9 |
+| `studio-erd-editing` | 10 | 37 |
+| `studio-layout-persistence` | 5 | 10 |
+| `studio-readonly-mode` | 1 | 6 |
+| **Total** | **22** | **62** |
+
+All four independent checks agreed with the entry below, so the delegated verification is not
+inflated on the parts that were re-runnable.
+
+### What this entry does NOT substantiate
+
+Attaching these logs closes the gap for the four checks above and for nothing else. The entry
+below carries further load-bearing claims that this re-run does **not** cover and that still rest
+on the delegated agent's prose alone:
+
+- the 96/96 task cross-check against the tree, including the spot-checked artifacts
+- the per-requirement evidence citations (file:line and test names, requirement by requirement)
+- the `addRelation` mutation-testing narrative and the conclusion that the historical
+  scalar-FK defect now has automated coverage
+- the DB-gated realtime suites having been correctly identified as SKIP rather than run
+
+A green `turbo test --force` proves the suite passes. It does not prove that any particular
+requirement was mapped to any particular test, and no attached log can carry that mapping. Those
+claims remain unverified here, and are marked so rather than left to inherit credibility from the
+gate logs sitting next to them.
+
+### Evidence
+
+Raw outputs are committed under `evidence/`, with sha256 sums in `evidence/MANIFEST.txt`. The
+`test_output_hash` and `build_output_hash` above are the hashes of `evidence/test.log` and
+`evidence/build.log`, so the envelope's numbers can now be recomputed instead of believed:
+
+```sh
+cd openspec/changes/studio-erd-designer/evidence
+shasum -a 256 -c MANIFEST.txt
+rg -n 'Tasks:|Cached:|_EXIT=' *.log
+```
+
+Logs are stored exactly as emitted, ANSI escapes included, so nothing is normalized between the
+run and the hash.
+
+### What this does not fix
+
+The report format stays self-attested by design. These logs sit beside the envelope, not inside
+it, and the validator does not check any link between them — a reader must open `evidence/`
+deliberately. Closing that properly means teaching `gentle-ai.verify-result/v1` to carry
+evidence references it validates, which is upstream work and outside this change's scope. It is
+recorded here so the gap is visible rather than assumed handled.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:bf7e7c8e03ec111c3415c76dd9035f53df62de98d906e628de97d218720b5e93
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 22/22
+scenarios: 62/62
+test_command: pnpm exec turbo test --force
+test_exit_code: 0
+test_output_hash: sha256:238498b08c5050ed722bde6fa156d215b003ecb7d5f736e957e2ec334f9ad9d7
+build_command: pnpm clean && pnpm build --force
+build_exit_code: 0
+build_output_hash: sha256:c63ea6c0de1e5e614ab79020e963626faa708ded5518a96dd67db4dda9be4721
+```
+
+## Verification Report — Full-scope re-run, all 4 delta specs (22 requirements)
+
+**Change**: `studio-erd-designer`
+**HEAD**: `1f88a916` on `main`, working tree clean
+**Mode**: Strict TDD
+**Reason for this run**: `gentle-ai sdd-status` reported archive `blocked`: the persisted
+verify-report's `requirements: 1/1` did not match the actual spec total of 22. Every prior
+entry below this one in the file is phase-scoped (Phase 3, 4, 5, 6, 7 individually) and remains
+valid evidence for its own phase, but none of them totals the current specs. This entry is the
+first full-scope pass covering all 4 delta specs together and is the one whose totals must
+match `sdd-status`.
+
+### Requirement count — enumerated, not assumed
+
+```
+$ grep -h "^### Requirement:" specs/*/spec.md | wc -l
+22
+$ grep -h "^#### Scenario:" specs/*/spec.md | wc -l
+62
+```
+
+| Spec | Requirements | Scenarios |
+|---|---|---|
+| `ast-source-spans` | 6 | 9 |
+| `studio-erd-editing` | 10 | 37 |
+| `studio-layout-persistence` | 5 | 10 |
+| `studio-readonly-mode` (delta, 1 MODIFIED requirement) | 1 | 6 |
+| **Total** | **22** | **62** |
+
+This matches `sdd-status`'s expected total of 22 exactly.
+
+### Gates run from clean
+
+| Gate | Command | Result |
+|---|---|---|
+| Clean | `pnpm clean` | exit 0 |
+| Build | `pnpm build --force` | **11/11 fresh, 0 cached, exit 0** (includes Studio's `tsc -b && vite build`) |
+| Lint | `pnpm exec turbo lint --force` | **21/21 fresh, 0 cached, exit 0** (includes Studio's `tsc -b --noEmit`) |
+| Test (whole monorepo) | `pnpm exec turbo test --force` | **20/20 fresh, 0 cached, exit 0**, 13m40s wall time |
+| Rust | `cd crates && cargo test` | **all suites pass, 0 failed** (unit + `parser_panic` + `span_agreement` + `span_fixture` + doc-tests) |
+
+DB-gated `@indigodb/realtime` and `@indigodb/cli` (`studio-query-timeout-pg.mjs`) suites SKIP —
+confirmed by grepping the run log for `INDIGODB_TEST_DATABASE_URL is unset`; no
+`INDIGODB_TEST_DATABASE_URL` was set for this run, so those SKIPs are not evidence of anything
+passing, only of being un-exercised, consistent with repo convention. No previously-failing test
+was observed (the `migrate-runner.mjs` defect noted as historically fixed did not recur — `pass`
+in the CLI package's 24/24 file summary).
+
+Studio-specific test count (`@indigodb/studio:test` inside the full run): **254 passed / 0
+failed, 29/29 files**. `@indigodb/compiler:test`: `wasm-freshness` OK (artifact matches 18 Rust
+sources) + `parity.mjs` all green, including the 5 new "regression: spans" checks.
+
+### Tasks cross-check (96/96 claimed complete)
+
+`grep -c "^- \[x\]" tasks.md` → **96**; `grep -c "^- \[ \]" tasks.md` → **0**. Every checkbox in
+Phases 1–7 is `[x]`, including 6.7 (manual E2E) and 7.13 (its re-run), both of which record
+`RUN <date>, PASSES` inline rather than being left open. Spot-checked artifacts for tasks whose
+completion is not self-evident from the checkbox text:
+
+| Task | Claimed artifact | Exists? |
+|---|---|---|
+| 1.5/1.7 | `parse_with_spans` WASM export, rebuilt artifact | Yes — `wasm-freshness.mjs` passes against 18 Rust sources; `parseSchemaWithSpans` reachable from `@indigodb/core` |
+| 2.3/2.9 | `GET/PUT /api/schema/layout`, `layoutWritable` on `/api/auth/status` | Yes — `packages/cli/src/studio-server.ts`; exercised end-to-end by `packages/cli/test/studio-layout.mjs` (14 checks, all pass) |
+| 3.6/3.7 | `apps/studio/src/features/erd/lib/patch.ts` `applyErdEdit`, `addTable` | Yes, file present with matching case blocks |
+| 4.3 | `deleteTable` refusal via `resolve(schema).foreignKeys` | Yes — `patch.ts`, confirmed by reading source (not just apply-progress prose) |
+| 6.1→7.2 | `addRelation` inserts a new relation field (not decorating the scalar) | Yes — `patch.ts:339-427`, matches the documented fix, code comment explicitly narrates the historical defect and cites `patch-semantics.test.ts` as the pinning test |
+| 7.1 | `patch-semantics.test.ts` (real-compiler semantic test) | Yes — file exists, imports `parse`/`resolve` from `@indigodb/core` (not mocked), asserts on `foreignKeysOf(...)` |
+
+No task marked complete was found pointing at a missing artifact.
+
+### Historical defect class: relation drawing appending `@relation` to the scalar FK field
+
+This is the one explicitly flagged risk in the launch prompt. Confirmed **fixed and now under
+automated regression coverage**, not resting on a manual step:
+
+- `patch.ts`'s `addRelation` case (lines 339-427) inserts a **new** field typed as the
+  referenced model carrying `@relation(fields: [...], references: [...])`, rather than
+  appending the attribute to the scalar FK field. The code comment at lines 340-354 narrates
+  the historical defect verbatim and names `patch-semantics.test.ts` as what pins it.
+- `apps/studio/src/features/erd/lib/__tests__/patch-semantics.test.ts` runs in the **node**
+  environment (`// @vitest-environment node`) against the **real** `@indigodb/core` (`parse` +
+  `resolve`, not mocked) — the precondition `patch.test.ts` cannot satisfy, since it mocks
+  `@indigodb/core` wholesale to run under jsdom and is therefore structurally a string-comparison
+  suite blind to semantics. `patch-semantics.test.ts` asserts on `foreignKeysOf(result.text)`,
+  i.e. the **resolved IR**, not on the emitted string.
+- 4 tests in that file cover: forward drag yields a real FK; reverse drag yields the same FK,
+  not an inverted one; every construct the ERD does not model survives byte-identical; a drag
+  between two non-PK fields is refused as `not-a-primary-key`.
+  All 4 ran green in this pass (part of the 254 Studio tests).
+- `apply-progress.md`'s Phase 7 mutation-proof table records the mutation that reintroduces the
+  original defect (append `@relation` to the scalar) failing **8 tests** (3 semantic + 5 text),
+  and a second mutation (always trust drag direction) failing 4 tests — both reverted with a
+  clean `git diff` per that record. This verify pass did not re-run those specific mutations
+  (they are prior-session evidence, clearly attributed as such), but did independently confirm
+  the current code contains the fix by reading `patch.ts` directly and by observing
+  `patch-semantics.test.ts` pass against the current `dist`/source.
+
+**Conclusion: this requirement ("Drawing a relation between two fields inserts a relation field
+the compiler resolves") has automated coverage today. It does not rest on a manual E2E step.**
+Task 6.7's manual E2E is recorded as `[x]` with an honest note that its *relation* half
+originally failed manually (which is what produced Phase 7) and was re-run and passed after the
+fix (7.13) — the manual run is corroborating evidence, not the sole proof; the sole proof for
+CI-repeatable purposes is `patch-semantics.test.ts`.
+
+### Requirement-by-requirement (22/22)
+
+Legend: V = verified (automated test observed passing this run or in the immediately preceding
+full test run this session), evidence given as `file:line` or test description.
+
+#### `ast-source-spans` (6/6 V)
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | `parse_with_spans` delivers spans as a side channel, `parse` unchanged | V | `parity.mjs`: "parse_with_spans returns schema and spans together"; "...parseSchema() output carries no span leakage" (run for all 21 fixtures) |
+| 2 | Span offsets are UTF-16 code units, converted in Rust at emission | V | `parity.mjs`: "an ASCII field span slices exactly the field's text in JS"; `span_fixture.rs`: `utf16_offset_differs_from_the_raw_byte_offset` |
+| 3 | Spans carry 1-based line/column bounds | V | `parity.mjs`: "a multi-line model spans from its keyword to its closing brace" |
+| 4 | Spans agree between direct Rust parsing and WASM boundary | V | `span_agreement.rs`: `model_and_field_spans_match_the_recorded_wasm_boundary_values`; `parity.mjs`: "span values agree with the Rust-side recorded values" |
+| 5 | Adding `parse_with_spans` leaves all 21 golden snapshots byte-identical | V | `parity.mjs` "regression: 21 fixtures vs golden snapshots" all `ok`, zero regeneration; `wasm-freshness.mjs` OK |
+| 6 | `parse_with_spans` does not alter parse/resolve/validate outcomes | V | Same 21-fixture regression suite plus the 3 `errors/*` fixtures unaffected |
+
+#### `studio-erd-editing` (10/10 V)
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Every ERD edit produces a minimal, span-anchored text patch | V | `patch.test.ts` "applyErdEdit — untouched-by-construction (D4)" |
+| 2 | Deleting a referenced table is refused, naming referencers | V | `patch.test.ts` "applyErdEdit — deleteTable (D5)" |
+| 3 | A stale span is unrepresentable (no span-returning export) | V | `patch.test.ts` "patch module export surface (D3 enforceability guard)"; "applyErdEdit — staleness gate (D3)" |
+| 4 | Edits accumulate in one dirty buffer; Save is a single explicit action | V | `ERDDesignerPage.test.tsx` "ERD-authored edits share the dirty buffer with Save" |
+| 5 | Adding a table inserts beside existing tables, zero-width insertion | V | `patch.test.ts`: "adding a table inserts after the last model..."; "...buffer that declares no tables appends at the end..."; "a fresh-parse failure refuses addTable as parse-failed — never anchor-missing" |
+| 6 | Renaming a table rewrites only its own declaration | V | `patch.test.ts` §D4 rename case; `ERDCanvas.test.tsx` "rename/delete affordance wiring" |
+| 7 | Editing a field replaces only targeted tokens | V | `patch.test.ts` "applyErdEdit — editField (5.3/5.4)" |
+| 8 | Deleting a field removes exactly its own line | V | `patch.test.ts` "applyErdEdit — deleteField (5.5/5.6)" |
+| 9 | Drawing a relation inserts a relation field the compiler resolves | V | `patch.test.ts` "applyErdEdit — addRelation (6.1/6.2)" (text-level) + `patch-semantics.test.ts` (real-compiler IR-level, see defect-class section above) + `TableNode.test.tsx` (handle gating) |
+| 10 | Every ERD edit affordance gated on one shared writability flag | V | `ERDCanvas.test.tsx` all 5 `describe` blocks include a gating case; `TableNode.test.tsx` "edit mode / view mode" handle cases |
+
+#### `studio-layout-persistence` (5/5 V)
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Layout stored as sidecar keyed by table name, stale/missing keys handled | V | `studio-layout.mjs`: "GET after a PUT with a stale key returns that key verbatim"; `layout-store.test.ts` `resolvePositions` |
+| 2 | GET/PUT layout route mirrors schema route's version/atomic-write contract | V | `studio-layout.mjs`: version-null create/409, mismatched-version 409, no leftover temp file (both 400 and 409 paths) |
+| 3 | Layout writes debounced and independent of schema Save | V | `layout-store.test.ts` `createLayoutAutosave`; `ERDCanvas.test.tsx` "drag-end autosave wiring"; `ERDDesignerPage.test.tsx` schema-Save-does-not-write-layout case |
+| 4 | Layout route reports/enforces writability like schema route | V | `studio-layout.mjs`: "GET /api/auth/status reports layoutWritable:true/false...", 404 on absent `schemaPath` for both GET and PUT |
+| 5 | Read-only mode refuses layout writes identically to schema writes | V | `studio-layout.mjs`: "PUT under readOnly:true is refused with 403, exactly one denied 'layout-write' audit line, sidecar byte-unchanged"; "PUT with readOnly:true AND no schemaPath answers 403 ... never 404 (gate ordering)" |
+
+#### `studio-readonly-mode` (1/1 V — MODIFIED requirement, single shared write gate)
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Single shared write gate over the explicit write-route set, now including layout | V | `studio-readonly.mjs` (rows/*, precedence, status); `studio-schema-write.mjs` "PUT under readOnly:true is refused with 403... (SW-11)"; `studio-layout.mjs` layout-write 403 + audit case above; `studio-audit.mjs` "read-only denial emits {outcome:denied, reason:read-only}..." — `op` values `insert/update/delete`, `schema-write`, `layout-write` all exercised across these three files |
+
+**Total: 22/22 requirements verified, 62/62 scenarios covered by a named, currently-passing
+test.** No requirement was marked verified from reading source alone where a corresponding test
+exists — every row above cites an executed test, and the full suite (`pnpm exec turbo test
+--force`) reported 0 failures this run.
+
+### Carried-forward WARNINGS (non-blocking, from prior phase-scoped verify passes)
+
+These were raised in earlier per-phase entries in this same file and remain accurate as
+standing notes; none affects the pass/fail verdict of this full-scope pass, since the specs and
+tests they describe are the code as it stands today, not open defects:
+
+- **WARNING** — `TableNode.tsx` still drives table/field naming through `window.prompt()` at 5
+  call sites (proposal specified inline field editing). Explicitly logged in `tasks.md` as a
+  deliberate follow-up, not absorbed into this change. Not a spec violation: no requirement in
+  the 4 delta specs mandates inline (non-modal) naming UI.
+  Its own change should track it, not this one.
+- **WARNING** — No delete confirmation on table/field trash-icon actions (recoverable via
+  discard-without-save, but a mis-click mutates the in-memory buffer immediately). Logged as a
+  deliberate follow-up in `tasks.md`, not a requirement of the 4 delta specs.
+- **SUGGESTION** — The layout sidecar accumulates stale entries for deleted tables indefinitely
+  (spec requires ignoring them on read, which is satisfied and verified; pruning them is not
+  required and is logged as a future follow-up).
+- **SUGGESTION** — The inserted relation field's line is not column-aligned with sibling field
+  declarations (cosmetic; the patch module deliberately never reformats, to keep untouched
+  constructs byte-safe — this is a stated design property, not a defect).
+
+### Verdict
+
+**pass_with_warnings.** 22/22 requirements verified against 62/62 scenarios, each backed by a
+named passing test re-run in this pass. Build, lint, and the full monorepo test suite (including
+Rust) all exit 0 from a clean state. 96/96 tasks confirmed complete with matching artifacts. The
+one explicitly flagged historical defect class (inert `addRelation` appending to the scalar FK
+field) is fixed and has automated real-compiler regression coverage — it does not rest on a
+manual step. No CRITICAL findings. The WARNINGS/SUGGESTIONS above are pre-existing, explicitly
+logged follow-ups outside this change's own spec scope, not gaps in this change's own
+requirements.
+
+---
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:f794b46b7d91944400cbf988b795a86c1ff1b63a4f9dd6116798c78625612615
 verdict: pass_with_warnings
 blockers: 0

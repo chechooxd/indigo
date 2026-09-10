@@ -1,0 +1,137 @@
+• turbo 2.10.5
+
+   • Packages in scope: @indigodb/ast, @indigodb/cli, @indigodb/client, @indigodb/compiler, @indigodb/core, @indigodb/generator, @indigodb/migrator, @indigodb/parser, @indigodb/react, @indigodb/realtime, @indigodb/studio
+   • Running lint in 11 packages
+   • Remote caching disabled
+
+[35m@indigodb/ast:build: [0mcache bypass, force executing [2mc728a65262e95ec0[0m
+[36m@indigodb/ast:lint: [0mcache bypass, force executing [2m0a854e857b32db54[0m
+[35m@indigodb/ast:build: [0m
+[35m@indigodb/ast:build: [0m> @indigodb/ast@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/ast
+[35m@indigodb/ast:build: [0m> tsc
+[35m@indigodb/ast:build: [0m
+[36m@indigodb/ast:lint: [0m
+[36m@indigodb/ast:lint: [0m> @indigodb/ast@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/ast
+[36m@indigodb/ast:lint: [0m> tsc --noEmit
+[36m@indigodb/ast:lint: [0m
+[32m@indigodb/compiler:build: [0mcache bypass, force executing [2mf90ec0916b0d922c[0m
+[33m@indigodb/compiler:lint: [0mcache bypass, force executing [2m54738a2dcb760d46[0m
+[33m@indigodb/compiler:lint: [0m
+[33m@indigodb/compiler:lint: [0m> @indigodb/compiler@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/compiler
+[32m@indigodb/compiler:build: [0m
+[32m@indigodb/compiler:build: [0m> @indigodb/compiler@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/compiler
+[32m@indigodb/compiler:build: [0m> tsc
+[32m@indigodb/compiler:build: [0m
+[33m@indigodb/compiler:lint: [0m> tsc --noEmit
+[33m@indigodb/compiler:lint: [0m
+[34m@indigodb/parser:lint: [0mcache bypass, force executing [2m1e62d8de7fc4a3ae[0m
+[36m@indigodb/parser:build: [0mcache bypass, force executing [2me284d1cec7e29180[0m
+[36m@indigodb/parser:build: [0m
+[36m@indigodb/parser:build: [0m> @indigodb/parser@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/parser
+[36m@indigodb/parser:build: [0m> tsc
+[36m@indigodb/parser:build: [0m
+[34m@indigodb/parser:lint: [0m
+[34m@indigodb/parser:lint: [0m> @indigodb/parser@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/parser
+[34m@indigodb/parser:lint: [0m> tsc --noEmit
+[34m@indigodb/parser:lint: [0m
+[35m@indigodb/core:lint: [0mcache bypass, force executing [2md120bc691399c321[0m
+[32m@indigodb/core:build: [0mcache bypass, force executing [2md428fd82426a9e29[0m
+[35m@indigodb/core:lint: [0m
+[35m@indigodb/core:lint: [0m> @indigodb/core@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/core
+[35m@indigodb/core:lint: [0m> tsc --noEmit
+[35m@indigodb/core:lint: [0m
+[32m@indigodb/core:build: [0m
+[32m@indigodb/core:build: [0m> @indigodb/core@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/core
+[32m@indigodb/core:build: [0m> tsc
+[32m@indigodb/core:build: [0m
+[33m@indigodb/generator:lint: [0mcache bypass, force executing [2m90bb4061e1f65084[0m
+[34m@indigodb/migrator:build: [0mcache bypass, force executing [2m86556cb5492146f0[0m
+[36m@indigodb/migrator:lint: [0mcache bypass, force executing [2m1dfa8fde28b1a70a[0m
+[35m@indigodb/generator:build: [0mcache bypass, force executing [2mf272dad69b3c6beb[0m
+[35m@indigodb/generator:build: [0m
+[35m@indigodb/generator:build: [0m> @indigodb/generator@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/generator
+[35m@indigodb/generator:build: [0m> tsc
+[35m@indigodb/generator:build: [0m
+[33m@indigodb/generator:lint: [0m
+[33m@indigodb/generator:lint: [0m> @indigodb/generator@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/generator
+[33m@indigodb/generator:lint: [0m> tsc --noEmit
+[33m@indigodb/generator:lint: [0m
+[34m@indigodb/migrator:build: [0m
+[34m@indigodb/migrator:build: [0m> @indigodb/migrator@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/migrator
+[34m@indigodb/migrator:build: [0m> tsc
+[34m@indigodb/migrator:build: [0m
+[36m@indigodb/migrator:lint: [0m
+[36m@indigodb/migrator:lint: [0m> @indigodb/migrator@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/migrator
+[36m@indigodb/migrator:lint: [0m> tsc --noEmit
+[36m@indigodb/migrator:lint: [0m
+[32m@indigodb/realtime:build: [0mcache bypass, force executing [2m237b49682ae32777[0m
+[33m@indigodb/realtime:lint: [0mcache bypass, force executing [2mba1f32d9585d1fc8[0m
+[32m@indigodb/realtime:build: [0m
+[32m@indigodb/realtime:build: [0m> @indigodb/realtime@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/realtime
+[32m@indigodb/realtime:build: [0m> tsc
+[32m@indigodb/realtime:build: [0m
+[33m@indigodb/realtime:lint: [0m
+[33m@indigodb/realtime:lint: [0m> @indigodb/realtime@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/realtime
+[33m@indigodb/realtime:lint: [0m> tsc --noEmit
+[33m@indigodb/realtime:lint: [0m
+[34m@indigodb/client:build: [0mcache bypass, force executing [2m600c74ce0500feca[0m
+[36m@indigodb/client:lint: [0mcache bypass, force executing [2m79c03eb9cbecc0ef[0m
+[34m@indigodb/client:build: [0m
+[34m@indigodb/client:build: [0m> @indigodb/client@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/client
+[34m@indigodb/client:build: [0m> tsc
+[34m@indigodb/client:build: [0m
+[36m@indigodb/client:lint: [0m
+[36m@indigodb/client:lint: [0m> @indigodb/client@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/client
+[36m@indigodb/client:lint: [0m> tsc --noEmit
+[36m@indigodb/client:lint: [0m
+[35m@indigodb/react:build: [0mcache bypass, force executing [2m53c3f00f4c304629[0m
+[32m@indigodb/react:lint: [0mcache bypass, force executing [2mdd59e8fd2f29240f[0m
+[35m@indigodb/react:build: [0m
+[35m@indigodb/react:build: [0m> @indigodb/react@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/packages/react
+[35m@indigodb/react:build: [0m> tsc
+[35m@indigodb/react:build: [0m
+[32m@indigodb/react:lint: [0m
+[32m@indigodb/react:lint: [0m> @indigodb/react@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/react
+[32m@indigodb/react:lint: [0m> tsc --noEmit
+[32m@indigodb/react:lint: [0m
+[33m@indigodb/studio:build: [0mcache bypass, force executing [2m2a76eef1be44e631[0m
+[34m@indigodb/studio:lint: [0mcache bypass, force executing [2m54e596e69e6f1226[0m
+[33m@indigodb/studio:build: [0m
+[33m@indigodb/studio:build: [0m> @indigodb/studio@0.0.1 build /Users/macbook/Proyectos/experimentos/indigo/apps/studio
+[33m@indigodb/studio:build: [0m> tsc -b && vite build
+[33m@indigodb/studio:build: [0m
+[34m@indigodb/studio:lint: [0m
+[34m@indigodb/studio:lint: [0m> @indigodb/studio@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/apps/studio
+[34m@indigodb/studio:lint: [0m> tsc -b --noEmit
+[34m@indigodb/studio:lint: [0m
+[33m@indigodb/studio:build: [0m[36mvite v6.4.3 [32mbuilding for production...[36m[39m
+[33m@indigodb/studio:build: [0mtransforming...
+[33m@indigodb/studio:build: [0m[32m✓[39m 2294 modules transformed.
+[33m@indigodb/studio:build: [0mrendering chunks...
+[33m@indigodb/studio:build: [0mcomputing gzip size...
+[33m@indigodb/studio:build: [0m[2mdist/[22m[32mindex.html                                            [39m[1m[2m  0.51 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mgeist-cyrillic-ext-wght-normal-DjL33-gN.woff2  [39m[1m[2m  7.42 kB[22m[1m[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mgeist-vietnamese-wght-normal-6IgcOCM7.woff2    [39m[1m[2m  8.00 kB[22m[1m[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mgeist-cyrillic-wght-normal-BEAKL7Jp.woff2      [39m[1m[2m 15.08 kB[22m[1m[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mgeist-latin-ext-wght-normal-DC-KSUi6.woff2     [39m[1m[2m 16.51 kB[22m[1m[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mgeist-latin-wght-normal-BgDaEnEv.woff2         [39m[1m[2m 29.40 kB[22m[1m[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[32mindigo_compiler_bg-BWCa1S6K.wasm               [39m[1m[2m330.22 kB[22m[1m[22m[2m │ gzip: 127.84 kB[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[35mindex-C_xIu8xT.css                             [39m[1m[2m 91.32 kB[22m[1m[22m[2m │ gzip:  15.75 kB[22m
+[33m@indigodb/studio:build: [0m[2mdist/[22m[2massets/[22m[36mindex-CRwVp-9p.js                              [39m[1m[33m820.31 kB[39m[22m[2m │ gzip: 255.11 kB[22m
+[33m@indigodb/studio:build: [0m[33m
+[33m@indigodb/studio:build: [0m(!) Some chunks are larger than 500 kB after minification. Consider:
+[33m@indigodb/studio:build: [0m- Using dynamic import() to code-split the application
+[33m@indigodb/studio:build: [0m- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+[33m@indigodb/studio:build: [0m- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[33m@indigodb/studio:build: [0m[32m✓ built in 3.90s[39m
+[36m@indigodb/cli:lint: [0mcache bypass, force executing [2ma35aa016752b92e4[0m
+[36m@indigodb/cli:lint: [0m
+[36m@indigodb/cli:lint: [0m> @indigodb/cli@0.0.1 lint /Users/macbook/Proyectos/experimentos/indigo/packages/cli
+[36m@indigodb/cli:lint: [0m> tsc --noEmit
+[36m@indigodb/cli:lint: [0m
+
+[1m Tasks:    [32m[1m21 successful[0m, 21 total[0m
+[1mCached:    [1m0 cached[0m, 21 total[0m
+[1m  Time:    [1m24.182s[0m [0m
+
+SPOTCHECK_LINT_EXIT=0
