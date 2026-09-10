@@ -1507,6 +1507,12 @@ await check("I11 the mid-crash limitation is documented in the failure path", as
     "the failure-write path must carry the mid-crash-gap comment",
   );
 
+  // Read the CANONICAL spec, not the change folder that introduced it. A change
+  // folder under openspec/changes/ is transient: archiving moves it away, and a
+  // test pinned to that path starts failing on a dangling read the day the change
+  // closes — which is exactly what happened here when 910dd41 archived
+  // migration-history-forensics. openspec/specs/ is where the requirement lives
+  // for good.
   const spec = readFileSync(
     join(
       import.meta.dirname,
@@ -1514,8 +1520,6 @@ await check("I11 the mid-crash limitation is documented in the failure path", as
       "..",
       "..",
       "openspec",
-      "changes",
-      "migration-history-forensics",
       "specs",
       "migration-history-integrity",
       "spec.md",
