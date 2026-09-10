@@ -1,5 +1,315 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:5fa9c4ac4afd1a0d35beff408eb2ecf09aabde100306731ebe99ce63d02d9056
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 28/28
+scenarios: 56/56
+test_command: pnpm exec turbo test --filter=@indigodb/realtime --filter=@indigodb/client --filter=@indigodb/react --filter=@indigodb/studio --force
+test_exit_code: 0
+test_output_hash: sha256:28b4a55a02a0ca22b0a398fe57cd693f61f330e9c634611951cdb46549cdd2a7
+build_command: pnpm exec turbo build lint --filter=@indigodb/realtime --filter=@indigodb/client --filter=@indigodb/react --filter=@indigodb/studio --filter=@indigodb/cli --force
+build_exit_code: 0
+build_output_hash: sha256:22f1faf24448fb1a792e95e90650defc9c5b7ef1843487269b38d31992611b1f
+```
+
+# Verification Report — frontend-realtime-sdk (Full-scope re-run, all 7 delta specs)
+
+**Change**: frontend-realtime-sdk
+**Commit**: `dd86802` on `main` (frontend-realtime-sdk's own commits — `9798f9c`, `5b4af4b`,
+`1a48bf0`, `f9a370f`, `c5ebe83`, `9de6f8e`, `03d0d40`, `b48763e`, `06807a5` — are all ancestors;
+`06807a5` closed Phase 6). Working tree clean at verification time.
+**Mode**: Strict TDD.
+**Why this run exists**: the persisted report at HEAD before this run scored only Phase 5b
+(6/6 requirements, `react-live-bindings` only). `gentle-ai sdd-status` correctly refused archive:
+"verify result total 6 does not match actual requirement count 28". This report re-verifies the
+full requirement set across all 7 delta specs, counted below, with fresh gate runs.
+
+## Requirement/scenario enumeration (counted from the retrieved specs, not assumed)
+
+| Spec | Requirements | Scenarios |
+|---|---|---|
+| `client-browser-usage-docs` | 4 | 4 |
+| `client-live-queries` | 2 | 8 |
+| `react-live-bindings` | 6 | 6 |
+| `realtime-live-endpoint` | 1 | 5 |
+| `realtime-live-subscription` | 9 | 22 |
+| `realtime-origin-allowlist` | 5 | 9 |
+| `studio-live-view` | 1 | 2 |
+| **Total** | **28** | **56** |
+
+This matches both the status contract's expected 28 requirements and `tasks.md`'s own
+reconciliation table ("56 spec scenarios, 41 design T-rows... Result: 0 unresolved scenarios").
+
+### Completeness
+| Metric | Value |
+|--------|-------|
+| Tasks total | 77 |
+| Tasks complete | 77 |
+| Tasks incomplete | 0 |
+
+`grep -cE "^\- \[[x ]\]" tasks.md` → 77; `^\- \[ \]` (unchecked) → 0. Every task line is `[x]`,
+including Phase 6's 6.1–6.7, which were `[ ]`/blocked in the last apply-progress Engram revision
+(id 1010, still showing "Phase 6: 2/5 tasks done... NOT ready for sdd-verify"). That revision is
+**stale prior context**, superseded by commit `06807a5` ("feat(client,react,studio): close the
+resync gap and re-base Studio onto the binding"), which is on `main` and closes 6.6/6.7 — added
+`onResync` to `createLiveSubscription`, threaded it through `@indigodb/react`'s hook via a
+latest-ref, wired the Studio to refetch on it, and retargeted the 5 `onEvent`-rooted pre-existing
+Studio assertions onto the wake path without altering any `expect()` line (verified by that
+commit's own diff, per its message). `tasks.md` on disk — the artifact this phase is required to
+trust — has all 77 boxes checked; no task claims completion without a matching artifact (see
+Investigation Findings below for spot checks).
+
+### Build & Tests Execution
+
+**Full-repo gates from clean** (`pnpm clean && pnpm build --force`, `pnpm exec turbo lint --force`,
+`pnpm exec turbo test --force`) were run first, exactly as instructed:
+- `pnpm clean` → 11/11 tasks successful.
+- `pnpm build --force` → **PASSED**, 11/11 tasks, 23.2s.
+- `pnpm exec turbo lint --force` → **PASSED**, 21/21 tasks, 23.8s (`apps/studio`'s `tsc -b --noEmit`
+  included, per project convention).
+- `pnpm exec turbo test --force` → **FAILED**, exit 1, 19/20 package tasks successful, one failure:
+  `@indigodb/cli#test`, specifically `migrate-runner.mjs`'s `I11 the mid-crash limitation is
+  documented in the failure path`:
+  ```text
+  Error: ENOENT: no such file or directory, open
+  '.../openspec/changes/migration-history-forensics/specs/migration-history-integrity/spec.md'
+      at packages/cli/test/migrate-runner.mjs:1510
+  ```
+
+**This failure is a pre-existing baseline defect, outside every one of this change's 7 delta
+specs**, confirmed by direct inspection, not assumption:
+- `packages/cli/test/migrate-runner.mjs:1510` reads a spec file under
+  `openspec/changes/migration-history-forensics/specs/migration-history-integrity/`.
+- That directory no longer exists on disk — commit `910dd41` ("chore: archive
+  migration-history-forensics and reconcile the canonical specs") moved it into
+  `openspec/changes/archive/`, three commits before `dd86802` (current HEAD), all unrelated to
+  and merged after `frontend-realtime-sdk`'s own commits.
+- None of `frontend-realtime-sdk`'s 7 delta specs touch CLI migrations; the test file and the
+  break are both untouched by this change.
+- Recorded here as a **known environmental failure**, not fixed, not weakened, and not used to
+  mark this change `fail` — consistent with the orchestrator's confirmation.
+
+**Scoped re-run** (clean re-run against exactly the packages this change modifies, to get a clean
+pass/fail signal isolated from the unrelated baseline defect):
+```text
+pnpm exec turbo test --filter=@indigodb/realtime --filter=@indigodb/client --filter=@indigodb/react --filter=@indigodb/studio --force
+Tasks: 13 successful, 13 total
+Time: 6m53.994s
+exit 0
+```
+`@indigodb/studio`: 29 test files, 254 tests, all passed. `@indigodb/react`: 2 test files (12
+tests) + `browser-safety.mjs`, all passed. `@indigodb/client`: every `test/*.mjs` in its chained
+script passed, including `live.mjs`, `realtime-manager.mjs`, `live-subscription.mjs`,
+`realtime-entry.mjs`, `readme-contract.mjs`. `@indigodb/realtime`: `dispatch.mjs` (20 checks) and
+`origin-allowlist.mjs` (9 checks, `strictEqual(ran, 9, ...)` self-asserted) both `PASSED`.
+
+`@indigodb/cli`'s test script is one `&&`-chained sequence, and `migrate-runner.mjs` sits before
+`realtime-allowlist-resolution.mjs` in that chain — so the chain's failure at `migrate-runner.mjs`
+meant `realtime-allowlist-resolution.mjs` (tasks 1.8/1.9's CLI-wiring evidence) never ran in the
+full-suite invocation. Run directly to recover that evidence:
+```text
+node packages/cli/test/realtime-allowlist-resolution.mjs
+cli resolveAllowedOrigins: resolution suite
+  ok   both absent -> empty array (closed default)
+  ok   flag only -> the flag's origins, in order
+  ok   env only (comma-separated) -> split into an array
+  ok   flag AND env both present -> MERGED into one array, neither source overwrites the other
+  ok   env entries are trimmed and empty segments dropped
+  ok   duplicate origins across flag+env are de-duplicated
+  ok   empty flag array + absent env -> empty array
+cli resolveAllowedOrigins: all green
+exit 0
+```
+
+**`INDIGODB_TEST_DATABASE_URL`-gated Postgres suites — explicitly SKIPPED, not run**: `unset` for
+this session. The following printed `SKIP` (confirmed by `grep`, not inferred): `@indigodb/realtime`'s
+`pg-harness.mjs`, `parity.mjs`, `resume.mjs`, `log.mjs`, `buckets.mjs`, `endpoint.mjs`; `@indigodb/cli`'s
+`studio-query-timeout-pg.mjs`; `@indigodb/client`'s `test/live.mjs` case `14.1: real-PG live-query
+snapshot/RLS-isolation`. None of these gate any of the 28 requirements verified below — every
+requirement below has non-DB-gated (PGlite/fake-transport/mocked-fetch) covering evidence that
+did run. A SKIP is recorded here as what it is, not treated as passing evidence.
+
+**Coverage**: not available — no coverage tool configured for this repo's plain-Node or vitest
+suites (confirmed unchanged from the prior report).
+
+### Spec Compliance Matrix — all 56 scenarios
+
+#### `client-browser-usage-docs` (4/4)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| README names browser entry point | README mentions the browser subpath | `readme-contract.mjs > browser section names the @indigodb/client/realtime entry point` | ✅ COMPLIANT |
+| README states wake-only contract | README states wake-only, no-row-data explicitly | `readme-contract.mjs > browser section states the wake-only, no-row-data contract` | ✅ COMPLIANT |
+| README states query non-goal | README states the query non-goal | `readme-contract.mjs > browser section states the query non-goal and points to the app's own backend` | ✅ COMPLIANT |
+| README includes TanStack recipe | README's recipe invalidates via onWake | `readme-contract.mjs > TanStack recipe calls createLiveSubscription with onWake invalidating queries` | ✅ COMPLIANT |
+
+#### `client-live-queries` (8/8)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Manager replays state to late joiner | Late join on already-open channel → `onOpen(false)` at subscribe time | `realtime-manager.mjs > 2.2` | ✅ COMPLIANT |
+| ″ | First subscriber on fresh channel now receives its own open signal | `realtime-manager.mjs > 2.1` | ✅ COMPLIANT |
+| ″ | Genuine reconnect still reports `reconnected=true` | `realtime-manager.mjs > 2.4` | ✅ COMPLIANT |
+| ″ | Replay is additive, does not trigger `onResync` | `realtime-manager.mjs > 2.3` | ✅ COMPLIANT |
+| `.live()` gains channel-level `retry()` | Terminal channel error leaves `.live()` stopped, no self-revive | `live.mjs > 15.1` | ✅ COMPLIANT |
+| ″ | `retry()` revives the shared channel, resumes snapshot-then-tail | `live.mjs > 15.2` | ✅ COMPLIANT |
+| ″ | `retry()` no-op on healthy channel and after `unsubscribe()` | `live.mjs > 15.3` | ✅ COMPLIANT |
+| ″ | Transient error auto-recovered clears `retry()`'s gate | `live.mjs > 15.4` | ✅ COMPLIANT |
+
+#### `react-live-bindings` (6/6)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Return shape `{status,error,retry}` only | Return shape has no data field | `use-live-table.test.tsx > returns exactly {status, error, retry}` | ✅ COMPLIANT |
+| Stable subscribe identity | Re-rendering ×3 keeps one subscription | `use-live-table.test.tsx > keeps exactly one active createLiveSubscription across 3 re-renders...` | ✅ COMPLIANT |
+| SSR-safe | Rendering to a string on the server does not throw | `use-live-table.test.tsx > renderToString with window deleted completes without throwing...` | ✅ COMPLIANT |
+| StrictMode double-invoke → one connection | StrictMode leaves one connection, not two | `use-live-table.test.tsx > leaves exactly one open connection after mount -> cleanup -> re-mount` | ✅ COMPLIANT |
+| Terminal error surfaces + `retry()` recovers | Error observable + retry() recovers it | `use-live-table.test.tsx > surfaces a terminal error via error/status and retry() recovers to live` | ✅ COMPLIANT |
+| Unmounting closes subscription | Unmounting sole consumer closes connection | `use-live-table.test.tsx > unmounting the sole consumer closes the underlying connection` | ✅ COMPLIANT |
+
+#### `realtime-live-endpoint` (5/5)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| SSE dispatch is data-free wake-up for every model | `@@allow` model wake frame carries no row data | `dispatch.mjs > B1.1b` | ✅ COMPLIANT |
+| ″ | `pk` dropped even for composite key | `dispatch.mjs > B1.2` | ✅ COMPLIANT |
+| ″ | Create-only `@@allow` model still wake-only | `dispatch.mjs > B1.1c` | ✅ COMPLIANT |
+| ″ | Non-`@@allow` model wake-only regardless of CORS allowlist | `origin-allowlist.mjs > 1.10` | ✅ COMPLIANT |
+| ″ | Generated `.live()` observes wake frame as refetch trigger | `live.mjs` (unmodified, task 2.8 regression fence) — `status transitions connecting -> live once the snapshot resolves and the wake subscription is active`, `5.1`–`5.5` | ✅ COMPLIANT |
+
+#### `realtime-live-subscription` (22/22)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Returns status/error/control, never rows | Return shape carries no row data | `live-subscription.mjs > 3.11` | ✅ COMPLIANT |
+| `getError()` stable identity | null before any error | `live-subscription.mjs > 3.19a` | ✅ COMPLIANT |
+| ″ | terminal error retrievable with classification | `live-subscription.mjs > 3.19b` | ✅ COMPLIANT |
+| ″ | transient error retrievable as non-terminal | `live-subscription.mjs > 3.19c` | ✅ COMPLIANT |
+| ″ | repeated calls return referentially identical object | `live-subscription.mjs > 3.19d` | ✅ COMPLIANT |
+| ″ | cleared to null on next successful open | `live-subscription.mjs > 3.19e` | ✅ COMPLIANT |
+| ″ | `retry()` clears the retrievable error | `live-subscription.mjs > 3.19f` | ✅ COMPLIANT |
+| Status machine idle→connecting→live/error/closed | constructed-unsubscribed inert at idle | `live-subscription.mjs > 3.1` | ✅ COMPLIANT |
+| ″ | first `subscribe()` → connecting then live | `live-subscription.mjs > 3.3` | ✅ COMPLIANT |
+| ″ | callback notified once per transition, not per identical status | `live-subscription.mjs > 3.4` | ✅ COMPLIANT |
+| Transport error → error, only terminal blocks auto-revert | terminal error transitions to error and stays | `live-subscription.mjs > 3.3` (full sequence incl. `live⇄error`) | ✅ COMPLIANT |
+| Errors classified terminal/transient | non-2xx not 5xx/408/429 is terminal, halts retry | `live-subscription.mjs > 3.13` | ✅ COMPLIANT |
+| ″ | 5xx/stream-end/TypeError stay transient | `live-subscription.mjs > 3.14` | ✅ COMPLIANT |
+| ″ | every named TERMINAL status (400/401/403/404/410) classified at runtime | `live-subscription.mjs > 3.20` | ✅ COMPLIANT |
+| ″ | every named TRANSIENT status (408/429/500/502) classified at runtime | `live-subscription.mjs > 3.21` | ✅ COMPLIANT |
+| `retry()` reopens from error, no-op otherwise | retry() from error re-opens | `live-subscription.mjs > 3.9` | ✅ COMPLIANT |
+| ″ | retry() while live is a no-op | `live-subscription.mjs > 3.9` | ✅ COMPLIANT |
+| onWake fixed-debounce, never re-armed | burst inside window → exactly one onWake | `live-subscription.mjs > 3.5` | ✅ COMPLIANT |
+| ″ | wakes >window apart → two calls | `live-subscription.mjs > 3.7` | ✅ COMPLIANT |
+| `close()` idempotent | close() twice does not throw | `live-subscription.mjs > 3.10` | ✅ COMPLIANT |
+| ″ | wake in flight at close never fires | `live-subscription.mjs > 3.10` | ✅ COMPLIANT |
+| SSR-inert until started | import under Node, no DOM globals | `realtime-entry.mjs > importing the entry under bare Node (no DOM globals) does not throw and opens no connection` | ✅ COMPLIANT |
+
+#### `realtime-origin-allowlist` (9/9)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Defaults closed when unconfigured | no config → no wildcard header | `origin-allowlist.mjs > 1.1` | ✅ COMPLIANT |
+| ″ | unlisted origin not granted | `origin-allowlist.mjs > 1.1` | ✅ COMPLIANT |
+| No-Origin request always allowed | originless request served even unconfigured | `origin-allowlist.mjs > 1.2` | ✅ COMPLIANT |
+| Configured list opts matching request in | listed origin granted, exact echo | `origin-allowlist.mjs > 1.3` | ✅ COMPLIANT |
+| ″ | non-listed origin rejected | `origin-allowlist.mjs > 1.4` | ✅ COMPLIANT |
+| ″ | prefix/suffix confusion not granted | `origin-allowlist.mjs > 1.4b` | ✅ COMPLIANT |
+| Allowlist applies uniformly to both routes | both routes honor same allowlist | `origin-allowlist.mjs > 1.5` | ✅ COMPLIANT |
+| OPTIONS preflight mirrors route decision | allowed origin preflight → 204, exact echo | `origin-allowlist.mjs > 1.6` | ✅ COMPLIANT |
+| ″ | rejected origin preflight → 403, both paths | `origin-allowlist.mjs > 1.6b` | ✅ COMPLIANT |
+
+#### `studio-live-view` (2/2)
+| Requirement | Scenario | Test | Result |
+|---|---|---|---|
+| Table Browser shares connection via manager | Joining already-open channel reports live immediately | `useLiveTable.test.tsx > joining a table another consumer already holds open reports live immediately, with exactly one connection opened (T39/T40)` | ✅ COMPLIANT |
+| ″ | Debounce/coalescing unchanged post-rebase | `useLiveTable.test.tsx > a burst of 5 wake frames within the debounce window produces exactly one refetch` | ✅ COMPLIANT |
+
+**Compliance summary**: 56/56 scenarios compliant across all 28 requirements, all 7 delta specs.
+
+### Correctness (Static Evidence)
+| Requirement | Status | Notes |
+|---|---|---|
+| `RealtimeEngine.dispatch()` unconditional wake-only scoping | ✅ Implemented | `packages/realtime/src/engine.ts` — `handleRequest`/`handleLogRequest` apply the origin allowlist; `dispatch()` sends `{table,op,lsn,seq}` for every model. |
+| CORS origin allowlist, closed by default | ✅ Implemented | Same file; CLI `--allow-origin` + `INDIGODB_REALTIME_ALLOWED_ORIGINS` wired via `resolveAllowedOrigins` (`packages/cli/src/index.ts`/`studio-server.ts`). |
+| `RealtimeConnectionManager` open-state + replay | ✅ Implemented | `packages/client/src/realtime.ts` — `TableChannel.state/everOpened/lastError`, subscribe-time replay. |
+| `createLiveSubscription` primitive + terminal classification | ✅ Implemented | Same file — `getStatus/getError/subscribe/retry/close`, `SseTransport` terminal/transient classifier. |
+| `onResync` threading (Phase 6 closure) | ✅ Implemented | `packages/client/src/realtime.ts`, `packages/react/src/use-live-table.ts` (latest-ref), Studio hook refetches on it, skipping debounce. |
+| `LiveQuery.retry()` | ✅ Implemented | `packages/client/src/live.ts` + `realtime-delegate.ts` — delegates to `RealtimeConnectionManager.reviveChannel`. |
+| `packages/react` package + `useLiveTable` hook | ✅ Implemented | `packages/react/src/use-live-table.ts`, `packages/react/src/index.ts` — re-exports only the browser-safe subpath. |
+| README browser section + TanStack recipe | ✅ Implemented | `packages/client/README.md`. |
+| Studio `useLiveTable` re-based, bypass deleted | ✅ Implemented | `apps/studio/src/features/studio/browser/hooks/useLiveTable.ts` — `new SseTransport(...)` direct construction and the swallowed-`onOpen` bypass comment are both gone (confirmed by task 6.3's own source-grep test, currently green). |
+
+### Coherence (Design)
+| Decision | Followed? | Notes |
+|---|---|---|
+| D1 — manager tracks per-channel open state, replays on subscribe | ✅ Yes | `realtime-manager.mjs` 2.1–2.6, all green. |
+| D2/D3 — `createLiveSubscription` composition, no data ownership | ✅ Yes | Return-shape test (`3.11`) enumerates exactly 5 keys. |
+| D4 — `useLiveTable` is `{status,error,retry}` only, `useSyncExternalStore`-based | ✅ Yes | `use-live-table.test.tsx` return-shape + subscribe-identity tests. |
+| D5 — SSR-inert (`getServerSnapshot`), no `window` at module load | ✅ Yes | `realtime-entry.mjs` + `use-live-table.test.tsx`'s `renderToString` test. |
+| D6 — terminal/transient classification, channel-level `retry()` | ✅ Yes | `3.13/3.14/3.20/3.21`, `.live()`'s `15.1`–`15.4`. |
+| D7 — allowlist gates connection admission; dispatch scoping is a separate, unconditional path | ✅ Yes | Confirmed in `tasks.md`'s own reconciliation and by `origin-allowlist.mjs > 1.10`'s pairing test. |
+| D8 — `packages/react` isolates browser-safe imports (`FORBIDDEN=["pg", /^node:/]`) | ✅ Yes | `browser-safety.mjs`, green. |
+
+### Investigation Findings (this run)
+
+1. **The stale apply-progress Engram entry is superseded by a real, merged commit.**
+   `sdd/frontend-realtime-sdk/apply-progress` (Engram id 1010) still reads "Phase 6: 2/5 tasks
+   done... NOT ready for sdd-verify" and reports a failed `sdd-attempt settle` for an earlier,
+   blocked Phase 6 attempt. `git log` shows commit `06807a5` ("feat(client,react,studio): close
+   the resync gap and re-base Studio onto the binding"), authored after that Engram revision, is
+   an ancestor of current `main` (`dd86802`) and closes exactly the finding that entry describes
+   as blocking (the `onEvent`/resync binding gap). `tasks.md` on disk has 6.6/6.7 checked and
+   describes the same resolution. Treated `tasks.md` + the commit history as authoritative over
+   the stale Engram revision, per the artifact-retrieval contract (openspec file is the declared
+   locator for `hybrid` mode where both exist and disagree in freshness).
+
+2. **The one full-suite test failure is genuinely unrelated to this change**, confirmed by
+   reading the failing assertion's source (`migrate-runner.mjs:1510`) and correlating the missing
+   path against `git log --name-status` for `910dd41`, which shows the referenced directory was
+   moved to `openspec/changes/archive/migration-history-forensics/` by an unrelated archive
+   commit. No file this change touches is implicated.
+
+3. **The CLI chained test script silently skipped tasks 1.8/1.9's evidence** in the full run
+   because `migrate-runner.mjs` (unrelated, earlier in the `&&` chain) failed first. Recovered by
+   running `packages/cli/test/realtime-allowlist-resolution.mjs` directly — 7/7 checks passed,
+   exit 0. This is worth flagging as a chain-ordering fragility (WARNING, not a spec gap): any
+   future unrelated CLI test failure will mask this task's own evidence in the aggregate run.
+
+4. **All `INDIGODB_TEST_DATABASE_URL`-gated suites were confirmed via `grep` to have printed
+   `SKIP`, not silently absent from output** — 6 in `@indigodb/realtime`, 1 in `@indigodb/cli`, 1
+   case in `@indigodb/client`'s `live.mjs` (`14.1`). None of the 56 scenarios verified above
+   depend on a DB-gated test as their sole evidence.
+
+### Issues Found
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. `@indigodb/cli`'s test script chains 23 files with `&&`; an unrelated early failure
+   (`migrate-runner.mjs`, pre-existing baseline defect, see above) silently prevented
+   `realtime-allowlist-resolution.mjs` from running in the full-suite invocation, masking this
+   change's own CLI-wiring evidence until run standalone. Not a defect in this change's code;
+   recommend the CLI test script decouple to independent invocations (or `--bail=false`-style
+   chaining) in a future change, since this exact failure mode will recur for any other CLI task
+   whenever an unrelated earlier file breaks.
+2. The pre-existing baseline defect at `packages/cli/test/migrate-runner.mjs:1510`
+   (`openspec/changes/migration-history-forensics/...` no longer exists post-archive) should be
+   fixed or the test updated to read from `openspec/changes/archive/migration-history-forensics/...`
+   — out of this change's scope, but it currently makes `pnpm test` exit non-zero repo-wide,
+   which will confuse the next unrelated verification run too.
+
+**SUGGESTION**: None beyond what the Phase 5b prior report already recorded (render-count probe
+for `useLiveTable`, informational only, not spec-mandated) — preserved below in the prior-revision
+section.
+
+### Verdict
+**PASS WITH WARNINGS** — all 28 requirements / 56 scenarios across all 7 delta specs are
+COMPLIANT with real, fresh runtime evidence; all 77 tasks are complete and match the tree; the
+only test failure in the full-repo run is a confirmed pre-existing baseline defect outside this
+change's scope, not weakened or hidden, and does not affect any of this change's own requirements.
+Two WARNINGs recorded (CLI test-chain fragility masking evidence, and the baseline defect's
+continued presence) — neither is CRITICAL and neither blocks this change's own compliance claim.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:b972329f352ba580e5e7c6a5d5ec2778206532d9c26cdc9abc093bdcd87e992f
 verdict: pass_with_warnings
 blockers: 0

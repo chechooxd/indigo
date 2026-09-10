@@ -217,10 +217,12 @@ filled) MUST be sealed and immutable: it MUST be served with
 ### Requirement: SSE dispatch is scoped to a data-free wake-up signal for every model, `@@allow` or not
 
 `RealtimeEngine.handleRequest`'s `GET <REALTIME_PATH>?tables=...` route performs zero
-authentication and sets `access-control-allow-origin: "*"` — any origin can open it. Because of
-that, `RealtimeEngine.dispatch()` MUST send every SSE subscriber a frame containing only
-`{table, op, lsn, seq}` — never `pk`, `new`, or `old` — for ANY table, `@@allow` or not. Scoping
-only `@@allow`-protected models (as an earlier version of this requirement did) left every
+authentication and applies the configured CORS origin allowlist (`realtime-origin-allowlist`,
+closed by default) instead of an unconditional `access-control-allow-origin: "*"` — any origin
+still not on that allowlist cannot open it, and with no allowlist configured, no origin can.
+Because of that, `RealtimeEngine.dispatch()` MUST send every SSE subscriber a frame containing
+only `{table, op, lsn, seq}` — never `pk`, `new`, or `old` — for ANY table, `@@allow` or not.
+Scoping only `@@allow`-protected models (as an earlier version of this requirement did) left every
 `@@realtime` model without `@@allow` on full-payload SSE, an unauthenticated, cross-origin-
 readable leak of live row data; fail-closed dispatch is now unconditional, not predicated on
 `ResolvedTable.allow`. Row data reaches a remote consumer only through the handle-authenticated
@@ -235,8 +237,10 @@ This wake frame is now a **client-observable trigger contract**: the generated c
 `findMany`, and MUST NOT rely on the wake frame carrying any row data. The frame shape and its
 data-free guarantee are therefore load-bearing for a real consumer, not only an internal
 implementation detail.
-(Previously: this requirement described only the server-side dispatch contract; it had no
-client consumer, so the frame's observability by a live-query loop was unverified in practice.)
+(Previously: this requirement described the route as setting an unconditional
+`access-control-allow-origin: "*"`, so any origin could open it regardless of authentication. CORS
+is now configuration-driven via the origin allowlist, defaulting closed; the wake-only,
+fail-closed dispatch contract itself is unchanged.)
 
 #### Scenario: `@@allow` model wake-up frame carries no row data
 
@@ -266,9 +270,9 @@ client consumer, so the frame's observability by a live-query loop was unverifie
 
 - GIVEN a `@@realtime` model with no `@@allow` block
 - WHEN a row changes on that model
-- THEN the dispatched SSE frame is the scoped `{table, op, lsn, seq}` shape, not the
-  full-payload frame emitted before this change — the SSE route is unauthenticated
-  regardless of `@@allow`, so it never carries `pk`, `new`, or `old` for any model
+- THEN the dispatched SSE frame is the scoped `{table, op, lsn, seq}` shape, regardless of the
+  configured CORS origin allowlist — the SSE route is unauthenticated regardless of `@@allow`, so
+  it never carries `pk`, `new`, or `old` for any model
 
 #### Scenario: A generated `.live()` query observes the wake frame as its refetch trigger
 
@@ -278,7 +282,6 @@ client consumer, so the frame's observability by a live-query loop was unverifie
 - THEN `.live()` receives `event: wake` as the trigger to schedule a debounced `findMany`
   refetch, using only `table` and `op` to decide to refetch — never reading `pk`/`new`/`old`
   from the frame, since none are present
-
 ### Requirement: Guard removal and SSE scoping ship together
 
 A deployment MUST NOT lift the `@@realtime` + `@@allow` compiler guard without also shipping
