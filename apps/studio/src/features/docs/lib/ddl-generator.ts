@@ -4,7 +4,22 @@
  */
 
 import type { ResolvedIndex } from '@indigodb/core';
-import type { Table } from '../../../types';
+import type { Table, TableColumn } from '../../../types';
+
+/**
+ * Resolves the physical identifier for a column: `TableColumn.dbName` when
+ * present, else `name`. `table.primaryKey` and `table.indexes` are always
+ * physical (`ResolvedTable`/`ResolvedIndex`, `ir.ts:194,91`), so column
+ * lines MUST render the same physical identifier or a `PRIMARY KEY`/
+ * `CREATE INDEX` clause references a column that never appears in the
+ * `CREATE TABLE` body — invalid SQL. Falling back to `name` when `dbName`
+ * is absent (mock/sample data) is not a fabrication: it mirrors
+ * `ResolvedColumn.dbName`'s own "`@map` override, else `name`" rule
+ * (`ir.ts:29`) for data that never declared a mapping in the first place.
+ */
+function physicalName(col: TableColumn): string {
+  return col.dbName ?? col.name;
+}
 
 /**
  * Renders the `USING <method>` clause for an index, or `''` when absent.
@@ -37,7 +52,7 @@ function indexStatement(table: Table, index: ResolvedIndex): string {
  */
 function primaryKeyColumns(table: Table): string[] {
   if (table.primaryKey && table.primaryKey.length > 0) return table.primaryKey;
-  return table.columns.filter((col) => col.isPK).map((col) => col.name);
+  return table.columns.filter((col) => col.isPK).map(physicalName);
 }
 
 /** Renders a display-only `CREATE TABLE` DDL snippet for a table (doc view). */
@@ -45,7 +60,7 @@ export function generateTableDDL(table: Table): string {
   const pkColumns = primaryKeyColumns(table);
 
   const columnLines = table.columns.map((col) => {
-    let line = `  ${col.name} ${col.type.toLowerCase()}`;
+    let line = `  ${physicalName(col)} ${col.type.toLowerCase()}`;
     if (col.isNN) line += ' NOT NULL';
     if (col.isUQ) line += ' UNIQUE';
     if (col.defaultValue) line += ` DEFAULT ${col.defaultValue}`;

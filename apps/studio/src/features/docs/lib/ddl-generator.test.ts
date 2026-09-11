@@ -211,3 +211,56 @@ Table T {
     expect(slugIdx).toBeLessThan(emailIdx);
   });
 });
+
+describe('generateTableDDL — @map identifier correspondence (invariant)', () => {
+  /**
+   * Extracts every identifier referenced inside a `PRIMARY KEY (...)` or
+   * `CREATE INDEX ...(...)` / `CREATE UNIQUE INDEX ...(...)` clause.
+   */
+  function referencedIdentifiers(ddl: string): string[] {
+    const identifiers: string[] = [];
+    const pkRe = /PRIMARY KEY \(([^)]*)\)/g;
+    const idxRe = /CREATE (?:UNIQUE )?INDEX[^(]*\(([^)]*)\)/g;
+    for (const re of [pkRe, idxRe]) {
+      for (const match of ddl.matchAll(re)) {
+        for (const col of match[1].split(',')) {
+          identifiers.push(col.trim());
+        }
+      }
+    }
+    return identifiers;
+  }
+
+  /** Extracts every column identifier rendered as a `CREATE TABLE` column line. */
+  function renderedColumnNames(ddl: string): string[] {
+    const body = ddl.slice(ddl.indexOf('(') + 1, ddl.indexOf(');'));
+    return body
+      .split(',\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('PRIMARY KEY'))
+      .map((line) => line.split(/\s+/)[0]);
+  }
+
+  it('every PRIMARY KEY / CREATE INDEX identifier appears as a rendered column line, with @map on both a PK column and an indexed column', () => {
+    const source = `
+Table Post {
+  authorId String @id @map("author_id")
+  slug     String @map("post_slug")
+
+  @@index([slug])
+}
+`;
+    const ddl = renderTable(source, 'Post');
+
+    const referenced = referencedIdentifiers(ddl);
+    const rendered = renderedColumnNames(ddl);
+
+    // General invariant: every identifier in a PRIMARY KEY or CREATE INDEX
+    // clause must correspond to a column line actually rendered in the same
+    // statement — otherwise the DDL references a column that doesn't exist.
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const id of referenced) {
+      expect(rendered).toContain(id);
+    }
+  });
+});

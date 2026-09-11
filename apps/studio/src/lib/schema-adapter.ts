@@ -73,6 +73,7 @@ export function resolvedToTables(resolved: ResolvedSchema): Table[] {
   return resolved.tables.map((table) => {
     const columns: TableColumn[] = table.columns.map((col) => ({
       name: col.name,
+      dbName: col.dbName,
       type: col.type,
       defaultValue: defaultLabel(col.default),
       isPK: col.isPk,

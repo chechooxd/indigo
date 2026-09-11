@@ -7,6 +7,16 @@ import type { ResolvedIndex } from '@indigodb/core';
 
 export interface TableColumn {
   name: string;
+  /** Physical column name (`ResolvedColumn.dbName`: `@map` override, else
+   * `name`). Absent on mock/sample data, which never declares a mapping —
+   * in that case the physical name IS the field name by definition (no
+   * override exists to diverge from), so renderers fall back to `name`.
+   * That fallback mirrors `ResolvedColumn.dbName`'s own "else name" rule
+   * (`ir.ts:29`); it is not a fabricated value. Any renderer that emits a
+   * physical identifier (e.g. the docs DDL view) MUST use this field
+   * (falling back to `name` only when absent), never `name` directly —
+   * `name` may diverge from the real column when `@map` is used. */
+  dbName?: string;
   type: string;
   defaultValue?: string;
   isPK: boolean;

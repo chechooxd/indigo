@@ -93,3 +93,25 @@ MUST mark every listed column, not only the first.
 - GIVEN a table whose `primaryKey` is `["tenantId", "userId"]`
 - WHEN `generateTableDDL(table)` is called
 - THEN both the `tenantId` and `userId` column lines are marked as primary key
+
+### Requirement: Every identifier a `PRIMARY KEY` or `CREATE INDEX` clause references corresponds to a rendered column line
+`table.primaryKey` (`ResolvedTable.primaryKey`, `ir.ts:194`) and `ResolvedIndex.columns`
+(`ir.ts:91`) are always physical column names (`@map` override, else the field name —
+`ResolvedColumn.dbName`, `ir.ts:29-30`). `generateTableDDL` MUST render every `CREATE TABLE`
+column line using that same physical identifier (`TableColumn.dbName`, falling back to `name`
+only when `dbName` is absent), so a `PRIMARY KEY (...)` or `CREATE INDEX ...(...)` clause never
+references a column that does not appear as a column line in the same statement. Rendering the
+field name for column lines while `PRIMARY KEY`/index clauses render the physical name — the
+two diverge whenever a field carries `@map` — produces SQL referencing a nonexistent column.
+
+#### Scenario: A `@map`ped primary-key column renders the physical name consistently
+- GIVEN a table whose sole primary-key field is `authorId` with `@map("author_id")`
+- WHEN `generateTableDDL(table)` is called
+- THEN the column line reads `author_id`, and `PRIMARY KEY (author_id)` references that
+  same identifier — not `authorId`
+
+#### Scenario: A `@map`ped indexed column renders the physical name consistently
+- GIVEN a table with an index on a field `slug` mapped via `@map("post_slug")`
+- WHEN `generateTableDDL(table)` is called
+- THEN the column line reads `post_slug`, and the `CREATE INDEX` clause references
+  `post_slug` — not `slug`
