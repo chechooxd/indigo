@@ -92,6 +92,7 @@ export function resolvedToTables(resolved: ResolvedSchema): Table[] {
       schema: 'public',
       realtime: table.realtime,
       primaryKey: table.primaryKey,
+      indexes: table.indexes,
       columns,
       records: [],
     };

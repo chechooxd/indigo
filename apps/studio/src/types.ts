@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { ResolvedIndex } from '@indigodb/core';
+
 export interface TableColumn {
   name: string;
   type: string;
@@ -30,8 +32,18 @@ export interface Table {
    * or `false` on mock/sample data and tables without `@@realtime`. */
   realtime?: boolean;
   /** Primary key column names, in `ResolvedTable.primaryKey` order.
-   * Composite-safe. Absent on mock/sample data (falls back to `id`). */
+   * Composite-safe. Absent on mock/sample data. This is a consumer/row-identity
+   * fallback scope only (e.g. the record editor defaulting to `id` for a key) —
+   * it is NOT license for a renderer to invent a `PRIMARY KEY (id)` clause when
+   * this field is absent; the docs DDL renderer emits no PRIMARY KEY clause at
+   * all in that case (see `features/docs/lib/ddl-generator.ts`). */
   primaryKey?: string[];
+  /** Secondary indexes / composite uniques, mirrored structurally from
+   * `ResolvedTable.indexes` (`@indigodb/core`). Optional and undefaulted —
+   * absent means "unknown" (mock/sample data never populated this), distinct
+   * from `[]` ("verified none"), matching the `realtime`/`primaryKey`
+   * convention above. */
+  indexes?: ResolvedIndex[];
   columns: TableColumn[];
   // Mock rows hold heterogeneous values keyed by column name; callers access
   // arbitrary keys (e.g. row.email, row.id) directly, so values are untyped.
