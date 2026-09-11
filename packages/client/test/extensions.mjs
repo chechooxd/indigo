@@ -462,6 +462,182 @@ await check(
   },
 );
 
+// ─── Phase 4: wrapLog redaction (client-log-redaction) ────────────────────
+//
+// Additive to the `wrapLog` case at :98-115, never a replacement — that case
+// stays evidence for the SQL-rewrite requirement with its own empty-params
+// fixture. Every case here uses a NON-EMPTY params array carrying the
+// sentinel below, so the assertion actually exercises the redaction branch
+// (design.md's `C1.3a` defect class: a regression test whose fixture never
+// reaches the branch it is named for).
+
+const LOG_REDACTION_SENTINEL = "hunter2-SENTINEL";
+
+await check(
+  "bound parameter values never appear in captured stdout (log: true, no extensions)",
+  async () => {
+    const { exec } = stubExecutor([]);
+    const logged = [];
+    const originalLog = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+      const client = new IndigoClientBase({ db: { exec }, log: true });
+      await client.$queryRaw("SELECT 1", [LOG_REDACTION_SENTINEL]);
+    } finally {
+      console.log = originalLog;
+    }
+    const leaked = logged.some((args) => JSON.stringify(args).includes(LOG_REDACTION_SENTINEL));
+    assert(
+      !leaked,
+      `expected the sentinel to be absent from stdout; found it in: ${JSON.stringify(logged)}`,
+    );
+    const line = logged.find((args) => args[0] === "[indigodb]");
+    assert(line !== undefined, "expected a captured [indigodb] log line");
+    assert(line[1] === "SELECT 1", `expected args[1] to be the SQL, got: ${line[1]}`);
+    assert(
+      line[2] === "$1=<redacted>",
+      `expected args[2] to be the redacted positional placeholder, got: ${line[2]}`,
+    );
+  },
+);
+
+await check("log: false and log omitted never emit an [indigodb] line", async () => {
+  const logged = [];
+  const originalLog = console.log;
+  console.log = (...args) => logged.push(args);
+  try {
+    const { exec: execFalse } = stubExecutor([]);
+    const clientFalse = new IndigoClientBase({ db: { exec: execFalse }, log: false });
+    await clientFalse.$queryRaw("SELECT 1", [LOG_REDACTION_SENTINEL]);
+
+    const { exec: execOmitted } = stubExecutor([]);
+    const clientOmitted = new IndigoClientBase({ db: { exec: execOmitted } });
+    await clientOmitted.$queryRaw("SELECT 1", [LOG_REDACTION_SENTINEL]);
+  } finally {
+    console.log = originalLog;
+  }
+  const indigoLines = logged.filter((args) => args[0] === "[indigodb]");
+  assert(
+    indigoLines.length === 0,
+    `expected zero [indigodb] log lines with log disabled/omitted; got: ${JSON.stringify(indigoLines)}`,
+  );
+});
+
+await check(
+  "redaction holds when an extension rewrites sql (non-empty sentinel params passed through)",
+  async () => {
+    const rewriter = (next) => async (sql, params) => next("SELECT 1 -- rewritten", params);
+    const { exec } = stubExecutor([]);
+    const logged = [];
+    const originalLog = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+      const client = new IndigoClientBase({ db: { exec }, extensions: [rewriter], log: true });
+      await client.$queryRaw("SELECT 1", [LOG_REDACTION_SENTINEL]);
+    } finally {
+      console.log = originalLog;
+    }
+    const leaked = logged.some((args) => JSON.stringify(args).includes(LOG_REDACTION_SENTINEL));
+    assert(
+      !leaked,
+      `expected the sentinel to be absent from stdout; found it in: ${JSON.stringify(logged)}`,
+    );
+    const line = logged.find((args) => args[0] === "[indigodb]");
+    assert(
+      line?.[1] === "SELECT 1 -- rewritten",
+      `expected the logged SQL to be the post-extension rewrite, got: ${line?.[1]}`,
+    );
+  },
+);
+
+await check("empty params print the (0 params) constant; arity/shape still 3 args", async () => {
+  const { exec } = stubExecutor([]);
+  const logged = [];
+  const originalLog = console.log;
+  console.log = (...args) => logged.push(args);
+  try {
+    const client = new IndigoClientBase({ db: { exec }, log: true });
+    await client.$queryRaw("SELECT 1", []);
+  } finally {
+    console.log = originalLog;
+  }
+  const line = logged.find((args) => args[0] === "[indigodb]");
+  assert(line !== undefined, "expected a captured [indigodb] log line");
+  assert(line.length === 3, `expected exactly 3 captured args, got: ${line.length}`);
+  assert(line[2] === "(0 params)", `expected args[2] to be the empty-params constant, got: ${line[2]}`);
+});
+
+await check("redaction holds inside $transaction/$withSession", async () => {
+  const { exec } = stubExecutor([]);
+  const db = {
+    exec,
+    transaction: async (fn) => fn(exec),
+  };
+  const logged = [];
+  const originalLog = console.log;
+  console.log = (...args) => logged.push(args);
+  try {
+    const client = new IndigoClientBase({ db, log: true });
+    await client.$transaction(async (txExec) => txExec("SELECT 1", [LOG_REDACTION_SENTINEL]));
+  } finally {
+    console.log = originalLog;
+  }
+  const leaked = logged.some((args) => JSON.stringify(args).includes(LOG_REDACTION_SENTINEL));
+  assert(
+    !leaked,
+    `expected the sentinel to be absent from stdout inside $transaction; found it in: ${JSON.stringify(logged)}`,
+  );
+  const line = logged.find((args) => args[0] === "[indigodb]");
+  assert(line !== undefined, "expected a captured [indigodb] log line inside $transaction");
+  assert(
+    line[2] === "$1=<redacted>",
+    `expected args[2] to be the redacted placeholder inside $transaction, got: ${line[2]}`,
+  );
+});
+
+await check(
+  "redacted placeholders render identically regardless of parameter shape",
+  async () => {
+    const { exec } = stubExecutor([]);
+    const logged = [];
+    const originalLog = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+      const client = new IndigoClientBase({ db: { exec }, log: true });
+      await client.$queryRaw("SELECT 1", [new Date(), null, ["a", "b"], Buffer.from("x")]);
+    } finally {
+      console.log = originalLog;
+    }
+    const line = logged.find((args) => args[0] === "[indigodb]");
+    assert(line !== undefined, "expected a captured [indigodb] log line");
+    assert(
+      line[2] === "$1=<redacted>, $2=<redacted>, $3=<redacted>, $4=<redacted>",
+      `expected uniform redacted placeholders regardless of parameter shape, got: ${line[2]}`,
+    );
+    assert(!line[2].includes("[object Object]"), "expected no shape-specific object formatting to leak through");
+  },
+);
+
+await check(
+  "redaction is display-only: the base executor still receives real parameter values",
+  async () => {
+    const { exec, calls } = stubExecutor([]);
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      const client = new IndigoClientBase({ db: { exec }, log: true });
+      await client.$queryRaw("SELECT 1", [LOG_REDACTION_SENTINEL]);
+    } finally {
+      console.log = originalLog;
+    }
+    assert(calls.length === 1, "expected exactly one call to the base executor");
+    assert(
+      calls[0].params[0] === LOG_REDACTION_SENTINEL,
+      `expected the base executor to receive the real, unredacted value; got: ${calls[0].params[0]}`,
+    );
+  },
+);
+
 if (failures > 0) {
   console.error(`\n@indigodb/client extensions: ${failures} failure(s)`);
   process.exit(1);
