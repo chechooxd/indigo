@@ -2,6 +2,12 @@
   "name": "@indigodb/react",
   "version": "0.0.1",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "files": ["dist"],
   "main": "./dist/index.js",

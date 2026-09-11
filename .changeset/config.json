@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@indigodb/ast",
+      "@indigodb/compiler",
+      "@indigodb/parser",
+      "@indigodb/core",
+      "@indigodb/migrator",
+      "@indigodb/generator",
+      "@indigodb/client",
+      "@indigodb/realtime",
+      "@indigodb/react",
+      "@indigodb/cli",
+      "@indigodb/studio"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": []
+}
