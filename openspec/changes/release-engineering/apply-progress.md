@@ -2,6 +2,100 @@
 
 ## Status
 
+29/29 active tasks complete (32 original minus 3 Phase 3 tasks now struck as
+descoped, plus 2 new Task-B fix tasks). Phase 3 (dependency-audit-gate) removed
+entirely per maintainer-approved descope. Three confirmed review findings in the
+remaining scope fixed. Committed to branch `release-engineering`
+(commit `87d54bb`, on top of `992900c`/`9c2ae64`). Ready for `sdd-verify`.
+
+## Batch 2: Descope + Fix (this session, 2026-09-10)
+
+### Why
+
+A `/code-review` pass at high effort found the dependency-audit gate as landed
+blocks every push on this repo: `pnpm audit --audit-level=high` exits 1 with 53
+vulnerabilities (15 high), 14 pre-existing in `apps/studio`'s tooling tree and the
+15th (`js-yaml` via `@changesets/cli`) introduced by this change itself. The
+documented `pnpm.auditConfig.ignoreCves` valve cannot even suppress that 15th one
+— its advisory (`GHSA-5p4m-2wfm-xmqj`) is GHSA-only (`cves: []`), and `ignoreCves`
+matches CVE-only; `ignoreGhsas` is the field that covers it, and this change never
+wired it. The maintainer decided to split the gate into its own change.
+
+### Task A — audit gate removed completely
+
+- [x] `.githooks/pre-push` restored to exactly `main`'s pre-change state —
+      `git diff main -- .githooks/pre-push` is empty.
+- [x] `pnpm.auditConfig` removed from root `package.json`.
+- [x] `scripts/test-audit-gate.mjs` deleted and unwired from the root `test` chain.
+- [x] `openspec/changes/release-engineering/specs/dependency-audit-gate/` deleted.
+- [x] Every audit-gate reference removed from `RELEASING.md`.
+- [x] Phase 3 tasks in `tasks.md` struck (`~~...~~`, checkbox reset to `[ ]`) with a
+      reversal record, not deleted. Design's Testing Strategy rows 1–7 and the
+      audit-gate decision/data-flow line/file-changes row removed from `design.md`.
+- [x] `proposal.md`, `design.md`, `tasks.md` updated to describe three deliverables
+      (release-versioning, package-publish-metadata, publish-procedure) with an
+      explicit, dated descope note naming the reproduced defect and the gate's move
+      to its own `dependency-audit-gate` change.
+
+### Task B — three confirmed findings fixed
+
+- [x] **B.1 Publish sequence aborts at step 4.** Reproduced on a throwaway branch
+      (`throwaway-release-repro`, deleted after): `changeset version` → `pnpm
+      publish -r --dry-run` with no commit in between → `ERR_PNPM_GIT_UNCLEAN`,
+      exit 1. Fix: added a documented `git commit` step between `changeset version`
+      and publish (not `--no-git-checks` — committing the bump is the honest
+      record). Reran the full sequence with the commit step: `pnpm publish -r
+      --dry-run` succeeded, all 11 units listed at the bumped version (`0.0.2` in
+      the throwaway repro).
+- [x] **B.2 Cohort guard never re-runs after the only step that can break parity.**
+      `RELEASING.md` and `design.md`/`proposal.md` now document the guard (or full
+      `pnpm test`) re-running after `changeset version` + commit, before publish.
+- [x] **B.3 Cohort guard never cross-checked the publishable set against `fixed`.**
+      Strict TDD: RED — temporarily dropped `@indigodb/cli` from
+      `.changeset/config.json`'s `fixed` array (version left matching); the
+      unmodified guard still printed PASSED, proving the gap. Reverted. GREEN —
+      extended `scripts/check-release-cohort.mjs` with a bidirectional name
+      cross-check (publishable-missing-from-fixed, and fixed-entry-missing-
+      publishable), each failure naming the specific package and the config path.
+      Reran both mutation directions (drop `@indigodb/cli`; add a phantom
+      `@indigodb/nonexistent` entry) against the new script: both failed with the
+      specific asserted message, neither crashed. Reverted `.changeset/config.json`
+      to clean; guard reruns PASSED afterward.
+
+### Verification (foreground, this session)
+
+| Command | Result |
+|---|---|
+| `pnpm clean && pnpm build --force` | 11/11 tasks successful |
+| `pnpm lint` | 21/21 successful (cached) |
+| `pnpm test` | 20/20 turbo tasks + pack-contents guard all green + cohort guard PASSED + realtime db-gate PASSED (no audit-gate step; it no longer exists) |
+| `git diff main -- .githooks/pre-push` | empty |
+| `pnpm audit --audit-level=high` | exit 1, 53 vulnerabilities/15 high (unchanged) — confirmed hook no longer invokes it (`rg "pnpm audit" .githooks/pre-push` → no match) |
+| Cohort-guard mutation proof (B.3) | RED: unmodified guard PASSED despite dropped `@indigodb/cli` from `fixed`. GREEN: new guard failed naming `@indigodb/cli` (missing-from-fixed) and separately failed naming `@indigodb/nonexistent` (phantom-in-fixed). Config restored; guard PASSED clean afterward. |
+| Publish-sequence proof (B.1) | RED: `ERR_PNPM_GIT_UNCLEAN`, exit 1, no commit between version and publish. GREEN: commit + cohort-guard rerun + `pnpm publish -r --dry-run` → exit 0, all 11 units listed. Throwaway branch deleted after. |
+
+Nothing published to the real registry — dry-run only, throwaway branch deleted.
+
+### Files changed (Batch 2)
+
+| File | Action |
+|---|---|
+| `.githooks/pre-push` | Modified — audit block removed, byte-identical to `main` |
+| `package.json` (root) | Modified — `pnpm.auditConfig` and `test-audit-gate.mjs` chain entry removed |
+| `scripts/test-audit-gate.mjs` | Deleted |
+| `scripts/check-release-cohort.mjs` | Modified — fixed-group cross-check added |
+| `RELEASING.md` | Modified — audit-gate section removed; commit step + cohort-guard re-run documented |
+| `openspec/changes/release-engineering/specs/dependency-audit-gate/spec.md` | Deleted |
+| `openspec/changes/release-engineering/proposal.md` | Modified — descope note, 3-deliverable scope |
+| `openspec/changes/release-engineering/design.md` | Modified — descope note, audit decisions/rows removed, B.1/B.2 design decision added |
+| `openspec/changes/release-engineering/tasks.md` | Modified — Descope Note, Phase 3 struck, tasks 4.6/4.7/5.7 added |
+
+Committed as `87d54bb` on branch `release-engineering`. Not pushed, no PR opened.
+
+---
+
+## Batch 1 (original implementation, prior session)
+
 32/32 tasks complete. All 5 phases implemented, verified, and committed to branch
 `release-engineering` (commit `9c2ae64`). Ready for `sdd-verify`.
 
