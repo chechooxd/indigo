@@ -49,7 +49,7 @@ mechanisms named in design (`usingClause` and the fabricated index string).
 - [x] 4.1 Confirmed both spec deltas (`studio-docs-ddl` NEW, `studio-ui-honesty` ADDED) already
   match implemented behavior — no spec edits made, read-verify only.
 - [x] 4.2 Focused suite: `pnpm --filter @indigodb/studio exec vitest run
-  src/features/docs/lib/ddl-generator.test.ts` → 12/12 passed.
+  src/features/docs/lib/ddl-generator.test.ts` → 13/13 passed.
 - [x] 4.3 `pnpm --filter @indigodb/studio lint` (`tsc -b --noEmit`) → exit 0.
 
 ## Deviation from tasks.md (task 3.10)
@@ -79,7 +79,7 @@ compiler rejects.
 | Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
 |------|-----------|-------|------------|-----|-------|-------------|----------|
 | 2.3/2.4 (adapter) | `ddl-generator.test.ts` | Unit | N/A (new file) | Written | Passed | 2 cases (present/absent indexes) | None needed |
-| 3.2-3.12 (renderer) | `ddl-generator.test.ts` | Unit | N/A (new file) | Written (10 rows) | Passed (12/12) | 10 scenario rows | None needed — single cohesive rewrite |
+| 3.2-3.12 (renderer) | `ddl-generator.test.ts` | Unit | N/A (new file) | Written (10 rows) | Passed (13/13) | 10 scenario rows | None needed — single cohesive rewrite |
 
 ### Test Summary
 - **Total tests written**: 12
@@ -93,8 +93,8 @@ compiler rejects.
 
 | Evidence | Value |
 |---|---|
-| Focused test command and exact result | `pnpm --filter @indigodb/studio exec vitest run src/features/docs/lib/ddl-generator.test.ts` → 12/12 passed |
-| Runtime harness command/scenario and exact result | Real `parse`+`resolve` (`@indigodb/core`, no mock) → `resolvedToTables` → `generateTableDDL`; this IS the runtime boundary where the original defect lived — 12/12 passed through it |
+| Focused test command and exact result | `pnpm --filter @indigodb/studio exec vitest run src/features/docs/lib/ddl-generator.test.ts` → 13/13 passed |
+| Runtime harness command/scenario and exact result | Real `parse`+`resolve` (`@indigodb/core`, no mock) → `resolvedToTables` → `generateTableDDL`; this IS the runtime boundary where the original defect lived — 13/13 passed through it |
 | Rollback boundary | Single commit `25a503b`; revert it wholesale — no other file reads `Table.indexes` today |
 
 ## Full Verification (foreground, all commands)
@@ -103,7 +103,7 @@ compiler rejects.
 |---|---|
 | `pnpm clean && pnpm build --force` | exit 0, 11/11 tasks successful |
 | `pnpm lint` | exit 0, 21/21 tasks successful (Studio's `tsc -b --noEmit` confirmed, not the zero-file plain `tsc --noEmit`) |
-| `pnpm test` | exit 0, 20/20 turbo tasks successful; Studio: 30/30 test files, 266/266 tests (includes new `ddl-generator.test.ts` 12/12); CLI: 24/24 files; `@indigodb/realtime` Postgres-gated suites correctly `SKIP` (no `INDIGODB_TEST_DATABASE_URL`); pack-contents + version-parity guards green |
+| `pnpm test` | exit 0, 20/20 turbo tasks successful; Studio: 30/30 test files, 266/266 tests (includes new `ddl-generator.test.ts` 13/13); CLI: 24/24 files; `@indigodb/realtime` Postgres-gated suites correctly `SKIP` (no `INDIGODB_TEST_DATABASE_URL`); pack-contents + version-parity guards green |
 | Mutation proof #1 (fabricated index) | Row 1 reddened on named assertion diff, reverted |
 | Mutation proof #2 (`?? 'btree'` default) | Row 3 reddened on named assertion diff, reverted |
 
