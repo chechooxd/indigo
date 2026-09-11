@@ -21,7 +21,6 @@ export default function DocBrowserPage() {
     docFilterQuery,
     setSelectedTableIdx,
     setDocFilterQuery,
-    copyDDL,
     shareReference,
     queryTable,
   } = useDocBrowser();
@@ -49,7 +48,7 @@ export default function DocBrowserPage() {
           <ColumnsSpecTable columns={activeTable.columns} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <DdlPanel ddlCode={ddlDefinitionCode} onCopy={copyDDL} />
+            <DdlPanel key={`${activeTable.schema}.${activeTable.name}`} ddlCode={ddlDefinitionCode} />
             <RelationsPanel
               relations={displayRelations}
               recordCount={activeTable.records ? activeTable.records.length : 0}

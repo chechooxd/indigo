@@ -23,7 +23,6 @@ export interface UseDocBrowserReturn {
 
   setSelectedTableIdx: (idx: number) => void;
   setDocFilterQuery: (query: string) => void;
-  copyDDL: () => void;
   shareReference: () => void;
   queryTable: () => void;
 }
@@ -54,11 +53,6 @@ export function useDocBrowser(): UseDocBrowserReturn {
     return generateTableDDL(activeTable);
   }, [activeTable]);
 
-  const copyDDL = () => {
-    navigator.clipboard.writeText(ddlDefinitionCode);
-    alert(`Success: DDL schema script for "${activeTable.name}" copied to clipboard.`);
-  };
-
   const shareReference = () => {
     const url = window.location.href + `#docs/${activeTable.schema}/${activeTable.name}`;
     navigator.clipboard.writeText(url);
@@ -78,7 +72,6 @@ export function useDocBrowser(): UseDocBrowserReturn {
     docFilterQuery,
     setSelectedTableIdx,
     setDocFilterQuery,
-    copyDDL,
     shareReference,
     queryTable,
   };

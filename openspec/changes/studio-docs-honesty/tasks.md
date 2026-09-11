@@ -28,56 +28,56 @@ Branch base: `main`. Files: `shared/hooks/useCopyFeedback.ts` (new),
 
 ### 1.1 Extract the shared hook (RED → GREEN)
 
-- [ ] 1.1.1 RED — Create `apps/studio/src/shared/hooks/__tests__/useCopyFeedback.test.tsx`.
+- [x] 1.1.1 RED — Create `apps/studio/src/shared/hooks/__tests__/useCopyFeedback.test.tsx`.
   Write test "success write sets `copied` true, then false after 1600ms" (design Testing
   Strategy row 1): `vi.useFakeTimers()`, `navigator.clipboard.writeText` stubbed via
   `Object.defineProperty` to resolve, render the hook with `@testing-library/react`'s
   `renderHook`, call `copy('x')`, advance timers, assert `copied` transitions
   `false → true → false`. Run it — it MUST fail with "Cannot find module
   '../useCopyFeedback'" (the file does not exist yet). Record the failing import error.
-- [ ] 1.1.2 RED — In the same file, add test "re-click re-arms the timer" (row 2): call
+- [x] 1.1.2 RED — In the same file, add test "re-click re-arms the timer" (row 2): call
   `copy()` at t=0 and again at t=1000ms; assert `copied` is still `true` at t=1600ms and
   `false` at t=2600ms. Confirm it fails for the same missing-module reason as 1.1.1.
-- [ ] 1.1.3 RED — Add test "unmount clears the pending timer" (row 3): call `copy()`, unmount
+- [x] 1.1.3 RED — Add test "unmount clears the pending timer" (row 3): call `copy()`, unmount
   the rendered hook, assert `vi.getTimerCount() === 0`. Confirm current failure (missing
   module).
-- [ ] 1.1.4 RED — Add test "rejected write, or clipboard undefined, never sets `copied`"
+- [x] 1.1.4 RED — Add test "rejected write, or clipboard undefined, never sets `copied`"
   (row 4): stub `writeText` to reject; call `copy()`; assert the returned promise resolves
   without throwing and `copied` stays `false`. Confirm current failure (missing module).
-- [ ] 1.1.5 GREEN — Create `apps/studio/src/shared/hooks/useCopyFeedback.ts`. Port the shape
+- [x] 1.1.5 GREEN — Create `apps/studio/src/shared/hooks/useCopyFeedback.ts`. Port the shape
   from `DslEditorToolbar.tsx:32-50` verbatim: `COPY_FEEDBACK_MS = 1500`; `copied` state; a
   `timeoutRef`; `copy(text)` does `await navigator.clipboard.writeText(text)` inside
   `try`, sets `copied(true)`, clears any prior timeout, re-arms a new one; `catch` does
   nothing (no state change, no dialog); an unmount effect clears the pending timer. Export
   `{ copied, copy }` and `COPY_FEEDBACK_MS`.
-- [ ] 1.1.6 Run 1.1.1-1.1.4 and confirm all four now pass (GREEN).
-- [ ] 1.1.7 REFACTOR checkpoint — no behaviour change expected; confirm the hook file has no
+- [x] 1.1.6 Run 1.1.1-1.1.4 and confirm all four now pass (GREEN).
+- [x] 1.1.7 REFACTOR checkpoint — no behaviour change expected; confirm the hook file has no
   leftover ERD-specific naming (`dslCode`, `handleCopyCode`) and matches the interface in
   design's Interfaces/Contracts block exactly.
 
 ### 1.2 Rewire `DslEditorToolbar` onto the hook without changing its tests
 
-- [ ] 1.2.1 Baseline checkpoint (mandatory per delivery contract): run
+- [x] 1.2.1 Baseline checkpoint (mandatory per delivery contract): run
   `pnpm --filter @indigodb/studio exec vitest run src/features/erd/components/__tests__/DslEditorToolbar.test.tsx`
   BEFORE editing the component. Confirm all 7 tests pass on the unmodified file. Record the
   pass count.
-- [ ] 1.2.2 Edit `apps/studio/src/features/erd/components/DslEditorToolbar.tsx`: replace the
+- [x] 1.2.2 Edit `apps/studio/src/features/erd/components/DslEditorToolbar.tsx`: replace the
   local `copied`/`timeoutRef`/`handleCopyCode` block with `const { copied, copy } =
   useCopyFeedback();` and `onClick={() => copy(dslCode)}`. Delete the now-unused
   `COPY_FEEDBACK_MS` constant and the `useEffect`/`useRef` imports that become dead. Do not
   touch `DslEditorToolbar.test.tsx`.
-- [ ] 1.2.3 Checkpoint (explicit, per delivery contract) — re-run
+- [x] 1.2.3 Checkpoint (explicit, per delivery contract) — re-run
   `pnpm --filter @indigodb/studio exec vitest run src/features/erd/components/__tests__/DslEditorToolbar.test.tsx`
   with the file UNEDITED. Confirm the same 7 tests still pass, proving the extraction is
   behaviour-preserving.
 
 ### 1.3 `DdlPanel` consumes the hook directly (RED → GREEN)
 
-- [ ] 1.3.1 RED — Create `apps/studio/src/features/docs/__tests__/DocBrowserPage.test.tsx`
+- [x] 1.3.1 RED — Create `apps/studio/src/features/docs/__tests__/DocBrowserPage.test.tsx`
   scaffold: imports, a render helper that seeds `useDataStore.setState({ tables, resolvedSchema:
   null })` with hand-built tables `A` (`records.length === 3`) and `B` (`records: []`), matching
   design's Testing Strategy. No test bodies yet beyond the scaffold and helper.
-- [ ] 1.3.2 RED — Write test "Copy Schema: exact DDL, inline Copied, no alert, clears" (spec
+- [x] 1.3.2 RED — Write test "Copy Schema: exact DDL, inline Copied, no alert, clears" (spec
   scenario "Copying the docs-view schema DDL shows inline confirmation and clears"; design row
   6): stub `navigator.clipboard.writeText` and `vi.spyOn(window, 'alert')`; render
   `DocBrowserPage` on table `A`; click the button named "Copy Schema"; assert `writeText` was
@@ -86,57 +86,62 @@ Branch base: `main`. Files: `shared/hooks/useCopyFeedback.ts` (new),
   assert the name reverts to "Copy Schema". Run it against the current `DdlPanel`
   (`onCopy` prop calling `useDocBrowser`'s `copyDDL`, which calls `alert(...)`) and confirm it
   fails on the `alert` assertion. Record the observed failure.
-- [ ] 1.3.3 RED — Write test "rejected clipboard write on Copy Schema shows no dialog and no
+- [x] 1.3.3 RED — Write test "rejected clipboard write on Copy Schema shows no dialog and no
   false confirmation" (spec scenario of the same name; design row 7): stub `writeText` to
   reject; click Copy Schema; assert `alert` not called and
   `queryByRole('button', { name: 'Copied' })` is `null`. Confirm current failure (the existing
   `copyDDL` calls `alert` unconditionally, regardless of the write's outcome).
-- [ ] 1.3.4 RED — Write test "Copied on A, then switch to B shows Copy Schema again" (spec
+- [x] 1.3.4 RED — Write test "Copied on A, then switch to B shows Copy Schema again" (spec
   scenario "Copy Schema writes the active table's real DDL text"; design row 8): click Copy
   Schema on `A` to reach "Copied", switch the active table to `B` via the sidebar/table list,
   assert the button on `B` is named "Copy Schema" (not "Copied"). Confirm current failure or
   note if it already passes by accident — if it passes before the `key` change, state that
   explicitly and keep the assertion as a regression guard.
-- [ ] 1.3.5 GREEN — Edit `apps/studio/src/features/docs/components/DdlPanel.tsx`:
+- [x] 1.3.5 GREEN — Edit `apps/studio/src/features/docs/components/DdlPanel.tsx`:
   `DdlPanelProps` becomes `{ ddlCode: string }` (drop `onCopy`); import and call
   `useCopyFeedback()` directly inside the component; the button's `onClick` is
   `() => copy(ddlCode)`; the button's accessible name comes from its text content only —
   "Copy Schema" by default, "Copied" after a successful copy (replace the fixed "Copy Schema"
   label with a conditional). Icons get `aria-hidden`; no `aria-label` is added (per design
   Interfaces/Contracts).
-- [ ] 1.3.6 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: render
+- [x] 1.3.6 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: render
   `<DdlPanel key={activeTable.name} ddlCode={ddlDefinitionCode} />` (add the `key`, drop
   `onCopy={copyDDL}`).
-- [ ] 1.3.7 GREEN — Edit `apps/studio/src/features/docs/hooks/useDocBrowser.ts`: delete the
+- [x] 1.3.7 GREEN — Edit `apps/studio/src/features/docs/hooks/useDocBrowser.ts`: delete the
   `copyDDL` function body and its `copyDDL` entry from `UseDocBrowserReturn` and the returned
   object. Leave `shareReference` and `queryTable` untouched (out of scope for this unit).
   Remove the now-unused `navigator.clipboard`/`alert` line tied only to `copyDDL`.
-- [ ] 1.3.8 Run 1.3.2-1.3.4 and confirm all three now pass (GREEN).
+- [x] 1.3.8 Run 1.3.2-1.3.4 and confirm all three now pass (GREEN).
 
 ### 1.4 Mutation proofs (WU1)
 
-- [ ] 1.4.1 Mutation proof — reintroduce `alert(...)` inside `DdlPanel`'s (or
+- [x] 1.4.1 Mutation proof — reintroduce `alert(...)` inside `DdlPanel`'s (or
   `useCopyFeedback`'s) success path. Run 1.3.2 and confirm it goes red on the
   `expect(alert).not.toHaveBeenCalled()` assertion, naming the unexpected call in the failure
   message — not a `TypeError`. Record the observed red output, then revert.
-- [ ] 1.4.2 Mutation proof — add `alert(...)` inside the `catch` block of `useCopyFeedback`'s
+- [x] 1.4.2 Mutation proof — add `alert(...)` inside the `catch` block of `useCopyFeedback`'s
   `copy`. Run 1.3.3 and confirm it goes red on the same `alert` assertion. Record the observed
   red output, then revert.
-- [ ] 1.4.3 Mutation proof — drop `key={activeTable.name}` from the `DdlPanel` usage in
+- [x] 1.4.3 Mutation proof — drop `key={activeTable.name}` from the `DdlPanel` usage in
   `DocBrowserPage.tsx`. Run 1.3.4 and confirm it goes red because the button on `B` still
   reads "Copied" (state carried across the table switch). Record the observed red output,
   then revert (restore the `key`).
 
 ### 1.5 Verification and commit (WU1)
 
-- [ ] 1.5.1 Run `pnpm --filter @indigodb/studio test` and record the exit code and pass count
+- [x] 1.5.1 Run `pnpm --filter @indigodb/studio test` and record the exit code and pass count
   (must be 0 and all new + `DslEditorToolbar.test.tsx`'s 7 green).
-- [ ] 1.5.2 Run `pnpm lint` and record the exit code (must be 0 — confirms `DdlPanelProps`,
+- [x] 1.5.2 Run `pnpm lint` and record the exit code (must be 0 — confirms `DdlPanelProps`,
   `UseDocBrowserReturn`, and the new hook typecheck across all consumers).
-- [ ] 1.5.3 Run `pnpm build` and record the exit code (must be 0).
-- [ ] 1.5.4 Commit WU1 with a conventional commit message (e.g.
+- [x] 1.5.3 Run `pnpm build` and record the exit code (must be 0).
+- [x] 1.5.4 Commit WU1 with a conventional commit message (e.g.
   `refactor(studio): extract useCopyFeedback and remove Copy Schema's alert`). No
-  Co-Authored-By or AI attribution lines.
+  Co-Authored-By or AI attribution lines. — **executed by the orchestrator after the native
+  review**: the review ran on the uncommitted working tree (lineage `review-be9d677a65f6de0d`,
+  medium tier, 380 changed lines), opened one bounded correction for CRITICAL
+  `R3-ddlpanel-key-collision`, then reached `approved` and its authority was burned. One
+  advisory SUGGESTION (`R3-undefined-clipboard-branch-unproved`,
+  `useCopyFeedback.test.tsx:86-95`) is non-blocking and stays as later work.
 
 ## Work Unit 2: Static Honesty Removals (banner, share, metric, columns)
 
