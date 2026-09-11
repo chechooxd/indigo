@@ -10,7 +10,7 @@
     "build": "turbo build",
     "clean": "turbo clean",
     "lint": "turbo lint",
-    "test": "turbo test && node scripts/check-pack-contents.mjs && node scripts/check-release-cohort.mjs && node scripts/check-realtime-projection-db-gate.mjs && node scripts/test-audit-gate.mjs",
+    "test": "turbo test && node scripts/check-pack-contents.mjs && node scripts/check-release-cohort.mjs && node scripts/check-realtime-projection-db-gate.mjs",
     "release:preflight": "pnpm clean && pnpm build --force && pnpm lint && pnpm test",
     "ci:local": "act -j ts",
     "test:postgres": "./scripts/test-postgres.sh"
@@ -24,10 +24,5 @@
     "turbo": "^2.5.0",
     "typescript": "^5.8.0",
     "@types/node": "^22.0.0"
-  },
-  "pnpm": {
-    "auditConfig": {
-      "ignoreCves": []
-    }
   }
 }

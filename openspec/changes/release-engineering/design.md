@@ -2,11 +2,20 @@
 
 ## Technical Approach
 
-Four independent, independently-revertable pieces: a `.changeset/` fixed group, two mechanical
-manifest fields ×11, an audit step in `.githooks/pre-push`, and a documented + partly *verified*
-publish procedure. Nothing publishes. Every claim below is proven by a real artifact (`npm
-publish --dry-run` output, a real `changeset version` run, a real seeded advisory) — never by
-reading back the field we just wrote, which is the mock-the-compiler blindness class.
+Three independent, independently-revertable pieces: a `.changeset/` fixed group, two mechanical
+manifest fields ×11, and a documented + partly *verified* publish procedure. Nothing publishes.
+Every claim below is proven by a real artifact (`npm publish --dry-run` output, a real `changeset
+version` run, a real mutated `.changeset/config.json`) — never by reading back the field we just
+wrote, which is the mock-the-compiler blindness class.
+
+**Descope note (2026-09-10)**: a `/code-review` pass found the dependency-audit gate this design
+originally specified blocks every push on this repo as landed (`pnpm audit --audit-level=high`
+exits 1 with 15 high-severity advisories even with the documented `ignoreCves` valve in place,
+and that valve cannot suppress at least one of them — `js-yaml`'s advisory is GHSA-only,
+`ignoreCves` matches CVE-only). The maintainer decided to split it into its own change. Every
+audit-gate decision, the data-flow line, the file-changes row, and the testing-strategy rows
+below were removed as part of that descope; they are not restated here — see
+`dependency-audit-gate` for their future home.
 
 ## Architecture Decisions
 
@@ -23,17 +32,6 @@ separate change with a separate trigger (first `>=22`-only runtime API, or a Nod
 Verified absent: no `.npmrc` anywhere in the tree. **Trap**: `.npmrc` is also where npm's
 once-per-repo `access=public` would live — if anyone later adds that file, it must not acquire
 `engine-strict` by proximity.
-
-### Decision: `pnpm audit --audit-level=high`, hard-fail, with `ignoreCves` as the pressure valve
-
-`critical`-only is too permissive (most exploitable advisories land at `high`).
-`moderate`/`low` admits the dev-transitive noise that appears with **no code change** — exactly
-the block-on-something-unrelated that `.githooks/pre-push:10-13` argues gets bypassed and then
-abandoned. `high` is the bounded set. The valve is **not** lowering the level: it is a dated,
-greppable, reviewable `pnpm.auditConfig.ignoreCves` entry in the root `package.json`.
-`SKIP_PREPUSH=1` stays the last resort. **Accepted failure mode**: the gate needs the network,
-so an offline push fails; the message names both exits. Fail-open on network error is rejected —
-an indistinguishable-from-clean gate is not a gate.
 
 ### Decision: `publishConfig.access` — the premise was wrong; the field stays, its justification changes
 
@@ -90,14 +88,28 @@ appends a caller's flags to the **last** chained command, so any `--force` passe
 lands inertly on `pnpm test`. Baking it in literally after `build` makes the trap harmless
 instead of relying on the caller.
 
+### Decision: commit between `changeset version` and publish; re-run the cohort guard after it
+
+Two findings from reproducing the documented publish sequence end-to-end:
+
+1. `changeset version` rewrites 11 manifests plus their CHANGELOGs and leaves the tree dirty.
+   `pnpm publish -r --dry-run` run directly afterward, with no commit in between, aborts with
+   `ERR_PNPM_GIT_UNCLEAN` — reproduced during this change's verification. The fix is a documented
+   `git commit` step, not `--no-git-checks`: committing the bump is the honest record of what
+   version was actually published, `--no-git-checks` would just hide the same unclean-tree fact.
+2. `scripts/check-release-cohort.mjs` runs inside `pnpm test`, which the documented sequence
+   places **before** `changeset version` — the only step that can actually cause the drift the
+   guard exists to catch (its own header names this as the reason it exists). A guard that only
+   ever sees pre-bump versions would still print PASSED if `changeset version` silently dropped a
+   unit. The fix is re-running the guard (or all of `pnpm test`) after `changeset version` and its
+   commit, immediately before publish.
+
 ## Data Flow
 
-    git push ──→ pre-push: SKIP? ──→ deletion-only? ──→ [NEW] pnpm audit --audit-level=high
-                                                              │ fail → exit 1 (build never runs)
-                                                              ↓ pass
-                                                    for step in build lint test
+    git push ──→ pre-push: SKIP? ──→ deletion-only? ──→ for step in build lint test
 
-    release: clean → build --force → lint → test(+cohort+pack guard) → changeset version → publish
+    release: clean → build --force → lint → test(+cohort+pack guard) → changeset version →
+             commit → cohort guard (re-run) → publish
 
 ## File Changes
 
@@ -106,11 +118,9 @@ instead of relying on the caller.
 | `.changeset/config.json` | Create | one `fixed` group, all 11 units |
 | `packages/{ast,compiler,parser,core,migrator,generator,client,realtime,react,cli}/package.json` | Modify | `publishConfig.access` + `engines` (gated on the probe) |
 | `apps/studio/package.json` | Modify | same two fields |
-| `.githooks/pre-push` | Modify | audit block inserted after line 49, before the `for` loop at :55 |
-| `package.json` (root) | Modify | `@changesets/cli` devDep, `release:preflight`, cohort guard in `test`, `pnpm.auditConfig` |
-| `scripts/check-release-cohort.mjs` | Create | version-parity guard |
-| `scripts/test-audit-gate.mjs` | Create | fixture-based gate proof |
-| `RELEASING.md` | Create | ordered procedure, `--force` in step one |
+| `package.json` (root) | Modify | `@changesets/cli` devDep, `release:preflight`, cohort guard in `test` |
+| `scripts/check-release-cohort.mjs` | Create | version-parity guard + fixed-group cross-check |
+| `RELEASING.md` | Create | ordered procedure, `--force` in step one, commit + guard re-run before publish |
 | `.npmrc` | **Not created** | deliberate, per decision 1 |
 
 ## Testing Strategy
@@ -119,44 +129,33 @@ Rows are scenario **combinations**, not one per requirement.
 
 | # | Combination | Assertion (semantic artifact) |
 |---|---|---|
-| 1 | high advisory × content push | exit 1 **and** the `build` marker file is absent — proves ordering, not just failure |
-| 2 | high advisory × deletion-only refs | exit 0; audit never runs (short-circuit at `:46-49` precedes it) |
-| 3 | high advisory × `SKIP_PREPUSH=1` | exit 0, skip message |
-| 4 | moderate-only advisory × content push | exit 0 — negative control for `high` |
-| 5 | clean tree × content push | all four steps run, in order |
-| 6 | `ignoreCves` entry × the matching high advisory | exit 0; removing the entry restores exit 1 |
-| 7 | registry unreachable × content push | exit 1, message names `ignoreCves` **and** `SKIP_PREPUSH=1` |
 | 8 | 11 manifests edited × `npm publish --dry-run` | the dry-run output reports public access and the engines floor — not a re-read of the JSON |
 | 9 | real `changeset version` on a throwaway branch | all 11 versions equal and bumped; then reverted |
 | 10 | drifted version × `check-release-cohort.mjs` | exit 1 naming both packages |
 | 11 | stale `dist/` × `build` without `--force` | pack guard reports strays; with `--force` it does not |
+| 12 | publishable package present, absent from `.changeset/config.json`'s `fixed` array (and the reverse) × `check-release-cohort.mjs` | exit 1 naming the mismatched package and the config path, on both sides of the mismatch |
+| 13 | `changeset version` on a throwaway branch × `pnpm publish -r --dry-run` with no commit in between | `ERR_PNPM_GIT_UNCLEAN`; the documented commit step, then a re-run, succeeds |
 
-**Mutation proofs are two-sided and must not pass by crashing.** Flip `--audit-level` to
-`moderate` → row 4 must go red; flip to `critical` → row 1 must go red. Each mutated run must
-fail on the *asserted message/marker*, not on a `TypeError`; a run whose only symptom is a crash
-has proven nothing. Row 1's build-marker assertion is what makes the ordering claim falsifiable.
-
-**Staging/teardown of the vulnerable dep**: never in the real tree or lockfile. `scripts/test-audit-gate.mjs`
-builds a **temp fixture workspace** (own `package.json` + lockfile pinning a known-high advisory,
-`build`/`lint`/`test` scripts that only touch marker files) and invokes the real
-`.githooks/pre-push` against it with synthetic stdin ref lines. Teardown removes the tempdir; the
-repo lockfile is never mutated. The suite needs network, so it follows the existing
-`INDIGODB_TEST_DATABASE_URL` precedent: unset opt-in env var → print `SKIP` and pass.
+**Mutation proofs are two-sided and must not pass by crashing.** Row 12: drop a publishable
+package from `fixed` → the guard must fail naming that exact package, not the parity check; add
+a phantom entry to `fixed` → the guard must fail naming that exact phantom entry. Each mutated
+run must fail on the *asserted message*, not on a `TypeError` — a run whose only symptom is a
+crash has proven nothing.
 
 ## Threat Matrix
 
 | Boundary | Applicability | Design response | Planned RED tests |
 |---|---|---|---|
 | Documentation-like paths | N/A — no file-classification or executable-doc surface | — | — |
-| Git repository selection | Applicable — the hook and both guards must act on the repo root, not the caller's cwd | guards resolve root from `import.meta.url` (precedent: `check-pack-contents.mjs:25`); the fixture proves cwd independence | run guards from a subdirectory |
-| Commit state | N/A — pre-push reads refs, never the index or worktree | — | — |
-| Push state | Applicable — first push, deletion-only, explicit refspec, empty stdin | audit sits **after** the `has_content` short-circuit (`:39-49`), so ref shape decides before any network call | rows 2, 5; plus empty-stdin and first-push (all-zero remote sha) cases |
+| Git repository selection | Applicable — the cohort guard must act on the repo root, not the caller's cwd | guard resolves root from `import.meta.url` (precedent: `check-pack-contents.mjs:25`) | run the guard from a subdirectory |
+| Commit state | Applicable — `pnpm publish` requires a clean tree after `changeset version` | documented commit step between version and publish | reproduce `ERR_PNPM_GIT_UNCLEAN` with no commit, then prove the fixed sequence |
+| Push state | N/A — no push-time gate remains in this change (moved to `dependency-audit-gate`) | — | — |
 | PR commands | N/A — no PR automation in scope | — | — |
 
 ## Migration / Rollout
 
-No migration. Each piece reverts alone: delete `.changeset/`, drop two fields per manifest,
-remove the audit block, drop the two scripts.
+No migration. Each piece reverts alone: delete `.changeset/`, drop two fields per manifest, drop
+`scripts/check-release-cohort.mjs`.
 
 ## Open Questions
 
@@ -164,6 +163,6 @@ remove the audit block, drop the two scripts.
       this design was written. Per-package: confirmed. Required-for-scoped: refuted (npm's default
       is public for new packages). The field stays on all 11 as intent-pinning, not as a
       publish prerequisite; see the corrected decision above and its revised probe halt condition.
-- [ ] Exact `pnpm.auditConfig.ignoreCves` field name is unverified here; the row-6 test is what
-      confirms it, and it must run before the valve is documented in `RELEASING.md`.
+- [x] Exact `pnpm.auditConfig.ignoreCves` field name — **moot here**; the audit gate that needed
+      it was descoped to `dependency-audit-gate` (see the descope note above).
 - [ ] Provenance repo-visibility requirement stays unresolved; out of scope, blocks nothing.

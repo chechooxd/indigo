@@ -23,6 +23,8 @@ Run every step from the repo root, in this exact order:
 pnpm clean && pnpm build --force
 pnpm lint && pnpm test
 pnpm changeset version
+git add -A && git commit -m "chore: version packages"
+node scripts/check-release-cohort.mjs
 pnpm publish -r --dry-run   # replace with `pnpm publish -r` for the real thing — see below
 ```
 
@@ -42,18 +44,38 @@ guard against this class of bug, not the pack-contents check downstream of it.
 ### 2. `pnpm lint && pnpm test`
 
 `pnpm test` runs `check-pack-contents.mjs` (dist-vs-`files` allowlist), the release cohort
-version-parity guard (`scripts/check-release-cohort.mjs`), the realtime DB-gate reachability
-check, and the audit-gate fixture suite (self-skips without `INDIGODB_TEST_AUDIT=1` — see
-below). All of these inspect `dist/` or the manifests, so they MUST run after step 1, never
-before.
+version-parity guard (`scripts/check-release-cohort.mjs`), and the realtime DB-gate reachability
+check. All of these inspect `dist/` or the manifests, so they MUST run after step 1, never
+before. At this point the cohort guard is only asserting parity across the **pre-bump**
+versions — it has not yet seen anything `changeset version` is about to touch.
 
 ### 3. `pnpm changeset version`
 
 Bumps all 11 units to the identical next version, driven by whatever changesets exist in
 `.changeset/`. The root `package.json` (`private: true`, `version: "0.0.0"`) is excluded from the
-fixed group and is never touched by this step.
+fixed group and is never touched by this step. This step rewrites all 11 manifests plus their
+CHANGELOGs and leaves the working tree dirty.
 
-### 4. Publish — one all-11 operation, never per-package
+### 4. `git add -A && git commit -m "chore: version packages"`
+
+`changeset version` leaves the tree dirty (11 manifests + CHANGELOGs rewritten), and `pnpm
+publish` refuses to run against an unclean tree (`ERR_PNPM_GIT_UNCLEAN`) — confirmed by
+reproducing the failure during this change's verification: running `pnpm publish -r --dry-run`
+directly after `changeset version`, with no commit in between, aborted with exactly that error.
+Committing the version bump is the missing step; skipping straight from step 3 to publish does
+not work. `--no-git-checks` is not used here — committing the bump is the honest record of what
+version was actually published, not a workaround to route around the check.
+
+### 5. `node scripts/check-release-cohort.mjs` — re-run after the bump, not just before it
+
+The cohort guard's whole reason to exist (see its header) is to catch `changeset version`
+dropping a unit from the fixed group — but step 2's guard run happens **before** step 3, the only
+step that can actually cause that drift. A guard that only ever runs against pre-bump versions
+would pass even if `changeset version` silently excluded a package. Re-running the guard here,
+after the commit and before publish, is what actually closes that gap; re-running all of `pnpm
+test` is an acceptable heavier alternative if you want the other checks re-verified too.
+
+### 6. Publish — one all-11 operation, never per-package
 
 The final step MUST be a single recursive/group publish command — `pnpm publish -r` from the
 repo root, or `changeset publish` run once with all 11 group members present — never 11 separate
@@ -72,33 +94,6 @@ for a caller to supply:
 
 ```json
 "release:preflight": "pnpm clean && pnpm build --force && pnpm lint && pnpm test"
-```
-
-## Dependency audit gate
-
-`.githooks/pre-push` runs `pnpm audit --audit-level=high` before the build/lint/test chain, on
-every push (unless `SKIP_PREPUSH=1`). It hard-fails the push on any `high` or `critical`
-advisory. `critical`-only was rejected as too permissive (most exploitable advisories land at
-`high`); `moderate`/`low` was rejected because it admits dev-transitive noise with no code
-change — exactly the kind of unrelated blocker that gets bypassed and abandoned.
-
-**The pressure valve is `pnpm.auditConfig.ignoreCves` in the root `package.json`** — a dated,
-greppable, reviewable array of specific advisory identifiers to ignore, confirmed against a real
-seeded advisory during this change's verification (adding an entry suppressed the gate; removing
-it restored the failure, same advisory, same run). It is never a lowered `--audit-level`.
-`SKIP_PREPUSH=1 git push` remains the last-resort escape hatch, and skips the whole hook
-(including the audit step), not audit alone.
-
-**Accepted failure mode**: the gate needs the network, so an offline push fails closed — the
-message names both `ignoreCves` and `SKIP_PREPUSH=1`. Fail-open on a network error was
-deliberately rejected: a gate indistinguishable from clean when it can't reach the registry is
-not a gate.
-
-To exercise the fixture-based proof suite for this gate locally (it self-skips otherwise, so
-`pnpm test` stays network-free by default):
-
-```sh
-INDIGODB_TEST_AUDIT=1 node scripts/test-audit-gate.mjs
 ```
 
 ## `.npmrc` is deliberately not created
