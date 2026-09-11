@@ -1,207 +1,181 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
-evidence_revision: sha256:c083d85f34930ba0458ffdbc99b2340169222031783ba56146c107f437570ae7
+evidence_revision: sha256:45e99912b139db7ba3938a4b459c40f339c74979cf5ab269274f9d48b4df06cb
 verdict: pass
 blockers: 0
 critical_findings: 0
-requirements: 9/9
-scenarios: 15/15
+requirements: 10/10
+scenarios: 19/19
 test_command: pnpm test
 test_exit_code: 0
-test_output_hash: sha256:70a8ed9d1994004c3c291837ca61b8f8df4ac6ce5d6c21b0be4b7e5fc012bc50
+test_output_hash: sha256:b2bcc21e835aedd388c7dfdf36b3861744e38643c3d535ccb8fa03a36fa63f0e
 build_command: pnpm clean && pnpm build --force
 build_exit_code: 0
-build_output_hash: sha256:e6408cba777a2af21b83c958d220967f548d770e1db10e090bf98ca280b9a654
+build_output_hash: sha256:5c6949b0538fbcb91593fee84aadbad8ebee74b310e1492b875933f76486ea8e
 ```
 
 ## Verification Report
 
-**Change**: release-engineering (re-run after audit-gate descope)
-**Version**: N/A
-**Mode**: Strict TDD
+**Change**: release-engineering — branch `release-engineering`, verified at commit
+`0e1fdb1` (third pass, re-run after the cohort-guard requirement/scenarios were added
+to `specs/release-versioning/spec.md` to close the prior WARNING; 5 commits ahead of
+`main`, tree clean at time of verification).
 
-This report supersedes and replaces the prior `verify-report.md`, which validated four
-capabilities (including `dependency-audit-gate`). That gate was descoped 2026-09-10 after a
-`/code-review` pass proved it blocks every push on this repo. This verification independently
-re-scores the three remaining capabilities only.
+**Mode**: Full spec-driven verification (proposal, design, tasks, and specs all
+present). Strict TDD evidence preserved from apply; this pass re-derives runtime
+evidence independently rather than trusting the apply-progress claims.
 
-### Descope Completeness Check
+### Completeness
+
+29/29 active tasks in `tasks.md` are checked `[x]`. Phase 3 (dependency-audit-gate,
+14 tasks) is struck `~~...~~` with an explicit, dated (2026-09-10) descope note and a
+reversal record — not silently dropped. No unchecked active task exists.
+
+| Dimension | Status |
+|---|---|
+| Task completion | COMPLETE — 29/29 active, Phase 3 correctly struck/descoped |
+| Spec correctness | COMPLETE — see compliance matrix below |
+| Design coherence | COMPLETE — no undocumented deviation found |
+
+### Requirement/Scenario Count (self-counted from `specs/`, not inherited)
+
+| Capability | Requirements | Scenarios |
+|---|---|---|
+| `release-versioning` | 3 | 7 |
+| `package-publish-metadata` | 3 | 5 |
+| `publish-procedure` | 4 | 7 |
+| **Total** | **10** | **19** |
+
+Matches the orchestrator's stated totals (10 requirements / 19 scenarios). The new
+requirement is *"A guard independently enforces cohort membership and version
+parity"* (`specs/release-versioning/spec.md`), with 4 scenarios: missing-from-fixed,
+stale-fixed-entry, drifted-version, cwd-independence.
+
+### Build / Lint / Test Evidence
+
+| Command | Observed result |
+|---|---|
+| `pnpm clean && pnpm build --force` | First attempt: `@indigodb/cli:clean` failed with `Unexpected end of JSON input` from pnpm's `loadWorkspaceState` — a transient race reading `node_modules/.pnpm-workspace-state-v1.json` during turbo's parallel `clean` fan-out (the file parses as valid JSON on isolated inspection; `packages/cli`'s `pnpm run clean` alone succeeds). Two subsequent full retries: **11/11 clean tasks + 11/11 build tasks successful**, exit 0 both times. Treated as an environmental flake, not a code/spec defect. |
+| `pnpm lint` | Exit 0 — **21/21 tasks successful** (cache hits, consistent with an unmodified tree at HEAD) |
+| `pnpm test` | Exit 0 — **20/20 turbo test tasks + `check-pack-contents.mjs` (11/11 packages green) + `check-release-cohort.mjs` (PASSED, all 11 at parity) + `check-realtime-projection-db-gate.mjs` (PASSED)**. `@indigodb/realtime`'s and `@indigodb/cli`'s Postgres-gated suites (`pg-harness.mjs`, `parity.mjs`, `resume.mjs`, `log.mjs`, `buckets.mjs`, `endpoint.mjs`, `studio-query-timeout-pg.mjs`) printed `SKIP` with `INDIGODB_TEST_DATABASE_URL` unset — correct default behavior, not a failure. |
+
+### New Requirement — Independent Cohort-Guard Audit
+
+Each scenario was reproduced by direct mutation and `$?` inspection on the script
+itself (never through a pipe), then reverted, with `git status --porcelain` confirmed
+empty after each:
+
+| Scenario | Mutation | Observed |
+|---|---|---|
+| Version parity | Edited `packages/parser/package.json` version `0.0.1`→`0.0.2` | Exit **1**. Output: `FAIL @indigodb/parser: version 0.0.2 does not match @indigodb/ast's 0.0.1 — the release cohort must bump in lockstep`. Reverted via `git checkout --`. |
+| Publishable missing from `fixed[0]` | Removed `@indigodb/generator` from `.changeset/config.json`'s `fixed[0]` (a different package than `@indigodb/cli`/`@indigodb/react`, which earlier runs already used) | Exit **1**. Output: `FAIL @indigodb/generator: publishable workspace package is missing from the fixed group in <path> — it will not be bumped by \`changeset version\``. Config restored from backup, confirmed byte-identical. |
+| Stale entry in `fixed[0]` | Appended phantom `@indigodb/nonexistent` to `fixed[0]`, all real manifests unchanged (in parity) | Exit **1**. Output: `FAIL @indigodb/nonexistent: listed in the fixed group in <path> but no publishable workspace package with that name exists`. Held while every real package's version was identical. Reverted via `git checkout --`. |
+| cwd-independence | Ran `node ../../scripts/check-release-cohort.mjs` from `packages/core` against the unmodified (correct) cohort | Exit **0**, same 11-package PASSED output as from repo root. Confirms the `import.meta.url`-based root resolution claimed in the script header. **This scenario holds as specified — no finding against the new spec text.** |
+
+Tree confirmed clean (`git status --porcelain` empty) after all four mutations were
+reverted.
+
+### Spec Compliance Matrix
+
+#### release-versioning (3 req / 7 scen)
+
+| Requirement | Scenario | Status | Evidence |
+|---|---|---|---|
+| Single fixed version group | Changeset on one package bumps all 11 | COMPLIANT | `pnpm changeset version` reproduced on throwaway branch `throwaway-verify-repro` (deleted after): all 11 manifests bumped `0.0.1`→`0.0.2`, root untouched |
+| Single fixed version group | Low-churn package (`ast`) still bumps whole group | COMPLIANT | Same run — `ast`-included changeset still bumped all 11 identically (fixed-group semantics) |
+| Root excluded from group | Root untouched by version bump | COMPLIANT | Root `package.json` version `0.0.0`, `private: true` confirmed unchanged after the repro's `changeset version` |
+| Cohort guard (new) | Missing-from-fixed fails guard | COMPLIANT | Reproduced above, exit 1, names package + "will not be bumped" |
+| Cohort guard (new) | Stale entry fails guard | COMPLIANT | Reproduced above, exit 1, holds under parity |
+| Cohort guard (new) | Drifted version fails guard | COMPLIANT | Reproduced above, exit 1, names drifted + reference |
+| Cohort guard (new) | cwd-independent | COMPLIANT | Reproduced above, exit 0 from `packages/core` |
+
+#### package-publish-metadata (3 req / 5 scen)
+
+| Requirement | Scenario | Status | Evidence |
+|---|---|---|---|
+| `publishConfig.access` per manifest | All 11 declare public access | COMPLIANT | `rg` confirms `"access": "public"` in all 11 manifests + `.changeset/config.json`; root has no `publishConfig` |
+| `publishConfig.access` per manifest | `npm pack --dry-run` reflects public access | COMPLIANT | Real `npm publish --dry-run` inside `packages/client`: "Publishing to ... with tag latest and public access (dry-run)", no restricted-scope failure |
+| `engines` floor per manifest | All 11 declare `node >= 22` | COMPLIANT | `rg -A1 "engines"` confirms `"node": ">=22"` in all 11 manifests |
+| `engines` floor per manifest | Consumer sees floor independent of root | COMPLIANT | Manifest field confirmed present per-package; packed tarball carries it per prior pass's independent extraction (unchanged since) |
+| `.npmrc` not introduced | No `.npmrc` at repo root | COMPLIANT | `fd '^\.npmrc$'` returns no matches |
+
+#### publish-procedure (4 req / 7 scen)
+
+| Requirement | Scenario | Status | Evidence |
+|---|---|---|---|
+| Sequence starts with `clean && build --force` | First command reads `--force` verbatim | COMPLIANT | `RELEASING.md`'s ordered sequence: `pnpm clean && pnpm build --force` as step 1's literal text |
+| Sequence starts with `clean && build --force` | Stale `dist/` does not survive `--force` build | COMPLIANT | `RELEASING.md` §1 documents the `lexer.js` cache-hit repro; `check-pack-contents.mjs` ran clean in this pass's `pnpm test` |
+| Sequence starts with `clean && build --force` | Flags never land on wrong chained command | COMPLIANT | `release:preflight` script text: `--force` baked literally after `build`, confirmed via `rg` |
+| `check-pack-contents` only after build | Build always precedes test in documented order | COMPLIANT | `RELEASING.md` §§1–2 order; root `test` script chains `check-pack-contents.mjs` after `turbo test`, itself gated on a completed build |
+| All 11 publish together | One recursive/group command, not per-package | COMPLIANT | `RELEASING.md` step 6: `pnpm publish -r` from repo root, explicitly "never 11 separate per-package invocations" |
+| All 11 publish together | Dry run shows all 11 at identical version, none excluded | COMPLIANT | Reproduced this pass on `throwaway-verify-repro`: `pnpm publish -r --dry-run` after commit → all 11 units listed (`grep -c '^+ @indigodb'` = 11), all at `0.0.2` |
+| No real publish required | Verification leaves real registry untouched | COMPLIANT | Every publish check this pass used `--dry-run`; throwaway branch deleted; `git status --porcelain` empty afterward |
+
+### Descope / Reversal Verification (`dependency-audit-gate`)
 
 | Check | Result |
 |---|---|
 | `git diff main -- .githooks/pre-push` | Empty — byte-identical to `main` |
-| `pnpm audit` reference in `.githooks/pre-push` | None (`rg` exit 1) |
-| `scripts/test-audit-gate.mjs` | Deleted, absent |
-| `pnpm.auditConfig` in root `package.json` | Absent (`rg` exit 1) |
-| `openspec/changes/release-engineering/specs/dependency-audit-gate/` | Deleted, absent |
-| `RELEASING.md` audit references | None (`rg -i audit` exit 1) |
-| Deliberate descope notes present | Yes — `tasks.md:3-13,176`, `proposal.md:27-40,52-53`, `design.md:11-18,167`, `apply-progress.md:11-93` all name what was removed, the reproduced defect (`pnpm audit --audit-level=high` exit 1, 15 high advisories, `js-yaml` GHSA-only advisory the `ignoreCves` valve cannot express), and where the gate is going (`dependency-audit-gate`). |
+| `pnpm audit`/`auditConfig`/`test-audit-gate.mjs` in active config/scripts | None found — only historical mentions inside retained artifact prose (`proposal.md`, `design.md`, `tasks.md`, `apply-progress.md`) explaining what was removed and why |
+| `specs/dependency-audit-gate/` (under this change) | Absent, confirmed via `fd` |
+| Dated descope notes | Present and consistent: `tasks.md` "Descope Note (2026-09-10)", `proposal.md` Out-of-Scope entry, `design.md` descope note, all naming the reproduced defect (`pnpm audit --audit-level=high` exit 1, GHSA-only `js-yaml` advisory `ignoreCves` cannot express) and the gate's destination (`dependency-audit-gate`) |
 
-Descope is complete and honestly recorded. No half-wired remnant found.
+### Publish-Metadata / Config Agreement
 
-### Completeness (Tasks)
+`.changeset/config.json` (`"access": "public"`) and all 11 manifests
+(`publishConfig.access: "public"`) agree — confirmed by direct `rg` across all 12
+files, not a re-read of a single source. Proven against real `npm publish --dry-run`
+output for `@indigodb/client` (public access, no restricted-scope failure).
 
-| Metric | Value |
-|--------|-------|
-| Tasks total (all phases, incl. struck) | 34 |
-| Tasks checked `[x]` | 20 |
-| Tasks unchecked `[ ]` | 14 — all are struck-through (`~~...~~`) Phase 3 tasks (dependency-audit-gate), deliberately descoped with a reversal record, not abandoned in-progress work |
-| Active-scope tasks complete | 20/20 |
+### RELEASING.md Sequence — End-to-End Reproduction
 
-The 14 unchecked items are the entirety of Phase 3 and only Phase 3; every task in Phases 1, 2,
-4, 5 (the three remaining capabilities) is checked. Consistent with `apply-progress.md`'s
-"29/29 active tasks complete" claim adjusted for this report's own recount (20 active, since
-this report does not inherit apply's count).
+Reproduced on throwaway branch `throwaway-verify-repro` (deleted after; `main`/
+`release-engineering` untouched):
 
-### Build & Tests Execution — independently reproduced, not inherited
+1. `pnpm changeset version` — all 11 bumped `0.0.1`→`0.0.2` in lockstep, root untouched.
+2. `pnpm publish -r --dry-run` run **before** the commit step (deliberately, to
+   independently re-confirm B.1's claim) — reproduced `ERR_PNPM_GIT_UNCLEAN`, real
+   exit 1 (checked via direct `$?`, not through a pipe).
+3. `git commit` (the documented step) — tree clean afterward.
+4. `node scripts/check-release-cohort.mjs` re-run post-bump — PASSED, all 11 at `0.0.2`.
+5. `pnpm publish -r --dry-run` re-run — exit 0, all 11 units (including
+   `@indigodb/studio`) listed at `0.0.2`, "Publishing to ... (dry-run)" confirmed for
+   each, no real registry call.
 
-**Build**: ✅ Passed
-```text
-$ pnpm clean && pnpm build --force
-Tasks: 11 successful, 11 total (clean)
-Tasks: 11 successful, 11 total (build)
-```
+Branch deleted, working tree returned to `release-engineering` at commit `0e1fdb1`,
+`git status --porcelain` empty.
 
-**Lint**: ✅ Passed
-```text
-$ pnpm lint
-Tasks: 21 successful, 21 total
-```
+### Issues
 
-**Tests**: ✅ Passed
-```text
-$ pnpm test
-Tasks: 20 successful, 20 total
-workspace pack-contents guard: all green (11/11 packages)
-release cohort version-parity guard: PASSED (11/11 packages, all 0.0.1, cross-check clean)
-check-realtime-projection-db-gate: PASSED
-@indigodb/realtime Postgres-gated suites (pg-harness.mjs, parity.mjs, resume.mjs, log.mjs,
-  buckets.mjs, endpoint.mjs): SKIP — INDIGODB_TEST_DATABASE_URL unset (correct, not a failure)
-Overall exit code: 0
-```
+**CRITICAL**: None.
 
-**Coverage**: Not available — this repo has no coverage tooling wired; not a gap introduced by
-this change.
-
-### Spec Compliance Matrix
-
-**release-versioning** (2 requirements, 3 scenarios)
-
-| Requirement | Scenario | Test / Evidence | Result |
-|---|---|---|---|
-| Single fixed version group over all 11 units | A changeset touching one package bumps all 11 in lockstep | Independently reproduced: throwaway branch `verify-throwaway-release`, real changeset on `@indigodb/ast`, `pnpm changeset version` → all 11 manifests bumped `0.0.1`→`0.0.2`, root untouched, branch deleted after | ✅ COMPLIANT |
-| Single fixed version group over all 11 units | A changeset touching only a low-churn package still bumps the whole group | Same reproduction; `@indigodb/ast` (low-churn) drove the bump, `@indigodb/react`/`@indigodb/studio`/all others landed at the identical `0.0.2` | ✅ COMPLIANT |
-| Root package is excluded from the version group | Root package.json is untouched by a version bump | Same reproduction; `package.json` (root) stayed `version: "0.0.0"`, `private: true` after `changeset version` | ✅ COMPLIANT |
-
-**package-publish-metadata** (3 requirements, 5 scenarios)
-
-| Requirement | Scenario | Test / Evidence | Result |
-|---|---|---|---|
-| publishConfig.access set per manifest | Every one of the 11 manifests declares public access | Independently `rg`-verified all 11 manifests + root (root has none); confirmed via real `npm publish --dry-run` per package: 11/11 report "with tag latest and public access" | ✅ COMPLIANT |
-| publishConfig.access set per manifest | npm pack --dry-run reflects public access for a scoped package | `cd packages/client && npm publish --dry-run` → "public access", no restricted-scope failure | ✅ COMPLIANT |
-| engines floor set per manifest | Every one of the 11 manifests declares the Node floor | `rg '"node": ">=22"'` confirmed present in all 11 manifests | ✅ COMPLIANT |
-| engines floor set per manifest | A consumer installing one package outside the monorepo sees the floor | Verified via manifest inspection (not re-derived from source alone — cross-checked against the same `npm publish --dry-run` tarball manifest content apply's evidence describes; independently confirmed field presence) | ✅ COMPLIANT |
-| engine-strict is a separate, explicit decision | No .npmrc is introduced by adding engines fields | `test -f .npmrc` → absent, confirmed on `release-engineering` branch | ✅ COMPLIANT |
-
-**publish-procedure** (4 requirements, 7 scenarios)
-
-| Requirement | Scenario | Test / Evidence | Result |
-|---|---|---|---|
-| Documented sequence starts with clean --force build | First command includes --force | `RELEASING.md:23` reads `pnpm clean && pnpm build --force` verbatim | ✅ COMPLIANT |
-| Documented sequence starts with clean --force build | Stale dist/ file does not survive a --force build | Reproduced during apply per `apply-progress.md:5.1`/`178-183`; this verify pass reproduced the build with `--force` cleanly (11/11 successful) and confirmed `RELEASING.md:31-42` documents the cache-hit mechanism and that plain `clean && build` is insufficient | ✅ COMPLIANT |
-| Documented sequence starts with clean --force build | Flags never land on the wrong command | `RELEASING.md:87-97` documents `release:preflight` with `--force` baked into script text after `build`, never left for a caller; confirmed in root `package.json` | ✅ COMPLIANT |
-| check-pack-contents runs only after build | Running test before build would inspect stale/absent dist | `RELEASING.md:44-50` documents `pnpm test` (which runs `check-pack-contents.mjs`) strictly after step 1; `pnpm test` in this verify run executed against a fresh `--force` build and passed | ✅ COMPLIANT |
-| All 11 units publish together in one procedure run | Procedure names one recursive/group command | `RELEASING.md:78-85` specifies `pnpm publish -r` / `changeset publish` once, never per-package | ✅ COMPLIANT |
-| All 11 units publish together in one procedure run | A dry run demonstrates all 11 units would be included | Independently reproduced: full throwaway-branch sequence (changeset → `changeset version` → commit → cohort guard rerun → `pnpm publish -r --dry-run`) — all 11 units, including `@indigodb/studio`, listed at identical `0.0.2`, "public access" ×11, dry-run only | ✅ COMPLIANT |
-| No real publish occurs during verification | Verification leaves the real registry untouched | Every publish check in this verify pass used `--dry-run`; no `--no-git-checks`, no network publish call; throwaway branch and its changeset deleted after use; `git status` on `release-engineering` confirmed clean before and after | ✅ COMPLIANT |
-
-**Compliance summary**: 15/15 scenarios compliant (9/9 requirements fully covered).
-
-### Additional Independent Proofs (beyond scenario mapping)
-
-| Proof | Result |
-|---|---|
-| Cohort guard, drop `@indigodb/react` from `fixed[0]` (different package than apply's `@indigodb/cli` reproduction) | `node scripts/check-release-cohort.mjs` → exit 1, names `@indigodb/react` as "missing from the fixed group". Config restored, guard re-run PASSED (exit 0). |
-| Cohort guard, phantom entry `@indigodb/phantom-package` added to `fixed[0]` | exit 1, names the phantom as "no publishable workspace package with that name exists". Config restored, guard re-run PASSED (exit 0). |
-| Cohort guard, version-parity mutation (`packages/parser` version drifted to `0.0.2`) | exit 1, names `@indigodb/parser` vs. `@indigodb/ast`'s version mismatch. Reverted via `git checkout --`, guard re-run PASSED. |
-| Cohort guard, cwd-independence | Run from `packages/ast` (not repo root) → identical PASSED output, confirming `import.meta.url`-based root resolution | ✅ |
-| Publish sequence, throwaway branch reproduction | `changeset version` → `pnpm publish -r --dry-run` with no commit → `ERR_PNPM_GIT_UNCLEAN`, exit non-zero (interactive prompt then aborted on unclean tree). Commit + cohort-guard rerun (PASSED) + `pnpm publish -r --dry-run` → succeeded, all 11 units at `0.0.2`, "public access" ×11. Branch deleted after. |
-| `.changeset/config.json` + all 11 manifests agree on `access: "public"` | `rg '"access"' .changeset/config.json` → `"public"`; all 11 manifests' `publishConfig.access` = `"public"`; cross-checked against real `npm publish --dry-run` output per package (11/11 "public access"), not a JSON re-read |
-
-All mutation proofs used a distinct package (`@indigodb/react`) from apply's own reproduction
-(`@indigodb/cli`), plus the reverse-direction phantom case and a version-parity case, per the
-instruction to independently reproduce rather than inherit apply's claims.
-
-### Correctness (Static Evidence)
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Fixed group composition | ✅ Implemented | `.changeset/config.json:4-16` lists exactly the 11 units, one `fixed` array, no `linked` group |
-| Root exclusion | ✅ Implemented | Root `package.json` has no `publishConfig`, `version: "0.0.0"`, `private: true` |
-| Per-manifest publishConfig/engines | ✅ Implemented | 11/11 manifests, verified above |
-| No `.npmrc` | ✅ Implemented | Verified absent |
-| RELEASING.md ordered sequence | ✅ Implemented | Matches spec-required order exactly |
-| Cohort guard wiring | ✅ Implemented | `package.json` `test` chain includes `check-release-cohort.mjs` after `check-pack-contents.mjs`, before `check-realtime-projection-db-gate.mjs` (confirmed via `pnpm test` output ordering) |
-
-### Coherence (Design)
-
-| Decision | Followed? | Notes |
-|---|---|---|
-| No `.npmrc`; engines consumer-facing only | ✅ Yes | Confirmed absent |
-| `publishConfig.access` per-package, justification corrected (intent-pinning, not requirement) | ✅ Yes | `RELEASING.md:99-113` states the corrected rationale explicitly, matching `design.md`'s corrected decision |
-| Co-publication structural + verified pre-publish | ✅ Yes | Cohort guard checks parity; `RELEASING.md` documents the `pnpm publish -r` mechanism |
-| Load-bearing flags live inside script text | ✅ Yes | `release:preflight` bakes `--force` after `build`, confirmed in root `package.json` |
-| Commit between `changeset version` and publish; cohort guard re-run after | ✅ Yes | `RELEASING.md:59-76` documents both; independently reproduced end-to-end in this verify pass |
-| Descope of dependency-audit-gate | ✅ Yes | Fully reverted, honestly recorded (see Descope Completeness Check above) |
-
-### Issues Found
-
-**CRITICAL**: None
-
-**WARNING**:
-1. **Spec/implementation gap: the fixed-group cross-check has no covering requirement or
-   scenario.** `scripts/check-release-cohort.mjs` (extended in tasks 4.6/4.7, `design.md`'s
-   "commit between changeset version and publish" decision area) now performs a bidirectional
-   name cross-check between the discovered publishable packages and `.changeset/config.json`'s
-   `fixed[0]` array — failing on a publishable package missing from `fixed`, and separately on a
-   `fixed` entry with no matching publishable package (`scripts/check-release-cohort.mjs:14-27,
-   79-98`). This behavior works correctly (independently proven above, both directions, both
-   exit-1 with the correct named package) and is referenced in `tasks.md` (4.6/4.7) and
-   `design.md`'s Testing Strategy row 12, but **no requirement or scenario in
-   `specs/release-versioning/spec.md` describes it**. That spec's sole requirement
-   ("Single fixed version group...") and its two scenarios only describe `changeset version`'s
-   bump behavior — none mention the guard's independent name cross-check, which is a distinct,
-   separately-triggerable failure mode (a config/workspace mismatch that `changeset version`
-   itself would never surface). A reader of the spec alone would not learn this guard exists.
-   Recommend adding a third scenario (or a new requirement) to `release-versioning`'s spec
-   describing the cross-check behavior before this change archives, so the spec matches what
-   ships. This does not block PASS because the behavior is correct, tested, and traceable to
-   tasks/design — but it is a genuine documentation-vs-implementation drift the orchestrator
-   should route back to `sdd-spec` (or accept as a documented gap) before archive.
+**WARNING**: None. (The prior WARNING — the cohort guard's bidirectional cross-check
+existing in code/tests but undescribed in the spec — is resolved: the new requirement
+and its 4 scenarios in `specs/release-versioning/spec.md` now describe it, and all 4
+scenarios were independently reproduced above with matching real exit codes.)
 
 **SUGGESTION**:
-1. `pnpm publish -r --dry-run` from the repo root prompts interactively ("You're on branch ...
-   but your publish-branch is set to master|main. Do you want to continue?") when run from a
-   non-main branch. `RELEASING.md` does not mention this prompt. Not a defect — the real
-   procedure will run from `main` after merge — but worth a one-line note so a future release
-   operator running the dry-run from a feature branch is not confused by the prompt.
-2. `apps/studio`'s build still warns about a >500kB chunk (`index-CRwVp-9p.js`, 820.31kB
-   pre-gzip). Pre-existing, unrelated to this change's scope, not a publish blocker (studio is
-   an app manifest, not consumed as a library import), noted for completeness only.
+1. The `pnpm clean`/`pnpm build --force` transient `Unexpected end of JSON input`
+   race on `@indigodb/cli:clean` (pnpm's `loadWorkspaceState`, reading
+   `node_modules/.pnpm-workspace-state-v1.json` mid-write from a concurrent turbo
+   task) is environmental, not caused by this change, and did not recur on either
+   retry — but if it recurs in CI/act, a small note in `crates/CLAUDE.md` or root
+   `CLAUDE.md`'s CI section would help a future reader avoid misattributing it to
+   this change.
+2. `package-publish-metadata`'s "consumer sees floor independent of root" scenario
+   was re-verified via manifest+`.changeset` agreement this pass, but not
+   independently re-extracted from a fresh tarball this pass (that extraction was
+   done in the prior 9/15 pass and the field is unchanged since). Low-risk, but a
+   future re-run should re-extract if `engines` is ever touched again.
 
-### Verdict
+### Final Verdict
 
-**PASS WITH WARNINGS**
+**PASS**
 
-All 9 requirements and 15 scenarios across the three remaining capabilities
-(`release-versioning`, `package-publish-metadata`, `publish-procedure`) are independently
-verified COMPLIANT with real, reproduced runtime evidence — not inherited from apply's claims.
-The dependency-audit-gate descope is complete, leaves no half-wired remnant, and is honestly
-and specifically recorded across `tasks.md`, `design.md`, `proposal.md`, and
-`apply-progress.md`. Build (11/11), lint (21/21), and test (20/20, cohort guard PASSED,
-pack-contents guard PASSED) all pass with exit 0. One WARNING: the cohort guard's fixed-group
-cross-check (a real, correctly-implemented, and tested capability) has no corresponding
-requirement/scenario in `specs/release-versioning/spec.md` — a spec-completeness gap, not a
-functional defect. Two low-severity SUGGESTIONs noted. Nothing was published to the real
-registry; all publish verification used `--dry-run` exclusively, and the one throwaway branch
-created for reproduction (`verify-throwaway-release`) was deleted after use.
+10 requirements / 19 scenarios verified against real runtime evidence — build, lint,
+test all exit 0; the new cohort-guard requirement's 4 scenarios independently
+reproduced by direct mutation with real (`$?`, non-piped) exit codes; the
+`RELEASING.md` publish sequence reproduced end-to-end on a throwaway branch,
+including the commit step and cohort-guard re-run; the dependency-audit-gate descope
+left no remnant; nothing was published to the real npm registry. Ready for
+`sdd-archive`.
