@@ -53,7 +53,12 @@ export interface IndigoClientOptions {
    * `pg.Pool` is constructed and `connectionString`/`pool` are ignored.
    */
   db?: DriverAdapter;
-  /** Log every executed SQL statement (for debugging). */
+  /**
+   * Log every executed statement's SQL for debugging. Bound parameter
+   * values are never printed, only positional placeholders (`$1=<redacted>`)
+   * preserving order and arity. Output format is a debugging aid, not a
+   * parsing contract.
+   */
   log?: boolean;
   /** Realtime subscription settings (models marked `@@realtime`). */
   realtime?: RealtimeOptions;
@@ -62,11 +67,24 @@ export interface IndigoClientOptions {
    * (client-query-extensions spec). Consumed only at construction time —
    * `extensions[0]` is outermost (first to see the call, last to see the
    * result), `wrapLog` is always innermost so `log: true` keeps logging the
-   * SQL actually sent. Applies to `this.exec`, `$queryRaw`, and every
-   * session executor produced by `$withSession` (so `$transaction` is
-   * covered identically) — no executor path bypasses the composed chain.
+   * SQL actually sent, with parameter values redacted. Applies to
+   * `this.exec`, `$queryRaw`, and every session executor produced by
+   * `$withSession` (so `$transaction` is covered identically) — no executor
+   * path bypasses the composed chain.
    */
   extensions?: QueryExtension[];
+}
+
+/**
+ * Positional placeholders for bound params, used by `wrapLog`. Never reads a
+ * value: the `map` callback discards its element argument, so no parameter
+ * value can reach stdout through any branch. Not exported — the semantic
+ * artifact this change protects is captured stdout, not this helper's
+ * return value.
+ */
+function redactParams(params: unknown[]): string {
+  if (params.length === 0) return "(0 params)";
+  return params.map((_, i) => `$${i + 1}=<redacted>`).join(", ");
 }
 
 /**
@@ -245,11 +263,14 @@ export class IndigoClientBase {
     }
   };
 
-  /** Wraps an `Executor` with the `log` option's statement logging. */
+  /**
+   * Wraps an `Executor` with the `log` option's statement logging. Logs SQL
+   * plus redacted positional placeholders, never bound parameter values.
+   */
   private readonly wrapLog =
     (run: Executor): Executor =>
     async (sql, params) => {
-      if (this.log) console.log("[indigodb]", sql, params);
+      if (this.log) console.log("[indigodb]", sql, redactParams(params));
       return run(sql, params);
     };
 
