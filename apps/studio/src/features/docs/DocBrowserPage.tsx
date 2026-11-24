@@ -21,7 +21,6 @@ export default function DocBrowserPage() {
     docFilterQuery,
     setSelectedTableIdx,
     setDocFilterQuery,
-    shareReference,
     queryTable,
   } = useDocBrowser();
 
@@ -42,17 +41,14 @@ export default function DocBrowserPage() {
       />
 
       <article className="flex-1 overflow-y-auto bg-[#09090b] custom-scrollbar pb-12">
-        <TableHeroBanner table={activeTable} onShare={shareReference} onQuery={queryTable} />
+        <TableHeroBanner table={activeTable} onQuery={queryTable} />
 
         <div className="p-8 max-w-4xl mx-auto space-y-10">
           <ColumnsSpecTable columns={activeTable.columns} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <DdlPanel key={`${activeTable.schema}.${activeTable.name}`} ddlCode={ddlDefinitionCode} />
-            <RelationsPanel
-              relations={displayRelations}
-              recordCount={activeTable.records ? activeTable.records.length : 0}
-            />
+            <RelationsPanel relations={displayRelations} />
           </div>
         </div>
       </article>

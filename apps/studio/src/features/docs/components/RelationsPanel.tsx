@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 export interface DisplayRelation {
   label: string;
@@ -14,12 +14,11 @@ export interface DisplayRelation {
 
 interface RelationsPanelProps {
   relations: DisplayRelation[];
-  recordCount: number;
 }
 
-export function RelationsPanel({ relations, recordCount }: RelationsPanelProps) {
+export function RelationsPanel({ relations }: RelationsPanelProps) {
   return (
-    <section className="flex flex-col justify-between">
+    <section className="flex flex-col">
       <div>
         <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest font-sans mb-3">
           Relational Dependencies
@@ -43,18 +42,6 @@ export function RelationsPanel({ relations, recordCount }: RelationsPanelProps) 
               No relationships defined for this table.
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Table Metrics summary */}
-      <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-2 mt-4 font-sans text-xs">
-        <div className="text-white font-bold flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Metadata Summary</span>
-        </div>
-        <div className="flex justify-between text-zinc-400">
-          <span>Record Count:</span>
-          <span className="font-mono text-zinc-200 font-semibold">{recordCount} live rows</span>
         </div>
       </div>
     </section>

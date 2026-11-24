@@ -48,7 +48,14 @@ export function ColumnsSpecTable({ columns }: ColumnsSpecTableProps) {
                   {col.defaultValue || '-'}
                 </td>
                 <td className="p-3 text-zinc-400 max-w-xs text-[11px] leading-relaxed">
-                  {col.description || 'Database engine system column value.'}
+                  {col.description ? (
+                    col.description
+                  ) : (
+                    <span className="text-zinc-600">
+                      <span aria-hidden="true">—</span>
+                      <span className="sr-only">No description</span>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

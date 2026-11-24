@@ -182,4 +182,31 @@ describe('DocBrowserPage', () => {
       expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
     });
   });
+
+  describe('static honesty (studio-ui-honesty)', () => {
+    it('banner drops the fabricated "cluster branches" sentence and keeps the factual one', () => {
+      render(<DocBrowserPage />);
+
+      expect(screen.queryByText(/cluster branch/i)).toBeNull();
+      expect(screen.getByText(/Provides unified metadata/)).toBeInTheDocument();
+    });
+
+    it('offers no share or reference-link action', () => {
+      render(<DocBrowserPage />);
+
+      expect(screen.queryByRole('button', { name: /share/i })).toBeNull();
+    });
+
+    it.each([
+      ['a table with loaded rows', [TABLE_A, TABLE_B]],
+      ['a table with no rows', [TABLE_B, TABLE_A]],
+    ] as const)('shows no fabricated live-row metric on %s', (_label, tables) => {
+      seedTables([...tables]);
+      render(<DocBrowserPage />);
+
+      expect(screen.queryByText(/live rows/i)).toBeNull();
+      expect(screen.queryByText(/record count/i)).toBeNull();
+      expect(screen.queryByText(/metadata summary/i)).toBeNull();
+    });
+  });
 });

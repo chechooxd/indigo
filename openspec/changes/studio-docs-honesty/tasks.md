@@ -156,59 +156,59 @@ in `DocBrowserPage.test.tsx` (already scaffolded in WU1).
 
 ### 2.1 Banner sentence removal (RED → GREEN)
 
-- [ ] 2.1.1 RED — In `DocBrowserPage.test.tsx`, write test "no cluster branches sentence;
+- [x] 2.1.1 RED — In `DocBrowserPage.test.tsx`, write test "no cluster branches sentence;
   factual sentence kept" (spec scenario "The banner keeps its factual sentence and drops the
   fabricated one"; design row 9): render on table `A`; assert
   `queryByText(/cluster branch/i)` is `null` and text matching
   `/Provides unified metadata/` is present. Run it against the current
   `TableHeroBanner.tsx:34` and confirm it fails (the sentence is present).
-- [ ] 2.1.2 GREEN — Edit `apps/studio/src/features/docs/components/TableHeroBanner.tsx:34`:
+- [x] 2.1.2 GREEN — Edit `apps/studio/src/features/docs/components/TableHeroBanner.tsx:34`:
   delete only the second sentence ("Automatically managed within the transactional limits of
   active cluster branches."), keeping the factual first sentence verbatim.
-- [ ] 2.1.3 Run 2.1.1 and confirm it now passes.
-- [ ] 2.1.4 Mutation proof — restore the deleted sentence. Run 2.1.1 and confirm it goes red
+- [x] 2.1.3 Run 2.1.1 and confirm it now passes.
+- [x] 2.1.4 Mutation proof — restore the deleted sentence. Run 2.1.1 and confirm it goes red
   on the `queryByText(/cluster branch/i)` assertion (not null), naming the matched text.
   Record the observed red output, then revert.
 
 ### 2.2 Share action removal (RED → GREEN)
 
-- [ ] 2.2.1 RED — In `DocBrowserPage.test.tsx`, write test "no share action" (spec scenario
+- [x] 2.2.1 RED — In `DocBrowserPage.test.tsx`, write test "no share action" (spec scenario
   "No share or reference-link action is offered"; design row 10): assert
   `queryByRole('button', { name: /share/i })` is `null`. Run it against the current banner and
   confirm it fails (the button exists).
-- [ ] 2.2.2 GREEN — Edit `apps/studio/src/features/docs/components/TableHeroBanner.tsx`:
+- [x] 2.2.2 GREEN — Edit `apps/studio/src/features/docs/components/TableHeroBanner.tsx`:
   delete the `onShare` prop from `TableHeroBannerProps`, the `Share` import, and the entire
   "Share Reference" `<button>`.
-- [ ] 2.2.3 GREEN — Edit `apps/studio/src/features/docs/hooks/useDocBrowser.ts`: delete the
+- [x] 2.2.3 GREEN — Edit `apps/studio/src/features/docs/hooks/useDocBrowser.ts`: delete the
   `shareReference` function body and its entry from `UseDocBrowserReturn` and the returned
   object.
-- [ ] 2.2.4 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: drop
+- [x] 2.2.4 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: drop
   `shareReference` from the `useDocBrowser()` destructure and drop `onShare={shareReference}`
   from the `<TableHeroBanner>` call.
-- [ ] 2.2.5 Run 2.2.1 and confirm it now passes.
-- [ ] 2.2.6 Mutation proof — restore the "Share Reference" button and its `onShare` wiring.
+- [x] 2.2.5 Run 2.2.1 and confirm it now passes.
+- [x] 2.2.6 Mutation proof — restore the "Share Reference" button and its `onShare` wiring.
   Run 2.2.1 and confirm it goes red because the button is found by role/name. Record the
   observed red output, then revert.
 
 ### 2.3 Live-rows metric and Metadata Summary box removal (RED → GREEN)
 
-- [ ] 2.3.1 RED — In `DocBrowserPage.test.tsx`, write test "no live-row metric on either
+- [x] 2.3.1 RED — In `DocBrowserPage.test.tsx`, write test "no live-row metric on either
   table" (spec scenario "No fabricated live-row metric is shown for any table"; design row
   11): render on table `A` (`records.length === 3`, so a restored metric would show a
   non-zero count, not only the zero branch) and separately on table `B` (`records: []`);
   assert `/live rows/i`, `/record count/i`, and `/metadata summary/i` are all absent on both
   renders. Run it against the current `RelationsPanel.tsx` and confirm it fails (all three
   strings are present).
-- [ ] 2.3.2 GREEN — Edit `apps/studio/src/features/docs/components/RelationsPanel.tsx`:
+- [x] 2.3.2 GREEN — Edit `apps/studio/src/features/docs/components/RelationsPanel.tsx`:
   delete the `recordCount` prop from `RelationsPanelProps`, the `Sparkles` import, the entire
   "Table Metrics summary" `<div>` block (Metadata Summary heading + Record Count line), and
   the `justify-between` class on the outer `<section>` (its only purpose was to push that box
   to the bottom).
-- [ ] 2.3.3 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: drop
+- [x] 2.3.3 GREEN — Edit `apps/studio/src/features/docs/DocBrowserPage.tsx`: drop
   `recordCount={activeTable.records ? activeTable.records.length : 0}` from the
   `<RelationsPanel>` call.
-- [ ] 2.3.4 Run 2.3.1 and confirm it now passes for both seeded tables.
-- [ ] 2.3.5 Mutation proof — restore the Metadata Summary box (with `recordCount` wired back
+- [x] 2.3.4 Run 2.3.1 and confirm it now passes for both seeded tables.
+- [x] 2.3.5 Mutation proof — restore the Metadata Summary box (with `recordCount` wired back
   through `DocBrowserPage`). Run 2.3.1 and confirm it goes red on table `A` specifically
   (`/live rows/i` or `/record count/i` found), proving the seeded non-zero fixture actually
   exercises the assertion rather than only the empty-array branch. Record the observed red
@@ -216,12 +216,12 @@ in `DocBrowserPage.test.tsx` (already scaffolded in WU1).
 
 ### 2.4 Column description honesty (fixture pinning → pipeline test → component test)
 
-- [ ] 2.4.1 Create `apps/studio/src/features/docs/__tests__/fixtures/mixed-notes.ts`: export
+- [x] 2.4.1 Create `apps/studio/src/features/docs/__tests__/fixtures/mixed-notes.ts`: export
   `MIXED_NOTES_SOURCE` (a `.indigo` source string with a table declaring three columns — one
   with `@note("Unique identifier")`, one with no `@note`, one with `@note("Soft-delete
   timestamp")`) and `MIXED_NOTES_COLUMNS` (the expected `{ name, description }[]` array, with
   the un-noted column's `description` as `undefined`).
-- [ ] 2.4.2 RED — Create `apps/studio/src/features/docs/__tests__/column-notes.pipeline.test.ts`
+- [x] 2.4.2 RED — Create `apps/studio/src/features/docs/__tests__/column-notes.pipeline.test.ts`
   (node environment, real pipeline per design's Testing Strategy — the WASM compiler cannot
   run under jsdom): import `parse`/`resolve` from `@indigodb/core` and `resolvedToTables` from
   `../../../lib/schema-adapter`; run `MIXED_NOTES_SOURCE` through `parse` → `resolve` →
@@ -231,10 +231,10 @@ in `DocBrowserPage.test.tsx` (already scaffolded in WU1).
   passes because the adapter already threads `note`, record that as a pre-existing pass and
   proceed (this task's purpose is pinning the fixture to real output, not necessarily
   producing a new red — state the observed result explicitly either way).
-- [ ] 2.4.3 GREEN (only if 2.4.2 was red) — confirm/adjust `resolvedToTables` in
+- [x] ~~2.4.3~~ N/A — 2.4.2 passed on first run (adapter already maps `note` → `description`). 2.4.3 GREEN (only if 2.4.2 was red) — confirm/adjust `resolvedToTables` in
   `apps/studio/src/lib/schema-adapter.ts` so `ResolvedColumn.note` maps to the adapted
   column's `description`. Re-run 2.4.2 and confirm it passes.
-- [ ] 2.4.4 RED — Create `apps/studio/src/features/docs/__tests__/ColumnsSpecTable.test.tsx`
+- [x] 2.4.4 RED — Create `apps/studio/src/features/docs/__tests__/ColumnsSpecTable.test.tsx`
   (jsdom). Write test "mixed columns: noted, un-noted, noted" (spec scenarios "An undocumented
   column shows an honest absence marker", "A documented column renders its real note
   verbatim", "A table with mixed documented and undocumented columns renders each correctly";
@@ -246,32 +246,32 @@ in `DocBrowserPage.test.tsx` (already scaffolded in WU1).
   "Database engine system column value." is absent. Run it against the current
   `ColumnsSpecTable.tsx:51` and confirm it fails (the fallback literal renders instead of the
   accessible "No description" name, and the em dash carries no accessible label).
-- [ ] 2.4.5 GREEN — Edit `apps/studio/src/features/docs/components/ColumnsSpecTable.tsx:51`:
+- [x] 2.4.5 GREEN — Edit `apps/studio/src/features/docs/components/ColumnsSpecTable.tsx:51`:
   replace `{col.description || 'Database engine system column value.'}` with a conditional —
   when `col.description` is present, render it verbatim; otherwise render
   `<span aria-hidden="true">—</span><span className="sr-only">No description</span>` with
   muted `text-zinc-600` styling, following the `sr-only` pattern at
   `EnvironmentBadge.tsx:66`.
-- [ ] 2.4.6 Run 2.4.4 and confirm it now passes.
-- [ ] 2.4.7 Mutation proof — restore `|| 'Database engine system column value.'` as the
+- [x] 2.4.6 Run 2.4.4 and confirm it now passes.
+- [x] 2.4.7 Mutation proof — restore `|| 'Database engine system column value.'` as the
   fallback. Run 2.4.4 and confirm it goes red on the fallback-literal-absence assertion,
   naming the found text. Record the observed red output, then revert.
-- [ ] 2.4.8 Mutation proof — render the `—`/"No description" marker unconditionally
+- [x] 2.4.8 Mutation proof — render the `—`/"No description" marker unconditionally
   (regardless of `col.description`). Run 2.4.4 and confirm it goes red because the noted
   columns' cells no longer expose their verbatim text as the accessible name. Record the
   observed red output, then revert.
-- [ ] 2.4.9 Mutation proof — drop `aria-hidden="true"` from the `—` span. Run 2.4.4 and
+- [x] 2.4.9 Mutation proof — drop `aria-hidden="true"` from the `—` span. Run 2.4.4 and
   confirm it goes red because the cell's computed accessible name becomes "— No description"
   instead of exactly "No description", so `getByRole('cell', { name: 'No description' })` no
   longer matches. Record the observed red output, then revert.
 
 ### 2.5 Verification and commit (WU2)
 
-- [ ] 2.5.1 Run `pnpm --filter @indigodb/studio test` and record the exit code and pass count
+- [x] 2.5.1 Run `pnpm --filter @indigodb/studio test` and record the exit code and pass count
   (must be 0; includes WU1's suites still green, plus every new test in this unit).
-- [ ] 2.5.2 Run `pnpm lint` and record the exit code (must be 0).
-- [ ] 2.5.3 Run `pnpm build` and record the exit code (must be 0).
-- [ ] 2.5.4 Commit WU2 with a conventional commit message (e.g.
+- [x] 2.5.2 Run `pnpm lint` and record the exit code (must be 0).
+- [x] 2.5.3 Run `pnpm build` and record the exit code (must be 0).
+- [x] 2.5.4 Commit WU2 with a conventional commit message (e.g.
   `fix(studio): remove fabricated docs-view copy, share action, and live-row metric`). No
   Co-Authored-By or AI attribution lines.
 

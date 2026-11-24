@@ -23,7 +23,6 @@ export interface UseDocBrowserReturn {
 
   setSelectedTableIdx: (idx: number) => void;
   setDocFilterQuery: (query: string) => void;
-  shareReference: () => void;
   queryTable: () => void;
 }
 
@@ -53,12 +52,6 @@ export function useDocBrowser(): UseDocBrowserReturn {
     return generateTableDDL(activeTable);
   }, [activeTable]);
 
-  const shareReference = () => {
-    const url = window.location.href + `#docs/${activeTable.schema}/${activeTable.name}`;
-    navigator.clipboard.writeText(url);
-    alert(`Reference link generated and copied to clipboard:\n\n${url}`);
-  };
-
   const queryTable = () => {
     // We would normally pass code via store, for now just navigate
     navigate('studio', 'query');
@@ -72,7 +65,6 @@ export function useDocBrowser(): UseDocBrowserReturn {
     docFilterQuery,
     setSelectedTableIdx,
     setDocFilterQuery,
-    shareReference,
     queryTable,
   };
 }

@@ -231,3 +231,62 @@ tests green again.
 (1-line key change), `apps/studio/src/features/docs/__tests__/DocBrowserPage.test.tsx`
 (1 new fixture pair + 1 new test). Nothing committed — all changes remain uncommitted in the
 working tree alongside the rest of WU1.
+
+---
+
+# Work Unit 2 — Static Honesty Removals
+
+Last updated: 2026-11-24
+Mode: Strict TDD. Scope: tasks 2.1-2.5. Stacked on WU1 (`434a3e9`) on `studio-docs-honesty`.
+
+## Status
+
+All WU2 tasks complete. 2.4.3 is N/A: 2.4.2 passed on first run (the adapter already maps
+`ResolvedColumn.note` → `description`), recorded as a pre-existing pass — the test's role is
+pinning the fixture to real pipeline output.
+
+## RED Evidence
+
+- **2.1.1** banner test: `AssertionError: expected <p …(1)><span …(1)></span></p> to be null`
+  (the "cluster branches" sentence was present).
+- **2.2.1** share test: `AssertionError: expected <button …(1)>…(2)</button> to be null`.
+- **2.3.1** live-row metric, both tables (`accounts` with 3 rows, `sessions` with 0):
+  `AssertionError: expected <span …(1)></span> to be null`.
+- **2.4.2** pipeline test: passed on first run (pre-existing — see Status).
+- **2.4.4** `ColumnsSpecTable` test: `Unable to find an accessible element with the role "cell"
+  and name "No description"` (the fallback literal rendered instead).
+
+## Mutation Proofs (applied by a temporary patch, test re-run, then reverted)
+
+- **2.1.4** restore the sentence → banner test red on `queryByText(/cluster branch/i)` not null.
+- **2.2.6** restore a "Share Reference" button + `onShare` wiring → share test red, button found.
+- **2.3.5** restore the Metadata Summary box with `recordCount` wired back, rendered only when
+  `recordCount > 0` → red on the `accounts` (3 rows) case only; the 0-row case stayed green.
+  Proves the non-zero fixture exercises the assertion, not just the empty branch.
+- **2.4.7** restore `{col.description || 'Database engine system column value.'}` verbatim → red
+  on `queryByText('Database engine system column value.')` not null (assertion moved first so it
+  names the literal; a first attempt left the marker rendered too and was redone).
+- **2.4.8** render the marker unconditionally → red: no cell named "Unique identifier".
+- **2.4.9** drop `aria-hidden` from `—` → red: no cell named exactly "No description".
+
+## Verification
+
+- `pnpm --filter @indigodb/studio test`: exit 0 — 34/34 files, 281/281 tests,
+  `pack-contents: OK`. (Run with `npm_config_cache` pointed at a temp dir: `~/.npm/_cacache`
+  holds root-owned files, which makes `npm pack --dry-run` fail with EPERM — environment, not code.)
+- `pnpm lint`: exit 0 — 21/21 Turbo tasks.
+- `pnpm build`: exit 0 — 11/11 Turbo tasks.
+
+## Files Changed (WU2)
+
+| File | Action |
+|---|---|
+| `features/docs/components/TableHeroBanner.tsx` | Dropped "cluster branches" sentence, `onShare` prop, `Share` import, Share Reference button |
+| `features/docs/components/RelationsPanel.tsx` | Dropped `recordCount` prop, `Sparkles` import, Metadata Summary box, `justify-between` |
+| `features/docs/components/ColumnsSpecTable.tsx` | Fallback literal replaced by muted `—` (`aria-hidden`) + `sr-only` "No description" |
+| `features/docs/DocBrowserPage.tsx` | Dropped `shareReference`, `onShare`, `recordCount` wiring |
+| `features/docs/hooks/useDocBrowser.ts` | Deleted `shareReference` (body, interface, return) |
+| `features/docs/__tests__/DocBrowserPage.test.tsx` | +4 static-honesty tests |
+| `features/docs/__tests__/fixtures/mixed-notes.ts` | New fixture |
+| `features/docs/__tests__/column-notes.pipeline.test.ts` | New real-pipeline test (node env) |
+| `features/docs/__tests__/ColumnsSpecTable.test.tsx` | New component test |
