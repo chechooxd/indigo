@@ -255,6 +255,8 @@ SELECT
   ix.indisprimary AS is_primary,
   am.amname AS access_method,
   (0::int2 = ANY(ix.indkey)) AS has_expression,
+  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
+  pg_get_expr(ix.indexprs, ix.indrelid) AS expressions,
   (
     SELECT array_agg(a.attname ORDER BY u.ord)
     FROM unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ord)
@@ -424,6 +426,8 @@ export async function introspectResolvedSchema(
     is_primary: boolean;
     access_method: string;
     has_expression: boolean;
+    predicate: string | null;
+    expressions: string | null;
     columns: string[] | null;
   }
   for (const row of indexRes.rows as unknown as IndexRow[]) {
@@ -432,16 +436,27 @@ export async function introspectResolvedSchema(
     if (!table) continue;
 
     if (row.has_expression) {
-      throw new Error(
-        `introspectResolvedSchema: expression index "${row.index_name}" on "${table.dbName}" is not supported`,
-      );
+      const exprIndex: ResolvedIndex = {
+        columns: [],
+        unique: row.is_unique,
+        name: row.index_name,
+      };
+      if (row.access_method !== "btree") {
+        exprIndex.type = row.access_method as ResolvedIndex["type"];
+      }
+      if (row.predicate) exprIndex.where = row.predicate;
+      if (row.expressions) exprIndex.expression = row.expressions;
+      table.indexes.push(exprIndex);
+      continue;
     }
     const columns = row.columns ?? [];
 
     // Single-column unique index whose name matches the DERIVED single-column
     // `@unique` formula is indistinguishable from a single-column `@@unique`
     // — classify as `col.unique`, not a listed `table.indexes` entry.
-    if (row.is_unique && columns.length === 1) {
+    // Partial unique indexes (`row.predicate != null`) are NEVER folded into
+    // `col.unique`, because they do not enforce full-table uniqueness.
+    if (row.is_unique && columns.length === 1 && !row.predicate) {
       const singleColDerived = derivedIndexName(table.dbName, columns, true);
       if (row.index_name === singleColDerived) {
         const col = table.columns.find((c) => c.dbName === columns[0]);
@@ -454,6 +469,7 @@ export async function introspectResolvedSchema(
     if (row.access_method !== "btree") {
       index.type = row.access_method as ResolvedIndex["type"];
     }
+    if (row.predicate) index.where = row.predicate;
     const derived = derivedIndexName(table.dbName, columns, row.is_unique);
     if (row.index_name !== derived) index.name = row.index_name;
 

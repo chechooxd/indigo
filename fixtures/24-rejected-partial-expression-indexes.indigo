@@ -1,0 +1,43 @@
+// Partial and expression indexes: rejected cases.
+
+// Empty where predicate.
+Table EmptyWhere {
+  id    String @id
+  email String
+  @@index([email], where: "   ")
+}
+
+// Wrong kind for where predicate.
+Table WhereWrongKind {
+  id    String @id
+  email String
+  @@index([email], where: 1)
+}
+
+// Empty expression.
+Table EmptyExpression {
+  id    String @id
+  email String
+  @@index([], name: "empty_expr_idx", expression: "")
+}
+
+// Expression index missing explicit name.
+Table ExpressionMissingName {
+  id    String @id
+  email String
+  @@index([], expression: "lower(email)")
+}
+
+// Expression index combined with non-empty columns.
+Table ExpressionWithColumns {
+  id    String @id
+  email String
+  @@index([email], name: "expr_and_cols_idx", expression: "lower(email)")
+}
+
+// Empty columns without expression.
+Table EmptyColumnsNoExpr {
+  id    String @id
+  email String
+  @@index([])
+}

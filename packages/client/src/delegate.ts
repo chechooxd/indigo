@@ -9,6 +9,8 @@
 
 import type {
   ModelMeta,
+  IndexMeta,
+  ExplainResult,
   RelationMeta,
   Executor,
   FindManyArgs,
@@ -746,6 +748,88 @@ export class ModelDelegate<
     return "asc";
   }
 
+  /** Declared secondary/unique indexes on this model (`__meta[Model].indexes`). */
+  get indexes(): readonly IndexMeta[] {
+    return this.meta.indexes ?? [];
+  }
+
+  private buildFindManyQuery<
+    A extends FindManyArgs<Row, Rel, Where, Cursor> = FindManyArgs<Row, Rel, Where, Cursor>,
+  >(args: A, selectOverride?: SelectInput<Row>): { sql: string; params: unknown[] } {
+    const cursor = args.cursor as Record<string, unknown> | undefined;
+    let cursorPk: string | undefined;
+    let cursorDir: OrderDirection = "asc";
+    if (cursor !== undefined) {
+      cursorPk = this.resolveCursorPk();
+      cursorDir = this.cursorDirection(args.orderBy, cursorPk);
+    }
+
+    const distinct = args.distinct as string[] | undefined;
+
+    const params = new Params();
+    const distinctClause =
+      distinct && distinct.length > 0
+        ? `DISTINCT ON (${distinct.map((f) => quote(this.col(f))).join(", ")}) `
+        : "";
+    let sql = `SELECT ${distinctClause}${this.selectList(selectOverride ?? args.select)} FROM ${quote(this.meta.table)}`;
+
+    const whereExpr = this.whereExpr(args.where as Record<string, unknown> | undefined, this.meta, {
+      params,
+      alias: null,
+      depth: 0,
+    });
+    let combinedExpr = whereExpr;
+    if (cursorPk !== undefined) {
+      const column = quote(this.col(cursorPk));
+      const op = cursorDir === "desc" ? "<=" : ">=";
+      const cursorClause = `${column} ${op} ${params.add(cursor![cursorPk])}`;
+      combinedExpr = combinedExpr !== null ? `${combinedExpr} AND ${cursorClause}` : cursorClause;
+    }
+    if (combinedExpr !== null) sql += ` WHERE ${combinedExpr}`;
+
+    sql += this.buildOrderBy(args.orderBy, cursorPk, cursorDir, distinct);
+    if (args.take !== undefined) sql += ` LIMIT ${params.add(args.take)}`;
+    const skip = args.skip !== undefined ? args.skip : cursorPk !== undefined ? 1 : undefined;
+    if (skip !== undefined) sql += ` OFFSET ${params.add(skip)}`;
+    return { sql, params: params.values };
+  }
+
+  /**
+   * Runs PostgreSQL `EXPLAIN (FORMAT JSON)` over the exact parameterized SQL
+   * `findMany(args)` would execute and summarizes index usage (`usesIndex`,
+   * `indexNames`, `scanTypes`, `totalCost`, and the raw root `plan` node).
+   */
+  async explain<
+    A extends FindManyArgs<Row, Rel, Where, Cursor> = FindManyArgs<Row, Rel, Where, Cursor>,
+  >(args: A = {} as A): Promise<ExplainResult> {
+    const { sql, params } = this.buildFindManyQuery(args);
+    const rows = (await this.exec(`EXPLAIN (FORMAT JSON) ${sql}`, params)) as Array<
+      Record<string, unknown>
+    >;
+    const raw = rows[0]?.["QUERY PLAN"];
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const plan =
+      Array.isArray(parsed) && parsed[0] && typeof parsed[0] === "object"
+        ? (((parsed[0] as Record<string, unknown>).Plan as Record<string, unknown>) ?? {})
+        : {};
+    const scanTypes: string[] = [];
+    const indexNames: string[] = [];
+    const walk = (node: Record<string, unknown>) => {
+      if (typeof node["Node Type"] === "string") scanTypes.push(node["Node Type"]);
+      if (typeof node["Index Name"] === "string") indexNames.push(node["Index Name"]);
+      if (Array.isArray(node.Plans)) {
+        for (const child of node.Plans) {
+          if (child && typeof child === "object") walk(child as Record<string, unknown>);
+        }
+      }
+    };
+    walk(plan);
+    const totalCost = typeof plan["Total Cost"] === "number" ? plan["Total Cost"] : null;
+    const usesIndex =
+      indexNames.length > 0 || scanTypes.some((t) => t.includes("Index"));
+    return { sql, params, usesIndex, indexNames, scanTypes, totalCost, plan };
+  }
+
   findMany<
     A extends FindManyArgs<Row, Rel, Where, Cursor> = FindManyArgs<Row, Rel, Where, Cursor>,
   >(args: A = {} as A): IndigoPromise<Payload<Row, Rel, A>[]> {
@@ -783,53 +867,8 @@ export class ModelDelegate<
       }
     }
 
-    // Cursor pagination (client-batch-aggregate PR B, design.md Decisions
-    // #5/#6/#7): resolve the model's single pk BEFORE any SQL is built —
-    // `resolveCursorPk` throws for a composite/absent pk. The cursor row
-    // itself is matched inclusively (`>=`/`<=`, direction from the pk's own
-    // `orderBy` entry if present, else `asc`); `skip` defaults to `1` only
-    // when a `cursor` is given and `skip` was not explicitly supplied — that
-    // implicit `OFFSET 1` is what excludes the cursor row itself.
-    const cursor = args.cursor as Record<string, unknown> | undefined;
-    let cursorPk: string | undefined;
-    let cursorDir: OrderDirection = "asc";
-    if (cursor !== undefined) {
-      cursorPk = this.resolveCursorPk();
-      cursorDir = this.cursorDirection(args.orderBy, cursorPk);
-    }
-
-    // `distinct` (client-aggregation PR C, design.md Decision #8):
-    // `SELECT DISTINCT ON (<fields>)` — the fields are also prepended to
-    // `ORDER BY` below (Postgres requirement), so both reference the exact
-    // same field list.
-    const distinct = args.distinct as string[] | undefined;
-
-    const params = new Params();
-    const distinctClause =
-      distinct && distinct.length > 0
-        ? `DISTINCT ON (${distinct.map((f) => quote(this.col(f))).join(", ")}) `
-        : "";
-    let sql = `SELECT ${distinctClause}${this.selectList(select)} FROM ${quote(this.meta.table)}`;
-
-    const whereExpr = this.whereExpr(args.where as Record<string, unknown> | undefined, this.meta, {
-      params,
-      alias: null,
-      depth: 0,
-    });
-    let combinedExpr = whereExpr;
-    if (cursorPk !== undefined) {
-      const column = quote(this.col(cursorPk));
-      const op = cursorDir === "desc" ? "<=" : ">=";
-      const cursorClause = `${column} ${op} ${params.add(cursor![cursorPk])}`;
-      combinedExpr = combinedExpr !== null ? `${combinedExpr} AND ${cursorClause}` : cursorClause;
-    }
-    if (combinedExpr !== null) sql += ` WHERE ${combinedExpr}`;
-
-    sql += this.buildOrderBy(args.orderBy, cursorPk, cursorDir, distinct);
-    if (args.take !== undefined) sql += ` LIMIT ${params.add(args.take)}`;
-    const skip = args.skip !== undefined ? args.skip : cursorPk !== undefined ? 1 : undefined;
-    if (skip !== undefined) sql += ` OFFSET ${params.add(skip)}`;
-    const rows = (await this.exec(sql, params.values)) as Record<string, unknown>[];
+    const { sql, params } = this.buildFindManyQuery(args, select);
+    const rows = (await this.exec(sql, params)) as Record<string, unknown>[];
 
     if (include) {
       await this.loadRelations(rows, include);

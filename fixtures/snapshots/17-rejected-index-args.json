@@ -1094,7 +1094,7 @@
       "model": "UnknownType"
     },
     {
-      "message": "Unknown @@index argument \"method\" on model \"UnknownArg\". Known arguments: name, type.",
+      "message": "Unknown @@index argument \"method\" on model \"UnknownArg\". Known arguments: name, type, where, expression.",
       "model": "UnknownArg"
     },
     {

@@ -210,6 +210,22 @@ Table T {
     expect(emailIdx).toBeGreaterThan(-1);
     expect(slugIdx).toBeLessThan(emailIdx);
   });
+
+  it('row 11: partial and expression indexes render WHERE and raw expression honestly', () => {
+    const source = `
+Table Account {
+  id        String    @id
+  email     String
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([email], name: "account_active_email_key", where: "deleted_at IS NULL")
+  @@index([], name: "account_lower_email_idx", expression: "lower(email)")
+}
+`;
+    const ddl = renderTable(source, 'Account');
+    expect(ddl).toContain('CREATE UNIQUE INDEX account_active_email_key ON public.Account (email) WHERE deleted_at IS NULL;');
+    expect(ddl).toContain('CREATE INDEX account_lower_email_idx ON public.Account (lower(email));');
+  });
 });
 
 describe('generateTableDDL — @map identifier correspondence (invariant)', () => {

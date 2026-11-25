@@ -504,15 +504,15 @@ function alterColumn(
  * separate statements). An unpaired residual is a genuine add or drop.
  */
 function indexKey(index: ResolvedIndex): string {
-  return `${index.unique ? "u" : "i"}:${index.columns.join(",")}:${index.name ?? ""}`;
+  return `${index.unique ? "u" : "i"}:${index.columns.join(",")}:${index.expression ?? ""}:${index.name ?? ""}`;
 }
 
 function indexShape(index: ResolvedIndex): string {
-  return `${index.unique ? "u" : "i"}:${index.columns.join(",")}`;
+  return `${index.unique ? "u" : "i"}:${index.columns.join(",")}:${index.expression ?? ""}`;
 }
 
 function indexDefinition(index: ResolvedIndex): string {
-  return `${indexShape(index)}|${index.type ?? ""}`;
+  return `${indexShape(index)}|${index.type ?? ""}|${index.where ?? ""}`;
 }
 
 function groupByShape(indexes: ResolvedIndex[]): Map<string, ResolvedIndex[]> {

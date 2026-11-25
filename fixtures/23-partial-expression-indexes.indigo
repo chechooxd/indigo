@@ -1,0 +1,23 @@
+// Partial and expression indexes: accepted cases.
+
+Table Account {
+  id        Int       @id @default(autoincrement())
+  email     String
+  deletedAt DateTime? @map("deleted_at")
+  metadata  Json
+
+  // Partial column index
+  @@index([email], where: "deleted_at IS NULL")
+
+  // Partial unique index with explicit name
+  @@unique([email], name: "account_active_email_key", where: "deleted_at IS NULL")
+
+  // Expression index (explicit name required, empty column array)
+  @@index([], name: "account_lower_email_idx", expression: "lower(email)")
+
+  // Combined partial + expression unique index
+  @@unique([], name: "account_active_lower_email_key", expression: "lower(email)", where: "deleted_at IS NULL")
+
+  // Expression index with non-btree method
+  @@index([], name: "account_meta_tags_gin", type: gin, expression: "(metadata -> 'tags')")
+}

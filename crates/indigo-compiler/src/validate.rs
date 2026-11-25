@@ -403,11 +403,90 @@ fn validate_index_args(errors: &mut Vec<ValidationError>, model: &Model) {
             }
         }
 
-        let columns = index_columns(model, attr);
-        if columns.is_empty() {
-            continue; // Mirrors resolve_indexes: an attribute with no valid array is skipped.
+        let positional_is_array = matches!(
+            attr.args.iter().find(|a| a.name.is_empty()).map(|a| &a.value),
+            Some(AttributeValue::Array { .. })
+        );
+        if !positional_is_array {
+            continue; // `check_shape` already reported the missing array argument.
         }
+        let columns = index_columns(model, attr);
+        let has_expression_arg = attr.args.iter().any(|a| a.name == "expression");
         let unique = attr.name == "unique";
+
+        // `where:` — optional partial-index SQL predicate.
+        if let Some(arg) = attr.args.iter().find(|a| a.name == "where") {
+            match &arg.value {
+                AttributeValue::String { value } => {
+                    if value.trim().is_empty() || value.chars().any(|c| c.is_control()) {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "Invalid {attr_label} \"where\" predicate on model \"{model_name}\". Predicate must be a non-empty string without control characters."
+                            ),
+                            model: Some(model_name.clone()),
+                            field: None,
+                        });
+                    }
+                }
+                _ => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Attribute \"{attr_label}\" on model \"{model_name}\" requires \"where\" to be a string literal."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+            }
+        }
+
+        // `expression:` — optional expression-index SQL expression list.
+        if let Some(arg) = attr.args.iter().find(|a| a.name == "expression") {
+            match &arg.value {
+                AttributeValue::String { value } => {
+                    if value.trim().is_empty() || value.chars().any(|c| c.is_control()) {
+                        errors.push(ValidationError {
+                            message: format!(
+                                "Invalid {attr_label} \"expression\" on model \"{model_name}\". Expression must be a non-empty string without control characters."
+                            ),
+                            model: Some(model_name.clone()),
+                            field: None,
+                        });
+                    }
+                }
+                _ => {
+                    errors.push(ValidationError {
+                        message: format!(
+                            "Attribute \"{attr_label}\" on model \"{model_name}\" requires \"expression\" to be a string literal."
+                        ),
+                        model: Some(model_name.clone()),
+                        field: None,
+                    });
+                }
+            }
+        }
+
+        // Columns vs expression mutual-exclusivity and non-emptiness.
+        if has_expression_arg {
+            if !columns.is_empty() {
+                errors.push(ValidationError {
+                    message: format!(
+                        "Attribute \"{attr_label}\" on model \"{model_name}\" cannot specify both columns and \"expression\"; use [] when declaring an expression index."
+                    ),
+                    model: Some(model_name.clone()),
+                    field: None,
+                });
+            }
+        } else if columns.is_empty() {
+            errors.push(ValidationError {
+                message: format!(
+                    "Attribute \"{attr_label}\" on model \"{model_name}\" requires at least one column or an \"expression\" argument."
+                ),
+                model: Some(model_name.clone()),
+                field: None,
+            });
+            continue;
+        }
 
         // `type:` — dual-form (bare identifier OR quoted string, decision #2).
         if let Some(arg) = attr.args.iter().find(|a| a.name == "type") {
@@ -485,9 +564,24 @@ fn validate_index_args(errors: &mut Vec<ValidationError>, model: &Model) {
             },
         };
 
+        let has_name_arg = attr.args.iter().any(|a| a.name == "name");
+        if has_expression_arg && !has_name_arg {
+            errors.push(ValidationError {
+                message: format!(
+                    "Expression {attr_label} on model \"{model_name}\" requires an explicit \"name\" argument."
+                ),
+                model: Some(model_name.clone()),
+                field: None,
+            });
+        }
+
         match explicit_name {
             Some(name) => sources.push(NameSource { name, explicit: true }),
-            None => sources.push(NameSource { name: derived_index_name(&table_db_name, &columns, unique), explicit: false }),
+            None if !columns.is_empty() => sources.push(NameSource {
+                name: derived_index_name(&table_db_name, &columns, unique),
+                explicit: false,
+            }),
+            None => {}
         }
     }
 

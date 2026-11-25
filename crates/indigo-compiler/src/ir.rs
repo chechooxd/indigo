@@ -103,6 +103,14 @@ pub struct ResolvedIndex {
     /// byte-identical.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
     pub index_type: Option<IndexMethod>,
+    /// Optional SQL predicate for a partial index (`where: "..."`), omitted
+    /// when absent so pre-existing fixtures stay byte-identical.
+    #[serde(rename = "where", skip_serializing_if = "Option::is_none", default)]
+    pub r#where: Option<String>,
+    /// Optional SQL expression list for an expression index (`expression: "..."`),
+    /// paired with empty `columns: []` and an explicit `name`. Omitted when absent.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub expression: Option<String>,
 }
 
 /// Serialized as the bare variant name ("OneToOne" etc.), like the TS enum.

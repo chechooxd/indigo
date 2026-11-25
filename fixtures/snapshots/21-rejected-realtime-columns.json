@@ -374,7 +374,7 @@
       "model": "UnknownRealtimeArg"
     },
     {
-      "message": "Unknown @@index argument \"columns\" on model \"ColumnsOnIndex\". Known arguments: name, type.",
+      "message": "Unknown @@index argument \"columns\" on model \"ColumnsOnIndex\". Known arguments: name, type, where, expression.",
       "model": "ColumnsOnIndex"
     }
   ]

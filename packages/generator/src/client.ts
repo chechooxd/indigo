@@ -120,7 +120,10 @@ function uniqueGroups(table: ResolvedTable): string[][] {
     if (col.unique) groups.push([col.name]);
   }
   for (const idx of table.indexes) {
-    if (!idx.unique) continue;
+    // Partial (`where`) and expression (`expression`) unique indexes cannot
+    // back an unconditional `ON CONFLICT (cols)` upsert target in PostgreSQL
+    // and do not guarantee full-table uniqueness for column-equality lookups.
+    if (!idx.unique || idx.where !== undefined || idx.expression !== undefined) continue;
     groups.push(idx.columns.map((dbName) => colsByDb.get(dbName)?.name ?? dbName));
   }
 
@@ -375,11 +378,25 @@ export function generateClient(schema: ResolvedSchema): string {
       .get(table.name)!
       .map(relationMetaEntry)
       .join(", ");
+    const colsByDb = columnMapByDb(table);
+    const indexesLiteral = table.indexes
+      .map((idx) => {
+        const idxFields = idx.columns
+          .map((dbName) => JSON.stringify(colsByDb.get(dbName)?.name ?? dbName))
+          .join(", ");
+        const parts = [`fields: [${idxFields}]`, `unique: ${idx.unique}`];
+        if (idx.name !== undefined) parts.push(`name: ${JSON.stringify(idx.name)}`);
+        if (idx.type !== undefined) parts.push(`type: ${JSON.stringify(idx.type)}`);
+        if (idx.where !== undefined) parts.push(`where: ${JSON.stringify(idx.where)}`);
+        if (idx.expression !== undefined) parts.push(`expression: ${JSON.stringify(idx.expression)}`);
+        return `{ ${parts.join(", ")} }`;
+      })
+      .join(", ");
     const uniqueGroupsLiteral = uniqueGroups(table)
       .map((g) => `[${g.map((f) => JSON.stringify(f)).join(", ")}]`)
       .join(", ");
     out.push(
-      `  ${JSON.stringify(table.name)}: { name: ${JSON.stringify(table.name)}, table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} }, uniqueGroups: [${uniqueGroupsLiteral}] },`,
+      `  ${JSON.stringify(table.name)}: { name: ${JSON.stringify(table.name)}, table: ${JSON.stringify(table.dbName)}, fields: { ${fields} }, relations: { ${relations} }, uniqueGroups: [${uniqueGroupsLiteral}], indexes: [${indexesLiteral}] },`,
     );
   }
   out.push("} as const;", "");

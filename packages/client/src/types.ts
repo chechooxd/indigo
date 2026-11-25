@@ -427,6 +427,33 @@ export interface ModelMeta {
    * would fail `typecheck.mjs`'s fixture.
    */
   uniqueGroups: readonly (readonly string[])[];
+  /**
+   * Declared secondary / unique indexes on this model (optional for backward
+   * compatibility with hand-authored delegates in tests). Field names are
+   * schema names (`[]` for expression indexes).
+   */
+  indexes?: readonly IndexMeta[];
+}
+
+/** Index metadata emitted onto `__meta[Model].indexes` by `@indigodb/generator`. */
+export interface IndexMeta {
+  readonly fields: readonly string[];
+  readonly unique: boolean;
+  readonly name?: string;
+  readonly type?: "btree" | "gin" | "gist" | "hash";
+  readonly where?: string;
+  readonly expression?: string;
+}
+
+/** Structured result returned by `ModelDelegate.explain()`. */
+export interface ExplainResult {
+  sql: string;
+  params: readonly unknown[];
+  usesIndex: boolean;
+  indexNames: string[];
+  scanTypes: string[];
+  totalCost: number | null;
+  plan: Record<string, unknown>;
 }
 
 // ─── Nested-write relation input unions (client-nested-writes spec) ─────────

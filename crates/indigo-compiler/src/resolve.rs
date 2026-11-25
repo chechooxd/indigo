@@ -163,7 +163,19 @@ fn resolve_indexes(model: &Model, field_to_db: &HashMap<String, String>) -> Vec<
             .into_iter()
             .map(|c| field_to_db.get(&c).cloned().unwrap_or(c))
             .collect();
-        if columns.is_empty() {
+        let r#where = match attr.args.iter().find(|a| a.name == "where").map(|a| &a.value) {
+            Some(AttributeValue::String { value }) if !value.trim().is_empty() => {
+                Some(value.trim().to_string())
+            }
+            _ => None,
+        };
+        let expression = match attr.args.iter().find(|a| a.name == "expression").map(|a| &a.value) {
+            Some(AttributeValue::String { value }) if !value.trim().is_empty() => {
+                Some(value.trim().to_string())
+            }
+            _ => None,
+        };
+        if columns.is_empty() && expression.is_none() {
             continue;
         }
         // Only an EXPLICIT `name:` is emitted here — omitted names stay
@@ -180,6 +192,8 @@ fn resolve_indexes(model: &Model, field_to_db: &HashMap<String, String>) -> Vec<
             unique: attr.name == "unique",
             name,
             index_type: resolve_index_type(attr),
+            r#where,
+            expression,
         });
     }
     indexes

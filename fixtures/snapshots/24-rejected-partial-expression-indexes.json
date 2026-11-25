@@ -1,0 +1,591 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "EmptyWhere",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "where",
+                "value": {
+                  "kind": "string",
+                  "value": "   "
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "WhereWrongKind",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "where",
+                "value": {
+                  "kind": "number",
+                  "value": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "EmptyExpression",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "empty_expr_idx"
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ExpressionMissingName",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": "lower(email)"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ExpressionWithColumns",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "expr_and_cols_idx"
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": "lower(email)"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "EmptyColumnsNoExpr",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "EmptyWhere",
+        "dbName": "EmptyWhere",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "WhereWrongKind",
+        "dbName": "WhereWrongKind",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": false
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "EmptyExpression",
+        "dbName": "EmptyExpression",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      },
+      {
+        "name": "ExpressionMissingName",
+        "dbName": "ExpressionMissingName",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [],
+            "unique": false,
+            "expression": "lower(email)"
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "ExpressionWithColumns",
+        "dbName": "ExpressionWithColumns",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": false,
+            "name": "expr_and_cols_idx",
+            "expression": "lower(email)"
+          }
+        ],
+        "relations": []
+      },
+      {
+        "name": "EmptyColumnsNoExpr",
+        "dbName": "EmptyColumnsNoExpr",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": [
+    {
+      "message": "Invalid @@index \"where\" predicate on model \"EmptyWhere\". Predicate must be a non-empty string without control characters.",
+      "model": "EmptyWhere"
+    },
+    {
+      "message": "Attribute \"@@index\" on model \"WhereWrongKind\" requires \"where\" to be a string literal.",
+      "model": "WhereWrongKind"
+    },
+    {
+      "message": "Invalid @@index \"expression\" on model \"EmptyExpression\". Expression must be a non-empty string without control characters.",
+      "model": "EmptyExpression"
+    },
+    {
+      "message": "Expression @@index on model \"ExpressionMissingName\" requires an explicit \"name\" argument.",
+      "model": "ExpressionMissingName"
+    },
+    {
+      "message": "Attribute \"@@index\" on model \"ExpressionWithColumns\" cannot specify both columns and \"expression\"; use [] when declaring an expression index.",
+      "model": "ExpressionWithColumns"
+    },
+    {
+      "message": "Attribute \"@@index\" on model \"EmptyColumnsNoExpr\" requires at least one column or an \"expression\" argument.",
+      "model": "EmptyColumnsNoExpr"
+    }
+  ]
+}

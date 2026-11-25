@@ -39,7 +39,9 @@ function indexStatement(table: Table, index: ResolvedIndex): string {
   const keyword = index.unique ? 'CREATE UNIQUE INDEX' : 'CREATE INDEX';
   const name = index.name ? `${index.name} ` : '';
   const using = usingClause(index);
-  return `${keyword} ${name}ON ${table.schema}.${table.name} ${using}(${index.columns.join(', ')});`;
+  const target = index.expression ?? index.columns.join(', ');
+  const where = index.where ? ` WHERE ${index.where}` : '';
+  return `${keyword} ${name}ON ${table.schema}.${table.name} ${using}(${target})${where};`;
 }
 
 /**

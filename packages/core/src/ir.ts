@@ -101,6 +101,10 @@ export interface ResolvedIndex {
    * index.
    */
   type?: "btree" | "gin" | "gist" | "hash";
+  /** Optional SQL predicate for a partial index (`where:` argument). */
+  where?: string;
+  /** Optional SQL expression list for an expression index (`expression:` argument). */
+  expression?: string;
 }
 
 // ─── Relations (for the client / ERD) ────────────────────────────────────────

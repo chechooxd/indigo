@@ -195,11 +195,14 @@ export function renderIndexDdl(
 ): string {
   const kind = index.unique ? "UNIQUE INDEX" : "INDEX";
   const ifNotExists = options.ifNotExists ? " IF NOT EXISTS" : "";
-  const cols = index.columns.map(quoteIdent).join(", ");
-  // Postgres syntax: `USING method` sits between the table and the column
+  const target = index.expression
+    ? index.expression
+    : index.columns.map(quoteIdent).join(", ");
+  // Postgres syntax: `USING method` sits between the table and the column/expr
   // list — AFTER the column list is a syntax error.
   const using = index.type ? ` USING ${index.type}` : "";
-  return `CREATE ${kind}${ifNotExists} ${quoteIdent(indexName(table, index))} ON ${quoteIdent(table.dbName)}${using} (${cols});`;
+  const where = index.where ? ` WHERE ${index.where}` : "";
+  return `CREATE ${kind}${ifNotExists} ${quoteIdent(indexName(table, index))} ON ${quoteIdent(table.dbName)}${using} (${target})${where};`;
 }
 
 /** Renders the `CREATE TABLE IF NOT EXISTS` for a table (columns + PK). */

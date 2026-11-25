@@ -349,6 +349,8 @@ function printIndexAttr(table: ResolvedTable, idx: ResolvedIndex): string {
   const args = [`[${cols.join(", ")}]`];
   if (idx.name !== undefined) args.push(`name: ${quoteString(idx.name)}`);
   if (idx.type !== undefined) args.push(`type: ${idx.type}`);
+  if (idx.where !== undefined) args.push(`where: ${quoteString(idx.where)}`);
+  if (idx.expression !== undefined) args.push(`expression: ${quoteString(idx.expression)}`);
   return `${attrName}(${args.join(", ")})`;
 }
 

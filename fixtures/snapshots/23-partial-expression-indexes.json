@@ -1,0 +1,334 @@
+{
+  "schema": {
+    "datasources": [],
+    "generators": [],
+    "models": [
+      {
+        "name": "Account",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "name": "Int",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": [
+              {
+                "name": "id",
+                "args": []
+              },
+              {
+                "name": "default",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "function",
+                      "name": "autoincrement",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "email",
+            "type": {
+              "name": "String",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          },
+          {
+            "name": "deletedAt",
+            "type": {
+              "name": "DateTime",
+              "scalar": true,
+              "list": false,
+              "optional": true
+            },
+            "attributes": [
+              {
+                "name": "map",
+                "args": [
+                  {
+                    "name": "",
+                    "value": {
+                      "kind": "string",
+                      "value": "deleted_at"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "metadata",
+            "type": {
+              "name": "Json",
+              "scalar": true,
+              "list": false,
+              "optional": false
+            },
+            "attributes": []
+          }
+        ],
+        "attributes": [
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "where",
+                "value": {
+                  "kind": "string",
+                  "value": "deleted_at IS NULL"
+                }
+              }
+            ]
+          },
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": [
+                    {
+                      "kind": "reference",
+                      "value": "email"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "account_active_email_key"
+                }
+              },
+              {
+                "name": "where",
+                "value": {
+                  "kind": "string",
+                  "value": "deleted_at IS NULL"
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "account_lower_email_idx"
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": "lower(email)"
+                }
+              }
+            ]
+          },
+          {
+            "name": "unique",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "account_active_lower_email_key"
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": "lower(email)"
+                }
+              },
+              {
+                "name": "where",
+                "value": {
+                  "kind": "string",
+                  "value": "deleted_at IS NULL"
+                }
+              }
+            ]
+          },
+          {
+            "name": "index",
+            "args": [
+              {
+                "name": "",
+                "value": {
+                  "kind": "array",
+                  "values": []
+                }
+              },
+              {
+                "name": "name",
+                "value": {
+                  "kind": "string",
+                  "value": "account_meta_tags_gin"
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "reference",
+                  "value": "gin"
+                }
+              },
+              {
+                "name": "expression",
+                "value": {
+                  "kind": "string",
+                  "value": "(metadata -> 'tags')"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "enums": [],
+    "tableGroups": []
+  },
+  "resolved": {
+    "tables": [
+      {
+        "name": "Account",
+        "dbName": "Account",
+        "columns": [
+          {
+            "name": "id",
+            "dbName": "id",
+            "type": "Int",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": true,
+            "unique": false,
+            "autoincrement": true,
+            "default": {
+              "kind": "function",
+              "name": "autoincrement"
+            }
+          },
+          {
+            "name": "email",
+            "dbName": "email",
+            "type": "String",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "deletedAt",
+            "dbName": "deleted_at",
+            "type": "DateTime",
+            "isEnum": false,
+            "nullable": true,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          },
+          {
+            "name": "metadata",
+            "dbName": "metadata",
+            "type": "Json",
+            "isEnum": false,
+            "nullable": false,
+            "isPk": false,
+            "unique": false,
+            "autoincrement": false
+          }
+        ],
+        "primaryKey": [
+          "id"
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": false,
+            "where": "deleted_at IS NULL"
+          },
+          {
+            "columns": [
+              "email"
+            ],
+            "unique": true,
+            "name": "account_active_email_key",
+            "where": "deleted_at IS NULL"
+          },
+          {
+            "columns": [],
+            "unique": false,
+            "name": "account_lower_email_idx",
+            "expression": "lower(email)"
+          },
+          {
+            "columns": [],
+            "unique": true,
+            "name": "account_active_lower_email_key",
+            "where": "deleted_at IS NULL",
+            "expression": "lower(email)"
+          },
+          {
+            "columns": [],
+            "unique": false,
+            "name": "account_meta_tags_gin",
+            "type": "gin",
+            "expression": "(metadata -> 'tags')"
+          }
+        ],
+        "relations": []
+      }
+    ],
+    "tableGroups": [],
+    "enums": []
+  },
+  "validation": []
+}

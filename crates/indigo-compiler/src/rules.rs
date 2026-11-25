@@ -135,8 +135,9 @@ pub fn attribute_rule(target: AttributeTarget, name: &str) -> Option<ArgShape> {
 /// silent no-op before this change — the exact failure mode it exists to kill.
 pub const RELATION_ARG_KEYS: [&str; 4] = ["fields", "references", "onDelete", "onUpdate"];
 
-/// `@@index`/`@@unique` named-argument keys (design decision #1/#3).
-pub const INDEX_ARG_KEYS: [&str; 2] = ["name", "type"];
+/// `@@index`/`@@unique` named-argument keys (`named-typed-indexes` +
+/// `named-index-followups`).
+pub const INDEX_ARG_KEYS: [&str; 4] = ["name", "type", "where", "expression"];
 
 /// `@@realtime` named-argument keys (`realtime-column-projection` design
 /// decision #1). `columns` is exclusive to `@@realtime`: it is absent from
