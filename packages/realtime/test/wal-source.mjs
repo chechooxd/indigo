@@ -1387,9 +1387,44 @@ await check("RWS-8: a superseded connect() closes its own writer and does not ov
   strictEqual(source["writer"], secondWriter, "this.writer must never be overwritten by the superseded attempt");
 });
 
+await check("reconnect teardown: failed subscribe() stops the old service and closes its writer before scheduling reconnect", async () => {
+  const source = new WalSource("postgres://unused/db", testSchema());
+  let rejectSubscribe;
+  const subscribePromise = new Promise((_resolve, reject) => {
+    rejectSubscribe = reject;
+  });
+  let serviceStopCalls = 0;
+  let reconnectCalls = 0;
+  const service = fakeReplicationService();
+  service.subscribe = () => subscribePromise;
+  service.stop = async () => {
+    serviceStopCalls++;
+  };
+  const writer = fakeReplicationWriter();
+  source["createService"] = () => service;
+  source["createWriter"] = () => writer;
+  source["scheduleReconnect"] = () => {
+    reconnectCalls++;
+  };
+
+  const startPromise = source.start(() => {}, () => {});
+  await afterMicrotasks();
+  service.fire("start");
+  await startPromise;
+
+  // Simulate pg_terminate_backend killing the replication connection mid-stream.
+  rejectSubscribe(new Error("terminating connection due to administrator command"));
+  await afterMicrotasks();
+  await afterMicrotasks();
+
+  strictEqual(serviceStopCalls, 1, "failed service must be stopped so its standby-status interval never leaks");
+  strictEqual(writer.calls.end, 1, "failed attempt must close its log-writer before reconnecting");
+  strictEqual(reconnectCalls, 1, "reconnect must still be scheduled after tearing down the dead service");
+});
+
 console.log(`\n${passed} passed`);
 // RCP-13 reachability guard: fails loudly if a case above is skipped/omitted
 // instead of silently shrinking the run.
-strictEqual(ran, 51, "expected exactly 51 check() cases to run in wal-source.mjs");
-strictEqual(passed, 51, "expected exactly 51 checks to pass — an omitted or silently-skipped case must shrink this count and fail loudly");
+strictEqual(ran, 52, "expected exactly 52 check() cases to run in wal-source.mjs");
+strictEqual(passed, 52, "expected exactly 52 checks to pass — an omitted or silently-skipped case must shrink this count and fail loudly");
 if (process.exitCode) process.exit(process.exitCode);

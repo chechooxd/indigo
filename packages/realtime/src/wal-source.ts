@@ -370,36 +370,26 @@ export class WalSource implements RealtimeSource {
       this.writer = writer;
 
       await service.subscribe(plugin, this.slot);
-      // subscribe() resolves once the stream ends — including the case
-      // where it ends because THIS connect() attempt only finished
-      // establishing the stream *after* stop() (or a newer connect()) had
-      // already run while we were awaiting it above. `this.service`/
-      // `this.stopped` reflect the CURRENT desired state, not the state
-      // when this call started, so re-check both here: without this, a
-      // connect() that "wins the race" against a concurrent stop() leaves a
-      // live, fully-subscribed replication socket that nothing holds a
-      // reference to any more — orphaned, never closed, and (because it's
-      // an active streaming socket) enough on its own to keep the whole
-      // Node process alive indefinitely. Observed directly via
-      // `process._getActiveHandles()` showing one surviving `Socket` after
-      // a `stop()` that had already resolved.
-      if (this.service !== service || this.stopped) {
-        await service.stop().catch(() => {});
-        if (this.writer === writer) this.writer = null;
-        await writer.end().catch(() => {});
-        return;
-      }
+      // Teardown THIS attempt's service and writer unconditionally once
+      // subscribe() ends. `pg-logical-replication`'s `subscribe()` returns
+      // `plugin.start()` without awaiting it, so its own catch/stop() does not
+      // run when the stream ends or rejects — leaving `checkStandbyStatusTimer`
+      // (a ref'd 1s setInterval) alive forever if we overwrite `this.service`
+      // on reconnect without stopping the finished instance first.
+      const endedStale = this.service !== service || this.stopped;
+      if (this.service === service) this.service = null;
+      await service.stop().catch(() => {});
+      if (this.writer === writer) this.writer = null;
+      await writer.end().catch(() => {});
+      if (endedStale || this.stopped) return;
       this.scheduleReconnect(onEvent, onError);
     } catch (err) {
-      if (this.service !== service || this.stopped) {
-        // Superseded by a newer connect(), or stop() ran while this attempt
-        // was failing. Close whatever this attempt itself opened — a writer
-        // that reached `this.writer = writer` above is otherwise never
-        // closed by anyone once nothing calls connect() again.
-        if (writer && this.writer === writer) this.writer = null;
-        await writer?.end().catch(() => {});
-        return;
-      }
+      const failedStale = this.service !== service || this.stopped;
+      if (this.service === service) this.service = null;
+      await service.stop().catch(() => {});
+      if (writer && this.writer === writer) this.writer = null;
+      await writer?.end().catch(() => {});
+      if (failedStale || this.stopped) return;
       const wrapped = err instanceof Error ? err : new Error(String(err));
       onError(wrapped);
       // A no-op on any reconnect attempt after the first one already

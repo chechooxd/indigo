@@ -15,7 +15,7 @@
 set -euo pipefail
 
 CONTAINER=indigo-wal-local
-PORT=55432
+PORT="${INDIGODB_TEST_PG_PORT:-55432}"
 DB=indigo_test
 
 cleanup() {
