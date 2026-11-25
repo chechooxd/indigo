@@ -48,6 +48,23 @@ if [ "$has_content" -eq 0 ]; then
   exit 0
 fi
 
+# Audit runs first and fast: it needs no build output, so a known-vulnerable
+# dependency fails the push before the ~8-minute build/lint/test chain even
+# starts. `high` is the bounded set (critical-only misses most exploitable
+# advisories; moderate/low admits dev-transitive noise with no code change).
+# The pressure valve is a reviewed entry in root package.json's
+# `pnpm.auditConfig.ignoreCves` (for CVE advisories) or
+# `pnpm.auditConfig.ignoreGhsas` (for GHSA-only advisories with `cves: []`) —
+# never lowering `--audit-level`.
+echo "pre-push: pnpm audit --audit-level=high"
+if ! pnpm audit --audit-level=high; then
+  echo ""
+  echo "pre-push: FAILED at \`pnpm audit --audit-level=high\` — push aborted."
+  echo "pre-push: fix the dependency, suppress a triaged advisory via pnpm.auditConfig.ignoreCves"
+  echo "pre-push: or pnpm.auditConfig.ignoreGhsas in package.json, or bypass with SKIP_PREPUSH=1 git push"
+  exit 1
+fi
+
 started=$(date +%s)
 echo "pre-push: verifying before push (build -> lint -> test, ~8 min; SKIP_PREPUSH=1 to skip)"
 

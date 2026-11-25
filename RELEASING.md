@@ -96,6 +96,19 @@ for a caller to supply:
 "release:preflight": "pnpm clean && pnpm build --force && pnpm lint && pnpm test"
 ```
 
+## Dependency audit gate
+
+`.githooks/pre-push` runs `pnpm audit --audit-level=high` **before** `build -> lint -> test`,
+failing fast if any `high` or `critical` advisory appears in the lockfile. Never lower
+`--audit-level`. If an upstream advisory has no patch yet and has been triaged as non-exploitable
+here, suppress it explicitly in the root `package.json`:
+
+- Use `pnpm.auditConfig.ignoreCves` for advisories with a CVE ID.
+- Use `pnpm.auditConfig.ignoreGhsas` for GHSA-only advisories (`cves: []`, which `ignoreCves`
+  cannot match).
+
+Keep both lists empty whenever a patched dependency version exists.
+
 ## `.npmrc` is deliberately not created
 
 No root `.npmrc` exists, and none is added by this procedure. `.npmrc` is also where npm's
