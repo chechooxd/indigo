@@ -66,11 +66,14 @@ with no confirmation prompt and no `--force` flag required in this slice.
 - AND no confirmation prompt is shown
 - AND no `--force` or equivalent flag is required for the overwrite to proceed
 
-### Requirement: Loud Failure on Unmappable Types or Expression Indexes
+### Requirement: Loud Failure on Unmappable Types; Partial and Expression Indexes Introspected
 
 The command MUST fail loudly and never emit a silent partial schema when the underlying
-introspection encounters an unmappable PostgreSQL type or an expression index, inheriting
-the "throw, never guess" invariant of `introspectResolvedSchema`.
+introspection encounters an unmappable PostgreSQL type, inheriting the "throw, never guess"
+invariant of `introspectResolvedSchema`. Partial (`where:`) and expression (`expression:`)
+indexes MUST be introspected and printed instead of rejected.
+(Previously: expression indexes threw an error because `expression:` was not yet supported in
+the `.indigo` schema language.)
 
 #### Scenario: Unmappable column type
 - GIVEN a target database containing a column of a PostgreSQL type the introspector cannot map
@@ -78,11 +81,11 @@ the "throw, never guess" invariant of `introspectResolvedSchema`.
 - THEN the command fails with a clear, actionable error identifying the unmappable type and its location
 - AND no schema file is written or an existing one is left unmodified
 
-#### Scenario: Expression index present
-- GIVEN a target database containing an expression index
+#### Scenario: Partial and expression indexes present
+- GIVEN a target database containing a partial index and an expression index
 - WHEN the user runs `db pull --url <dsn>`
-- THEN the command fails with a clear, actionable error identifying the expression index
-- AND no schema file is written or an existing one is left unmodified
+- THEN both indexes are introspected with `where` / `expression` populated and printed as valid
+  `@@index` / `@@unique` attributes in `.indigo`
 
 ### Requirement: Relation-Field Synthesis Out of Scope
 
