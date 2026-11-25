@@ -171,7 +171,8 @@ migrate
   .option("-s, --schema <path>", "Schema file path", "schema.indigo")
   .option("--force", "Apply destructive (requires-force) statements without refusing")
   .option("--create-only", "Write the migration file without applying it")
-  .action(async (options: { name: string; schema: string; force?: boolean; createOnly?: boolean }) => {
+  .option("--empty", "Scaffold a data-only migration (migration.sql + data.sql); requires --create-only")
+  .action(async (options: { name: string; schema: string; force?: boolean; createOnly?: boolean; empty?: boolean }) => {
     loadEnv();
     const { resolved } = loadSchema(options.schema);
     const connectionString = resolveConnectionString(resolved);
@@ -181,6 +182,7 @@ migrate
       connectionString,
       force: options.force,
       createOnly: options.createOnly,
+      empty: options.empty,
     });
   });
 migrate

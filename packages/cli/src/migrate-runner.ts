@@ -45,7 +45,10 @@ import type { ResolvedSchema } from "@indigodb/core";
 
 const MIGRATIONS_DIR = "migrations";
 const SNAPSHOT_FILE = ".snapshot.json";
+const DATA_FILE = "data.sql";
 const HISTORY_TABLE = "_indigo_migrations";
+/** NUL-delimited domain separator between `migration.sql` and `data.sql` in checksums. */
+const DATA_CHECKSUM_SEPARATOR = "\0--indigo:data.sql--\0";
 
 /**
  * The single statement every history write goes through.
@@ -141,9 +144,27 @@ function listMigrationDirs(cwd: string): string[] {
     .sort();
 }
 
-/** sha256 hex of `migration.sql`'s exact bytes — no newline/whitespace normalization. */
-export function migrationChecksum(sql: string): string {
-  return createHash("sha256").update(sql).digest("hex");
+/**
+ * sha256 hex of a migration's exact on-disk bytes — no newline/whitespace
+ * normalization. When `dataSql` is absent (`undefined`), returns `sha256(sql)`
+ * byte-identically to pre-attach-point migrations; when `data.sql` is present,
+ * hashes both files separated by a NUL-delimited domain tag so any post-apply
+ * edit, addition, or removal of `data.sql` is detected as checksum drift.
+ */
+export function migrationChecksum(sql: string, dataSql?: string): string {
+  const hash = createHash("sha256").update(sql);
+  if (dataSql !== undefined) {
+    hash.update(DATA_CHECKSUM_SEPARATOR).update(dataSql);
+  }
+  return hash.digest("hex");
+}
+
+function readMigrationFiles(cwd: string, id: string): { sql: string; dataSql?: string } {
+  const dir = join(migrationsRoot(cwd), id);
+  const sql = readFileSync(join(dir, "migration.sql"), "utf-8");
+  const dataPath = join(dir, DATA_FILE);
+  const dataSql = existsSync(dataPath) ? readFileSync(dataPath, "utf-8") : undefined;
+  return { sql, dataSql };
 }
 
 async function defaultCreateClient(connectionString: string): Promise<MigrationClient> {
@@ -232,7 +253,8 @@ async function checksumPreflight(client: MigrationClient, cwd: string): Promise<
     if (stored == null) continue;
     const file = join(migrationsRoot(cwd), id, "migration.sql");
     if (!existsSync(file)) continue;
-    const current = migrationChecksum(readFileSync(file, "utf-8"));
+    const { sql, dataSql } = readMigrationFiles(cwd, id);
+    const current = migrationChecksum(sql, dataSql);
     if (current !== stored) drifted.push(id);
   }
   return drifted;
@@ -273,12 +295,18 @@ function fsMigrationSource(
   recordedChecksums: Record<string, string | null>,
   cwd: string,
 ): MigrationSource {
-  const readFile = (id: string) => readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
+  // `read` returns ONLY `migration.sql` so shadow replay reconstructs DDL
+  // without running target-DB DML (`data.sql`). `checksum` hashes both
+  // `migration.sql` and optional `data.sql`, so shadow replay still refuses
+  // if an already-applied `data.sql` drifted on disk.
   return {
     recorded,
     onDisk: listMigrationDirs(cwd),
-    read: readFile,
-    checksum: (id: string) => migrationChecksum(readFile(id)),
+    read: (id: string) => readMigrationFiles(cwd, id).sql,
+    checksum: (id: string) => {
+      const { sql, dataSql } = readMigrationFiles(cwd, id);
+      return migrationChecksum(sql, dataSql);
+    },
     recordedChecksums,
   };
 }
@@ -298,6 +326,11 @@ export interface DevOptions {
    * a live connection — shadow replay reads `_indigo_migrations`.
    */
   createOnly?: boolean;
+  /**
+   * Scaffold a data-only migration (comment-only `migration.sql` + stub
+   * `data.sql`) even when the schema has no diffs. Requires `createOnly`.
+   */
+  empty?: boolean;
 }
 
 /**
@@ -349,11 +382,16 @@ function printForceRefusal(header: string, impacts: string[]): void {
  * carrying no marker yields no pre-transaction statements, so migrations
  * written before this existed keep behaving exactly as they did.
  */
-async function applyMigrationSql(client: MigrationClient, sql: string): Promise<void> {
+async function applyMigrationSql(
+  client: MigrationClient,
+  sql: string,
+  dataSql?: string,
+): Promise<void> {
   const { preTransaction, transactional } = splitMigrationSql(sql);
   for (const statement of preTransaction) await client.query(statement);
   await client.query("BEGIN");
   if (transactional.trim().length > 0) await client.exec(transactional);
+  if (dataSql && dataSql.trim().length > 0) await client.exec(dataSql);
 }
 
 /**
@@ -384,6 +422,14 @@ async function resolvePrevSchema(client: MigrationClient, cwd: string): Promise<
  * phase (apply/history/snapshot), running only the former.
  */
 export async function migrateDev(options: DevOptions): Promise<void> {
+  if (options.empty && !options.createOnly) {
+    console.error(
+      "❌ migrate dev refused: --empty requires --create-only (edit the generated data.sql before applying).",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const cwd = options.cwd ?? process.cwd();
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
@@ -399,6 +445,22 @@ export async function migrateDev(options: DevOptions): Promise<void> {
         return;
       }
       throw error;
+    }
+
+    if (options.empty) {
+      const id = `${timestamp()}_${slugify(options.name)}`;
+      const dir = join(migrationsRoot(cwd), id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "migration.sql"), "-- Data-only migration (no schema changes)\n");
+      writeFileSync(
+        join(dir, DATA_FILE),
+        "-- Data migration / backfill — runs inside the migration transaction after migration.sql.\n" +
+          "-- Add your DML statements below, then apply with `indigodb migrate deploy`.\n",
+      );
+      console.log(`✅ Empty data migration created (not applied): ${id}`);
+      console.log(`   migrations/${id}/migration.sql + migrations/${id}/${DATA_FILE}`);
+      console.log("   Edit data.sql, then apply it with `indigodb migrate deploy`.");
+      return;
     }
 
     // One diff, one plan: the plan carries the statements, their execution
@@ -527,8 +589,11 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     // apply file 1 then refuse file 2, leaving a half-migrated database.
     const destructiveFiles: { id: string; impacts: string[] }[] = [];
     for (const id of pending) {
-      const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
-      const impacts = scanRequiresForce(sql);
+      const { sql, dataSql } = readMigrationFiles(cwd, id);
+      const impacts = [
+        ...scanRequiresForce(sql),
+        ...(dataSql !== undefined ? scanRequiresForce(dataSql) : []),
+      ];
       if (impacts.length > 0) destructiveFiles.push({ id, impacts });
     }
     if (destructiveFiles.length > 0 && !seams.force) {
@@ -543,11 +608,11 @@ export async function migrateDeploy(connectionString: string, seams: DeployOptio
     }
 
     for (const id of pending) {
-      const sql = readFileSync(join(migrationsRoot(cwd), id, "migration.sql"), "utf-8");
-      const checksum = migrationChecksum(sql);
+      const { sql, dataSql } = readMigrationFiles(cwd, id);
+      const checksum = migrationChecksum(sql, dataSql);
       const startedAt = performance.now();
       attempt = { id, checksum, startedAt };
-      await applyMigrationSql(client, sql);
+      await applyMigrationSql(client, sql, dataSql);
       const elapsedMs = Math.round(performance.now() - startedAt);
       await client.query(HISTORY_UPSERT, [id, checksum, true, elapsedMs]);
       await client.query("COMMIT");
@@ -695,7 +760,8 @@ export async function migrateResolve(options: ResolveOptions): Promise<void> {
         [id],
       );
       const recorded = rows[0] as { checksum: string | null; success: boolean } | undefined;
-      const computed = migrationChecksum(readFileSync(file, "utf-8"));
+      const { sql, dataSql } = readMigrationFiles(cwd, id);
+      const computed = migrationChecksum(sql, dataSql);
 
       // Branch order is load-bearing (design D7). The drift check sits ABOVE
       // the success/failure split, so a failure row whose file has since been
