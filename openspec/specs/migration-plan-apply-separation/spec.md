@@ -108,3 +108,24 @@ default shadow-replay path reads `_indigo_migrations` from that database.
 - GIVEN the target database is unreachable
 - WHEN `migrate dev --create-only` runs
 - THEN the command fails to connect and no migration file is written, identically to `migrate dev` without the flag
+
+### Requirement: `migrate dev --create-only --empty` scaffolds a data-only migration
+
+The system MUST accept an `--empty` boolean option on `indigodb migrate dev` (`DevOptions.empty`)
+that requires `--create-only`. Without `--create-only`, `--empty` MUST refuse before connecting.
+With `--create-only --empty`, pre-flight runs unchanged and the command writes a comment-only
+`migration.sql` alongside a stub `data.sql` even when the schema has zero diffs, skipping all
+commit-phase side effects.
+
+#### Scenario: `--empty` without `--create-only` is refused before connecting
+
+- GIVEN `migrate dev --empty -n backfill` without `--create-only`
+- WHEN the command runs
+- THEN it refuses with `process.exitCode = 1`, opens no database connection, and writes no files
+
+#### Scenario: `--create-only --empty` scaffolds both `migration.sql` and `data.sql`
+
+- GIVEN an up-to-date schema with zero pending DDL diffs
+- WHEN `migrate dev --create-only --empty -n backfill` runs
+- THEN `migrations/<ts>_backfill/migration.sql` and `migrations/<ts>_backfill/data.sql` are
+  created without applying or updating `_indigo_migrations` or `.snapshot.json`
