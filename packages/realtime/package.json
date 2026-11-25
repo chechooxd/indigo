@@ -3,6 +3,13 @@
   "version": "0.0.1",
   "description": "PostgreSQL WAL logical-replication SSE engine, presence/broadcast channels, and observability for IndigoDB.",
   "keywords": ["indigodb", "realtime", "sse", "presence", "broadcast", "postgresql", "wal"],
+  "homepage": "https://github.com/chechooxd/indigo#readme",
+  "bugs": "https://github.com/chechooxd/indigo/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chechooxd/indigo.git",
+    "directory": "packages/realtime"
+  },
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

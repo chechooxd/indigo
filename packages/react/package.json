@@ -3,6 +3,13 @@
   "version": "0.0.1",
   "description": "Browser-safe React hooks (useLiveTable, useChannel) for IndigoDB realtime.",
   "keywords": ["indigodb", "react", "hooks", "realtime", "presence", "broadcast"],
+  "homepage": "https://github.com/chechooxd/indigo#readme",
+  "bugs": "https://github.com/chechooxd/indigo/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chechooxd/indigo.git",
+    "directory": "packages/react"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public"

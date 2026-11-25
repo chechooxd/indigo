@@ -3,6 +3,13 @@
   "version": "0.0.1",
   "description": "Typed TypeScript ORM client code generator for IndigoDB schemas.",
   "keywords": ["indigodb", "codegen", "generator", "typescript", "orm", "postgresql"],
+  "homepage": "https://github.com/chechooxd/indigo#readme",
+  "bugs": "https://github.com/chechooxd/indigo/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chechooxd/indigo.git",
+    "directory": "packages/generator"
+  },
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {
