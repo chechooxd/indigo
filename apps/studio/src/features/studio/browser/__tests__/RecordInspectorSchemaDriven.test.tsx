@@ -1,6 +1,6 @@
 /**
  * @license
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * studio-record-editor / studio-ui-tests: the Record Inspector and edit
  * buffer are schema-driven — this suite uses a fixture table with columns

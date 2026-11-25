@@ -1,6 +1,6 @@
 /**
  * @license
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 const KEYWORDS = ['select', 'from', 'where', 'limit', 'order by', 'group by', 'left join', 'inner join', 'on'];
