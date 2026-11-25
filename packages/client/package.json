@@ -1,8 +1,15 @@
 {
   "name": "@indigodb/client",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Type-safe PostgreSQL ORM runtime and browser-safe realtime SDK for IndigoDB.",
-  "keywords": ["indigodb", "client", "orm", "postgresql", "realtime", "typescript"],
+  "keywords": [
+    "indigodb",
+    "client",
+    "orm",
+    "postgresql",
+    "realtime",
+    "typescript"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {
@@ -10,7 +17,9 @@
     "url": "git+https://github.com/chechooxd/indigo.git",
     "directory": "packages/client"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"

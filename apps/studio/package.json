@@ -1,8 +1,14 @@
 {
   "name": "@indigodb/studio",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Visual ER diagram, data browser, SQL console, and schema documentation workspace for IndigoDB.",
-  "keywords": ["indigodb", "studio", "erd", "database-browser", "postgresql"],
+  "keywords": [
+    "indigodb",
+    "studio",
+    "erd",
+    "database-browser",
+    "postgresql"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {
@@ -18,7 +24,9 @@
     "node": ">=22"
   },
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

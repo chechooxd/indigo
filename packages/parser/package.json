@@ -1,8 +1,14 @@
 {
   "name": "@indigodb/parser",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Parser wrapper around the IndigoDB WebAssembly compiler.",
-  "keywords": ["indigodb", "parser", "schema", "orm", "postgresql"],
+  "keywords": [
+    "indigodb",
+    "parser",
+    "schema",
+    "orm",
+    "postgresql"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {
@@ -10,7 +16,9 @@
     "url": "git+https://github.com/chechooxd/indigo.git",
     "directory": "packages/parser"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"

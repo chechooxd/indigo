@@ -1,8 +1,15 @@
 {
   "name": "@indigodb/migrator",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "PostgreSQL schema diffing, DDL migration generator, and catalog introspector for IndigoDB.",
-  "keywords": ["indigodb", "migrations", "ddl", "introspection", "orm", "postgresql"],
+  "keywords": [
+    "indigodb",
+    "migrations",
+    "ddl",
+    "introspection",
+    "orm",
+    "postgresql"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {
@@ -10,7 +17,9 @@
     "url": "git+https://github.com/chechooxd/indigo.git",
     "directory": "packages/migrator"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"

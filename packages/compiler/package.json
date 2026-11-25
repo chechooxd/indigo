@@ -1,8 +1,15 @@
 {
   "name": "@indigodb/compiler",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "WebAssembly compiler for the IndigoDB (.indigo) schema language.",
-  "keywords": ["indigodb", "compiler", "wasm", "schema", "orm", "postgresql"],
+  "keywords": [
+    "indigodb",
+    "compiler",
+    "wasm",
+    "schema",
+    "orm",
+    "postgresql"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {

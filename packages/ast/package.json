@@ -1,8 +1,14 @@
 {
   "name": "@indigodb/ast",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Shared TypeScript AST and diagnostic types for the IndigoDB schema language.",
-  "keywords": ["indigodb", "ast", "schema", "orm", "postgresql"],
+  "keywords": [
+    "indigodb",
+    "ast",
+    "schema",
+    "orm",
+    "postgresql"
+  ],
   "homepage": "https://github.com/chechooxd/indigo#readme",
   "bugs": "https://github.com/chechooxd/indigo/issues",
   "repository": {
@@ -10,7 +16,9 @@
     "url": "git+https://github.com/chechooxd/indigo.git",
     "directory": "packages/ast"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
