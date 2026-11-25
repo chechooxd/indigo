@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/ast",
   "version": "0.0.1",
+  "description": "Shared TypeScript AST and diagnostic types for the IndigoDB schema language.",
+  "keywords": ["indigodb", "ast", "schema", "orm", "postgresql"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

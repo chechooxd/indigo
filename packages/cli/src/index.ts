@@ -45,6 +45,12 @@ import {
   REALTIME_METRICS_PATH,
 } from "@indigodb/realtime";
 
+const CLI_VERSION: string = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  }
+).version;
+
 const program = new Command();
 
 program
@@ -52,7 +58,7 @@ program
   .description(
     "IndigoDB — schema-first ORM with ER diagrams and docs, all from one .indigo language.",
   )
-  .version("0.0.1");
+  .version(CLI_VERSION);
 
 // ─── init ──────────────────────────────────────────────────────────────────
 program

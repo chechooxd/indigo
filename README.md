@@ -63,11 +63,11 @@ TableGroup "Core" {
 
 ## Quickstart (in a NestJS / Node backend)
 
-> Requires Node 20+ and a reachable PostgreSQL instance. For a throwaway DB:
+> Requires Node 22+ and a reachable PostgreSQL instance. For a throwaway DB:
 > `docker run -d --name pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16`
 
 ```bash
-# 1. Install the CLI and runtime (see "Local install" below until published)
+# 1. Install the CLI and runtime
 npm install @indigodb/cli @indigodb/client
 
 # 2. Scaffold schema.indigo + .env
@@ -99,9 +99,12 @@ const admins = await db.user.findMany({
 await db.$disconnect();
 ```
 
-The client supports `findMany`, `findFirst`, `findUnique`, `create`, `update`,
-`delete`, `count` and `$queryRaw`, with a `where` subset (equality, `in`, `notIn`,
-`lt/lte/gt/gte`, `contains/startsWith/endsWith`), `select`, `orderBy`, `take`, `skip`.
+The client supports `findMany`, `findFirst`, `findUnique`, `create`, `createMany`,
+`update`, `updateMany`, `upsert`, `delete`, `deleteMany`, `count`, `aggregate`,
+`groupBy`, `explain`, `$transaction`, `$withSession` (for RLS `@@allow`),
+`$extends`, `$queryRaw`, cursor pagination, relation `include`/nested writes,
+driver adapters (`pg` and `PGlite`), and rich `where` filters (logical `AND`/`OR`/`NOT`,
+relation filters, JSON path filters, case-insensitive string operators).
 
 ## Migrations
 
@@ -111,20 +114,38 @@ production, use **versioned migrations** (like `prisma migrate`):
 ```bash
 npx indigodb migrate dev --name init      # diff schema → migration file, apply it
 npx indigodb migrate dev --name add_posts # after editing schema.indigo
+npx indigodb migrate dev --name backfill --create-only --empty # scaffold DDL + data.sql
 npx indigodb migrate deploy               # apply pending migrations (CI/prod)
 npx indigodb migrate status               # what's applied vs pending
+npx indigodb migrate resolve              # mark baseline / rolled-back migrations
+npx indigodb db pull                      # introspect existing PostgreSQL into schema.indigo
 ```
 
-Migrations are written to `migrations/<timestamp>_<name>/migration.sql` (commit
-them), tracked in a `_indigo_migrations` table, and cover create/drop tables and
-columns, column type / nullability / default changes, enum additions, indexes
-and foreign keys.
+Migrations are written to `migrations/<timestamp>_<name>/migration.sql` (with an optional
+transactional sibling `data.sql` for data backfills), tracked with SHA-256 checksums in
+`_indigo_migrations`, and cover tables, columns, native types, enums, partial and expression
+indexes, foreign keys, RLS policies (`@@allow`), and logical-replication DDL (`@@realtime`).
 
 | Command             | Like Prisma          | Use for                    |
 | ------------------- | -------------------- | -------------------------- |
 | `db push`           | `prisma db push`     | prototyping, no history    |
+| `db pull`           | `prisma db pull`     | introspect existing DB     |
 | `migrate dev`       | `prisma migrate dev` | development, with history   |
 | `migrate deploy`    | `prisma migrate deploy` | production / CI          |
+
+## Realtime & React
+
+Mark models with `@@realtime` to stream PostgreSQL logical-replication (`pgoutput`)
+notifications over HTTP SSE, run ephemeral Presence & Broadcast channels, and inspect live
+operational metrics (`GET /api/realtime/metrics` / `onTelemetry`):
+
+```bash
+npx indigodb realtime   # starts the realtime SSE + channels + metrics daemon
+```
+
+Consume from browsers with zero Node/`pg` dependencies via `@indigodb/client/realtime`
+(`createLiveSubscription`, `createChannel`) or `@indigodb/react` (`useLiveTable`,
+`useChannel`).
 
 ## Studio
 
@@ -136,14 +157,14 @@ Launches (and opens, like Prisma Studio) the visual workspace wired to your real
 schema and database — the single home for everything visual:
 
 - **ER diagram + editor** — the MER rendered from `schema.indigo` (dbdiagram-style)
-- **Data browser** — tables, fields and live rows
-- **SQL console** — run read-only queries directly
-- **Documentation** — columns, constraints, notes and relations (dbdocs-style)
+- **Data browser** — paginated tables, record editor, and live updates
+- **SQL console** — run read-only queries directly with row and timeout guardrails
+- **Documentation** — columns, constraints, indexes, notes and relations (dbdocs-style)
 
-## Local install (before npm publish)
+## Local development install
 
-The packages aren't on npm yet. To try them in an external project, build the
-workspace and link the CLI + runtime:
+To try packages from a local checkout in an external project, build the workspace and link
+the CLI + runtime:
 
 ```bash
 pnpm install && pnpm build
@@ -155,11 +176,12 @@ npm link @indigodb/cli @indigodb/client
 
 ## Repository layout
 
-See [CLAUDE.md](CLAUDE.md) for the architecture. In short: `@indigodb/parser`
-parses `.indigo`, `@indigodb/core` resolves it into a relational IR, and the
-`migrator` / `generator` / `docs` / `client` / `studio` all consume that IR.
+See [CLAUDE.md](CLAUDE.md) for the architecture. In short: `@indigodb/compiler`
+(Rust → WASM) and `@indigodb/parser` parse `.indigo`, `@indigodb/core` resolves it into
+a relational IR, and `migrator` / `generator` / `client` / `realtime` / `react` / `studio`
+/ `cli` build on that IR.
 
 ## Status
 
-MVP. Post-MVP: nested `include`/writes in the client, MySQL/SQLite dialects,
-a dedicated `@indigodb/nestjs` module, and npm publishing.
+Pre-release candidate on PostgreSQL (Node 22+). Planned post-1.0: MySQL/SQLite dialects
+and framework integration modules.

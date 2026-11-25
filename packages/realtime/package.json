@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/realtime",
   "version": "0.0.1",
+  "description": "PostgreSQL WAL logical-replication SSE engine, presence/broadcast channels, and observability for IndigoDB.",
+  "keywords": ["indigodb", "realtime", "sse", "presence", "broadcast", "postgresql", "wal"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

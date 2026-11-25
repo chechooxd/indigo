@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/client",
   "version": "0.0.1",
+  "description": "Type-safe PostgreSQL ORM runtime and browser-safe realtime SDK for IndigoDB.",
+  "keywords": ["indigodb", "client", "orm", "postgresql", "realtime", "typescript"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

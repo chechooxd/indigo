@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/parser",
   "version": "0.0.1",
+  "description": "Parser wrapper around the IndigoDB WebAssembly compiler.",
+  "keywords": ["indigodb", "parser", "schema", "orm", "postgresql"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

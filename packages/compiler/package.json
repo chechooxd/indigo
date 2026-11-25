@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/compiler",
   "version": "0.0.1",
+  "description": "WebAssembly compiler for the IndigoDB (.indigo) schema language.",
+  "keywords": ["indigodb", "compiler", "wasm", "schema", "orm", "postgresql"],
   "license": "MIT",
   "publishConfig": {
     "access": "public"

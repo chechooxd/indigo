@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/migrator",
   "version": "0.0.1",
+  "description": "PostgreSQL schema diffing, DDL migration generator, and catalog introspector for IndigoDB.",
+  "keywords": ["indigodb", "migrations", "ddl", "introspection", "orm", "postgresql"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

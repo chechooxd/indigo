@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/generator",
   "version": "0.0.1",
+  "description": "Typed TypeScript ORM client code generator for IndigoDB schemas.",
+  "keywords": ["indigodb", "codegen", "generator", "typescript", "orm", "postgresql"],
   "files": ["dist"],
   "license": "MIT",
   "publishConfig": {

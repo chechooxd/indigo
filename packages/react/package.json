@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/react",
   "version": "0.0.1",
+  "description": "Browser-safe React hooks (useLiveTable, useChannel) for IndigoDB realtime.",
+  "keywords": ["indigodb", "react", "hooks", "realtime", "presence", "broadcast"],
   "license": "MIT",
   "publishConfig": {
     "access": "public"

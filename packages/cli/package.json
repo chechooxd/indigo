@@ -1,6 +1,8 @@
 {
   "name": "@indigodb/cli",
   "version": "0.0.1",
+  "description": "Command-line interface for IndigoDB (init, db push/pull, migrate, generate, realtime, studio).",
+  "keywords": ["indigodb", "cli", "orm", "migrations", "studio", "postgresql"],
   "files": [
     "dist"
   ],
