@@ -12,12 +12,19 @@
  * `packages/client/README.md`'s "Browser usage" section for the contract
  * this package builds on.
  */
-export { createLiveSubscription, browserTransport } from "@indigodb/client/realtime";
+export { createLiveSubscription, browserTransport, createChannel } from "@indigodb/client/realtime";
 export type {
   LiveSubscription,
   LiveSubscriptionOptions,
   LiveSubscriptionStatus,
   LiveSubscriptionError,
+  RealtimeChannel,
+  ChannelOptions,
+  ChannelStatus,
+  PresenceMember,
+  BroadcastMessage,
 } from "@indigodb/client/realtime";
 export { useLiveTable } from "./use-live-table.js";
 export type { UseLiveTableOptions, UseLiveTableResult } from "./use-live-table.js";
+export { useChannel } from "./use-channel.js";
+export type { UseChannelOptions, UseChannelResult } from "./use-channel.js";

@@ -23,7 +23,36 @@
  */
 
 import type { RealtimeEvent } from "@indigodb/realtime";
-export { REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime/protocol";
+import {
+  REALTIME_PATH,
+  REALTIME_LOG_PATH,
+  REALTIME_CHANNELS_PATH,
+  REALTIME_BROADCAST_PATH,
+  REALTIME_PRESENCE_PATH,
+  REALTIME_METRICS_PATH,
+} from "@indigodb/realtime/protocol";
+export {
+  REALTIME_PATH,
+  REALTIME_LOG_PATH,
+  REALTIME_CHANNELS_PATH,
+  REALTIME_BROADCAST_PATH,
+  REALTIME_PRESENCE_PATH,
+  REALTIME_METRICS_PATH,
+};
+export type {
+  PresenceMember,
+  PresenceEvent,
+  ChannelReady,
+  BroadcastMessage,
+  RealtimeMetrics,
+  RealtimeTelemetryEvent,
+} from "@indigodb/realtime/protocol";
+import type {
+  PresenceMember,
+  PresenceEvent,
+  ChannelReady,
+  BroadcastMessage,
+} from "@indigodb/realtime/protocol";
 import { LIVE_DEBOUNCE_MS } from "./live.js";
 export { LIVE_DEBOUNCE_MS } from "./live.js";
 export type { LiveStatus } from "./live.js";
@@ -648,4 +677,265 @@ export function browserTransport(path?: string): RealtimeTransport {
     );
   }
   return new SseTransport(win.location.origin, path);
+}
+
+// ─── Ephemeral Channels (Presence + Broadcast, browser-safe) ─────────────────
+
+export type ChannelStatus = "idle" | "connecting" | "connected" | "error" | "closed";
+
+export interface ChannelOptions {
+  /** Server origin (e.g. `http://localhost:4477` or `window.location.origin`). */
+  baseUrl: string;
+  /** Room/channel identifier (`^[A-Za-z0-9_.:-]{1,128}$`). */
+  channel: string;
+  /** Caller identifier used for presence tracking and disconnect cleanup. */
+  clientId: string;
+  /** Optional extra headers (e.g. `Authorization`) sent on SSE & POST requests. */
+  headers?: Record<string, string>;
+  /** Custom `fetch` implementation (defaults to `globalThis.fetch`). */
+  fetch?: typeof globalThis.fetch;
+  channelsPath?: string;
+  broadcastPath?: string;
+  presencePath?: string;
+}
+
+export interface RealtimeChannel {
+  /** Stable snapshot for `useSyncExternalStore`. */
+  getStatus(): ChannelStatus;
+  /** Stable snapshot array for `useSyncExternalStore`; replaced only when presence changes. */
+  getMembers(): readonly PresenceMember[];
+  /** Lazy lifecycle subscription (connects on first listener, closes stream on last). */
+  subscribe(onChange: () => void): Unsubscribe;
+  /** Subscribes to broadcast messages for `event` (or `"*"` for all events). */
+  onBroadcast<Payload = unknown>(
+    event: string,
+    handler: (message: BroadcastMessage<Payload>) => void,
+  ): Unsubscribe;
+  /** Sends an ephemeral broadcast message to all subscribers on this channel. */
+  broadcast<Payload = unknown>(event: string, payload?: Payload): Promise<{ delivered: number }>;
+  /** Publishes or updates this client's presence state on the channel. */
+  track(state?: Record<string, unknown>): Promise<PresenceMember>;
+  /** Explicitly removes this client from the channel's presence list. */
+  untrack(): Promise<void>;
+  /** Permanently closes the channel and aborts its SSE stream. */
+  close(): void;
+}
+
+const EMPTY_MEMBERS: readonly PresenceMember[] = Object.freeze([]);
+
+/**
+ * Browser-safe ephemeral channel client over HTTP SSE + POST. Zero `pg` or
+ * Node built-in imports. Snapshot getters (`getStatus`, `getMembers`) return
+ * stable identities safe for React `useSyncExternalStore`.
+ */
+export function createChannel(options: ChannelOptions): RealtimeChannel {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const channelsPath = options.channelsPath ?? REALTIME_CHANNELS_PATH;
+  const broadcastPath = options.broadcastPath ?? REALTIME_BROADCAST_PATH;
+  const presencePath = options.presencePath ?? REALTIME_PRESENCE_PATH;
+  const baseHeaders = options.headers ?? {};
+
+  let status: ChannelStatus = "idle";
+  let members: readonly PresenceMember[] = EMPTY_MEMBERS;
+  const changeListeners = new Set<() => void>();
+  const broadcastHandlers = new Map<string, Set<(msg: BroadcastMessage<unknown>) => void>>();
+  let controller: AbortController | null = null;
+  let stopped = false;
+
+  const notify = (): void => {
+    for (const fn of [...changeListeners]) fn();
+  };
+
+  const setStatus = (next: ChannelStatus): void => {
+    if (status === next) return;
+    status = next;
+    notify();
+  };
+
+  const setMembers = (next: PresenceMember[]): void => {
+    members = Object.freeze(next);
+    notify();
+  };
+
+  const dispatchFrame = (rawFrame: string): void => {
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of rawFrame.split("\n")) {
+      if (line.startsWith(":") || line === "") continue;
+      const sep = line.indexOf(":");
+      const field = sep === -1 ? line : line.slice(0, sep);
+      let value = sep === -1 ? "" : line.slice(sep + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "event") eventName = value;
+      else if (field === "data") dataLines.push(value);
+    }
+    if (dataLines.length === 0) return;
+    const rawData = dataLines.join("\n");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawData);
+    } catch {
+      return;
+    }
+
+    if (eventName === "channel_ready") {
+      const ready = parsed as ChannelReady;
+      setMembers(Array.isArray(ready.members) ? ready.members : []);
+      setStatus("connected");
+    } else if (eventName === "presence_join" || eventName === "presence_update") {
+      const ev = parsed as PresenceEvent;
+      const next = members.filter((m) => m.clientId !== ev.member.clientId);
+      next.push(ev.member);
+      setMembers(next);
+    } else if (eventName === "presence_leave") {
+      const ev = parsed as PresenceEvent;
+      setMembers(members.filter((m) => m.clientId !== ev.member.clientId));
+    } else if (eventName === "broadcast") {
+      const msg = parsed as BroadcastMessage<unknown>;
+      const exact = broadcastHandlers.get(msg.event);
+      if (exact) for (const fn of [...exact]) fn(msg);
+      const wild = broadcastHandlers.get("*");
+      if (wild) for (const fn of [...wild]) fn(msg);
+    }
+  };
+
+  const startStream = (): void => {
+    if (controller || status === "closed") return;
+    stopped = false;
+    const ctrl = new AbortController();
+    controller = ctrl;
+    setStatus("connecting");
+
+    const url = new URL(channelsPath, options.baseUrl);
+    url.searchParams.set("channel", options.channel);
+    url.searchParams.set("clientId", options.clientId);
+
+    const run = async (): Promise<void> => {
+      let retryMs = 500;
+      while (!stopped && !ctrl.signal.aborted) {
+        try {
+          const res = await fetchImpl(url, {
+            signal: ctrl.signal,
+            headers: { accept: "text/event-stream", ...baseHeaders },
+          });
+          if (!res.ok) {
+            setStatus("error");
+            if (!isTransientHttpStatus(res.status)) return;
+            throw new Error(`channel subscribe failed: HTTP ${res.status}`);
+          }
+          if (!res.body) throw new Error("channel subscribe failed: empty body");
+          retryMs = 500;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+            let idx: number;
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+              const frame = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              dispatchFrame(frame);
+            }
+          }
+        } catch {
+          if (stopped || ctrl.signal.aborted) return;
+          setStatus("error");
+        }
+        if (stopped || ctrl.signal.aborted) return;
+        await sleep(retryMs);
+        retryMs = Math.min(retryMs * 2, 15_000);
+      }
+    };
+    void run();
+  };
+
+  const stopStream = (): void => {
+    stopped = true;
+    controller?.abort();
+    controller = null;
+  };
+
+  const postJson = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+    const url = new URL(path, options.baseUrl);
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...baseHeaders },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`realtime channel request failed: HTTP ${res.status}`);
+    }
+    return (await res.json()) as Record<string, unknown>;
+  };
+
+  return {
+    getStatus: () => status,
+    getMembers: () => members,
+
+    subscribe(onChange) {
+      changeListeners.add(onChange);
+      if (status === "idle") startStream();
+      return () => {
+        changeListeners.delete(onChange);
+        if (changeListeners.size === 0 && status !== "closed") {
+          stopStream();
+          status = "idle";
+          members = EMPTY_MEMBERS;
+        }
+      };
+    },
+
+    onBroadcast(event, handler) {
+      let set = broadcastHandlers.get(event);
+      if (!set) {
+        set = new Set();
+        broadcastHandlers.set(event, set);
+      }
+      const wrapped = handler as (msg: BroadcastMessage<unknown>) => void;
+      set.add(wrapped);
+      return () => {
+        set?.delete(wrapped);
+        if (set?.size === 0) broadcastHandlers.delete(event);
+      };
+    },
+
+    async broadcast(event, payload) {
+      const json = await postJson(broadcastPath, {
+        channel: options.channel,
+        event,
+        payload: payload ?? null,
+        senderId: options.clientId,
+      });
+      return { delivered: typeof json.delivered === "number" ? json.delivered : 0 };
+    },
+
+    async track(state = {}) {
+      const json = await postJson(presencePath, {
+        channel: options.channel,
+        clientId: options.clientId,
+        action: "track",
+        state,
+      });
+      return json.member as PresenceMember;
+    },
+
+    async untrack() {
+      await postJson(presencePath, {
+        channel: options.channel,
+        clientId: options.clientId,
+        action: "untrack",
+      });
+    },
+
+    close() {
+      if (status === "closed") return;
+      stopStream();
+      changeListeners.clear();
+      broadcastHandlers.clear();
+      members = EMPTY_MEMBERS;
+      status = "closed";
+    },
+  };
 }

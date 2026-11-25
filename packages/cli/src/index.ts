@@ -35,7 +35,15 @@ import { SCHEMA_TEMPLATE, ENV_TEMPLATE } from "./template.js";
 import { startStudio } from "./studio-server.js";
 import { migrateDev, migrateDeploy, migrateStatus, migrateResolve } from "./migrate-runner.js";
 import { createServer } from "node:http";
-import { RealtimeEngine, REALTIME_PATH, REALTIME_LOG_PATH } from "@indigodb/realtime";
+import {
+  RealtimeEngine,
+  REALTIME_PATH,
+  REALTIME_LOG_PATH,
+  REALTIME_CHANNELS_PATH,
+  REALTIME_BROADCAST_PATH,
+  REALTIME_PRESENCE_PATH,
+  REALTIME_METRICS_PATH,
+} from "@indigodb/realtime";
 
 const program = new Command();
 
@@ -273,6 +281,22 @@ program
       }
       if (url.pathname === REALTIME_LOG_PATH) {
         void engine.handleLogRequest(req, res);
+        return;
+      }
+      if (url.pathname === REALTIME_CHANNELS_PATH) {
+        void engine.handleChannelRequest(req, res);
+        return;
+      }
+      if (url.pathname === REALTIME_BROADCAST_PATH) {
+        void engine.handleBroadcastRequest(req, res);
+        return;
+      }
+      if (url.pathname === REALTIME_PRESENCE_PATH) {
+        void engine.handlePresenceRequest(req, res);
+        return;
+      }
+      if (url.pathname === REALTIME_METRICS_PATH) {
+        engine.handleMetricsRequest(req, res);
         return;
       }
       res.writeHead(404, { "content-type": "application/json" });

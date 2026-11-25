@@ -10,11 +10,26 @@
  */
 
 export { RealtimeEngine } from "./engine.js";
-export type { RealtimeEngineOptions, RealtimeLogDb, RealtimeLogQueryResult } from "./engine.js";
+export type {
+  RealtimeEngineOptions,
+  RealtimeLogDb,
+  RealtimeLogQueryResult,
+  ChannelAuthContext,
+} from "./engine.js";
 export { PgNotifySource } from "./source.js";
 export { WalSource, resolveSlotName } from "./wal-source.js";
 export type { WalSourceOptions } from "./wal-source.js";
-export { REALTIME_PATH, REALTIME_LOG_PATH, REALTIME_LOG_PAGE_SIZE } from "./protocol.js";
+export {
+  REALTIME_PATH,
+  REALTIME_LOG_PATH,
+  REALTIME_CHANNELS_PATH,
+  REALTIME_BROADCAST_PATH,
+  REALTIME_PRESENCE_PATH,
+  REALTIME_METRICS_PATH,
+  REALTIME_LOG_PAGE_SIZE,
+  DEFAULT_PRESENCE_TTL_MS,
+  MAX_CHANNEL_BODY_BYTES,
+} from "./protocol.js";
 export type {
   RealtimeEvent,
   RealtimeOp,
@@ -22,6 +37,12 @@ export type {
   RealtimeSource,
   RealtimeWakeEvent,
   RealtimeLogPage,
+  PresenceMember,
+  PresenceEvent,
+  ChannelReady,
+  BroadcastMessage,
+  RealtimeMetrics,
+  RealtimeTelemetryEvent,
 } from "./protocol.js";
 export { mintHandle, verifyHandle, DEFAULT_HANDLE_TTL_SECONDS } from "./handle.js";
 export type { HandlePayload } from "./handle.js";

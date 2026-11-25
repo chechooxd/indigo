@@ -117,5 +117,101 @@ export const REALTIME_PATH = "/api/realtime";
 /** HTTP path the engine serves the cacheable `GET ?handle&offset` log page on. */
 export const REALTIME_LOG_PATH = "/api/realtime/log";
 
+/** HTTP path for ephemeral channel SSE subscriptions (`GET ?channel=<name>[&clientId=<id>]`). */
+export const REALTIME_CHANNELS_PATH = "/api/realtime/channels";
+
+/** HTTP path for ephemeral channel broadcast publishing (`POST`). */
+export const REALTIME_BROADCAST_PATH = "/api/realtime/channels/broadcast";
+
+/** HTTP path for ephemeral channel presence tracking (`POST`). */
+export const REALTIME_PRESENCE_PATH = "/api/realtime/channels/presence";
+
+/** HTTP path for structured engine metrics (`GET`). */
+export const REALTIME_METRICS_PATH = "/api/realtime/metrics";
+
 /** Server-fixed page size for `GET ?handle&offset` — never client-supplied. */
 export const REALTIME_LOG_PAGE_SIZE = 500;
+
+/** Default presence entry TTL before automatic expiry (ms). */
+export const DEFAULT_PRESENCE_TTL_MS = 30_000;
+
+/** Maximum JSON body size accepted by broadcast/presence POST routes (bytes). */
+export const MAX_CHANNEL_BODY_BYTES = 65_536;
+
+/** One online member tracked inside an ephemeral presence channel. */
+export interface PresenceMember {
+  clientId: string;
+  state: Record<string, unknown>;
+  joinedAt: string;
+  updatedAt: string;
+}
+
+/** Initial SSE `channel_ready` frame payload for a channel subscriber. */
+export interface ChannelReady {
+  channel: string;
+  members: PresenceMember[];
+}
+
+/** Payload of an SSE `presence_join`, `presence_update`, or `presence_leave` frame. */
+export interface PresenceEvent {
+  channel: string;
+  member: PresenceMember;
+}
+
+/** Payload of an SSE `broadcast` frame. */
+export interface BroadcastMessage<Payload = unknown> {
+  channel: string;
+  event: string;
+  payload: Payload;
+  senderId?: string;
+  ts: string;
+}
+
+/**
+ * Operational metrics snapshot returned by `RealtimeEngine.getMetrics()` and
+ * `GET /api/realtime/metrics`. Deliberately carries NO row payloads, NO handles,
+ * NO secrets, and NO connection strings.
+ */
+export interface RealtimeMetrics {
+  started: boolean;
+  startedAt: string | null;
+  uptimeMs: number;
+  models: string[];
+  subscribers: {
+    active: number;
+    totalConnected: number;
+    totalEvicted: number;
+  };
+  events: {
+    dispatched: number;
+    byTable: Record<string, number>;
+    byOp: Record<RealtimeOp, number>;
+    lastEventAt: string | null;
+    lastLsn: string | null;
+  };
+  log: {
+    requests: number;
+    sealedPages: number;
+    headPages: number;
+    unauthorized: number;
+    errors: number;
+  };
+  channels: {
+    activeChannels: number;
+    activeSubscribers: number;
+    activePresenceMembers: number;
+    broadcastsSent: number;
+  };
+  errors: number;
+}
+
+/** Structured telemetry event emitted to `RealtimeEngineOptions.onTelemetry`. */
+export type RealtimeTelemetryEvent =
+  | { kind: "subscriber_connect"; tables: string[] }
+  | { kind: "subscriber_disconnect"; tables: string[] }
+  | { kind: "subscriber_evicted"; buffered: number; cap: number; scope: "table" | "channel" }
+  | { kind: "event_dispatched"; table: string; op: RealtimeOp; lsn?: string }
+  | { kind: "log_page"; table: string; count: number; sealed: boolean }
+  | { kind: "broadcast"; channel: string; event: string; delivered: number }
+  | { kind: "presence_change"; channel: string; action: "join" | "update" | "leave"; clientId: string }
+  | { kind: "error"; message: string };
