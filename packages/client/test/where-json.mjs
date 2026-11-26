@@ -168,8 +168,14 @@ await check("PGlite round-trip: jsonb path equals/gt comparisons round-trip", as
       fields: { id: { db: "id", pk: true }, metadata: { db: "metadata", json: true } },
     };
     const delegate = new ModelDelegate(tMeta, exec);
-    await delegate.create({ data: { metadata: JSON.stringify({ status: "active", score: 5 }) } });
-    await delegate.create({ data: { metadata: JSON.stringify({ status: "inactive", score: 20 }) } });
+    await delegate.create({ data: { metadata: { status: "active", score: 5, tags: ["a", "b"] } } });
+    await delegate.create({ data: { metadata: ["top-level-array", 42] } });
+    await delegate.create({ data: { metadata: { status: "inactive", score: 20 } } });
+
+    const arrayRows = await delegate.findMany({
+      where: { metadata: { path: [], jsonContains: ["top-level-array"] } },
+    });
+    assert(arrayRows.length === 1, `expected 1 row for top-level JSON array, got ${arrayRows.length}`);
 
     const equalsRows = await delegate.findMany({
       where: { metadata: { path: ["status"], equals: "active" } },

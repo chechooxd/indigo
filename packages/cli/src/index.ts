@@ -22,6 +22,7 @@ import {
   resolveOutputPath,
   writePulledSchema,
   assertLogicalReplication,
+  assertReplicationSlotDatabase,
   assertRealtimeSecretPresent,
   assertStudioAuthForHost,
   resolveStudioReadOnly,
@@ -132,7 +133,10 @@ db
     const client = new pg.Client({ connectionString });
     try {
       await client.connect();
-      if (hasRealtime) await assertLogicalReplication(client);
+      if (hasRealtime) {
+        await assertLogicalReplication(client);
+        await assertReplicationSlotDatabase(client);
+      }
       for (const stmt of preSql) await client.query(stmt);
       await client.query(sql);
       console.log("✅ Database synced.");
@@ -213,6 +217,7 @@ migrate
       try {
         await client.connect();
         await assertLogicalReplication(client);
+        await assertReplicationSlotDatabase(client);
       } finally {
         await client.end();
       }

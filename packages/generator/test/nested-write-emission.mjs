@@ -114,6 +114,18 @@ check("composite-key relation meta unchanged: still only { target, composite: tr
   deepStrictEqual(metaBlock.includes('"order": { target: "Order", composite: true }'), true);
 });
 
+check("to-one fkSide required FK allows passing relation op without scalar FK in CreateInput", () => {
+  deepStrictEqual(output.includes("export interface PostCreateBase {"), true);
+  deepStrictEqual(output.includes("export type PostCreateInput = PostCreateBase &"), true);
+  deepStrictEqual(output.includes("authorId?: undefined; author: ToOneRelationInput<UserCreateInput, WhereInput<User>>"), true);
+});
+
+check("non-fkSide User.posts omits both child FK scalar and its fkSide relation from child create input", () => {
+  const userCreate = block("export interface UserCreateInput {");
+  deepStrictEqual(userCreate.includes("PostCreateBase"), true);
+  deepStrictEqual(userCreate.includes("authorId"), false);
+});
+
 if (failures > 0) {
   console.error(`\ngenerator regression: ${failures} failure(s)`);
   process.exit(1);

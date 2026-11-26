@@ -105,6 +105,7 @@ fn resolve_column(field: &Field, is_enum: bool) -> ResolvedColumn {
         db_name: field_db_name(field),
         column_type: field.field_type.name.clone(),
         is_enum,
+        list: field.field_type.list,
         nullable: field.field_type.optional,
         is_pk: has_attr(&field.attributes, "id"),
         unique: has_attr(&field.attributes, "unique"),

@@ -19,8 +19,8 @@ import type {
   AllowRule,
 } from "@indigodb/core";
 import {
-  mapScalarToPg,
   quoteIdent,
+  columnSqlType,
   renderColumn,
   renderDefaultClause,
   renderDropTrigger,
@@ -429,6 +429,7 @@ function dropForeignKey(table: ResolvedTable, fk: ForeignKey): string {
 function columnSignature(col: ResolvedColumn, enums: ResolvedEnum[]): string {
   return JSON.stringify({
     type: col.type,
+    list: col.list ?? false,
     nullable: col.nullable,
     autoincrement: col.autoincrement,
     default: renderDefaultClause(col, enums) ?? null,
@@ -445,11 +446,14 @@ function alterColumn(
   const t = quoteIdent(table.dbName);
   const c = quoteIdent(next.dbName);
 
-  if (prev.type !== next.type) {
+  if (prev.type !== next.type || (prev.list ?? false) !== (next.list ?? false)) {
+    const nextPgType = columnSqlType(next);
+    const prevLabel = `${prev.type}${prev.list ? "[]" : ""}`;
+    const nextLabel = `${next.type}${next.list ? "[]" : ""}`;
     stmts.push(
       forced(
-        `ALTER TABLE ${t} ALTER COLUMN ${c} TYPE ${mapScalarToPg(next.type)} USING ${c}::${mapScalarToPg(next.type)};`,
-        `ALTER COLUMN TYPE ${table.name}.${next.name} (${prev.type} → ${next.type})`,
+        `ALTER TABLE ${t} ALTER COLUMN ${c} TYPE ${nextPgType} USING ${c}::${nextPgType};`,
+        `ALTER COLUMN TYPE ${table.name}.${next.name} (${prevLabel} → ${nextLabel})`,
       ),
     );
   }
@@ -511,8 +515,22 @@ function indexShape(index: ResolvedIndex): string {
   return `${index.unique ? "u" : "i"}:${index.columns.join(",")}:${index.expression ?? ""}`;
 }
 
+/** Strips a single balanced outer `(...)` wrapper when PostgreSQL's `pg_get_expr` adds one (e.g. `(deleted_at IS NULL)` vs `deleted_at IS NULL`). */
+function stripOuterParens(expr: string): string {
+  const s = expr.trim();
+  if (!s.startsWith("(") || !s.endsWith(")")) return s;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")") depth--;
+    if (depth === 0 && i < s.length - 1) return s;
+  }
+  return depth === 0 ? s.slice(1, -1).trim() : s;
+}
+
 function indexDefinition(index: ResolvedIndex): string {
-  return `${indexShape(index)}|${index.type ?? ""}|${index.where ?? ""}`;
+  const where = index.where ? stripOuterParens(index.where) : "";
+  return `${indexShape(index)}|${index.type ?? ""}|${where}`;
 }
 
 function groupByShape(indexes: ResolvedIndex[]): Map<string, ResolvedIndex[]> {
@@ -848,14 +866,16 @@ function diffTable(
     }
   }
 
-  for (const idx of nextResidual) {
-    if (!pairedNextKeys.has(indexKey(idx))) stmts.push(safe(createIndex(next, idx)));
-  }
+  // Drop removed indexes BEFORE creating added ones so a same-named
+  // unpaired replacement never collides with `relation "..." already exists`.
   for (const idx of prevResidual) {
     if (!pairedPrevKeys.has(indexKey(idx))) {
       const original = origIdxByKey.get(indexKey(idx)) ?? idx;
       stmts.push(safe(`DROP INDEX ${quoteIdent(indexName(prevOriginal, original))};`));
     }
+  }
+  for (const idx of nextResidual) {
+    if (!pairedNextKeys.has(indexKey(idx))) stmts.push(safe(createIndex(next, idx)));
   }
 
   // Realtime toggled (@@realtime added or removed): REPLICA IDENTITY follows

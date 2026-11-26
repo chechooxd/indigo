@@ -7,6 +7,7 @@ import { createHmac } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
 import { parse, resolve, IndigoParseError, validate, printSchema } from "@indigodb/core";
 import type { Schema, ResolvedSchema } from "@indigodb/core";
+import { resolveSlotName } from "@indigodb/migrator";
 
 /**
  * Minimal query surface `assertLogicalReplication` needs — satisfied by
@@ -157,6 +158,30 @@ export async function assertLogicalReplication(client: ReplicationPreflightClien
     console.error(`❌ The connecting role${row?.name ? ` "${row.name}"` : ""} lacks the REPLICATION privilege @@realtime needs. Run:`);
     console.error(`     ALTER ROLE ${row?.name ?? "<user>"} REPLICATION;`);
     console.error(`   then re-run this command. Nothing was applied.`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Checks whether the configured logical-replication slot name is already held
+ * by a DIFFERENT database on the same PostgreSQL cluster. Since
+ * `pg_replication_slots` is cluster-wide, a naive `WHERE NOT EXISTS` would
+ * silently skip creating a slot in the current database.
+ */
+export async function assertReplicationSlotDatabase(client: ReplicationPreflightClient): Promise<void> {
+  const slot = resolveSlotName();
+  const result = await client.query(
+    "SELECT database FROM pg_replication_slots WHERE slot_name = $1 AND database <> current_database();",
+    [slot],
+  );
+  const otherDb = (result.rows[0] as { database?: string } | undefined)?.database;
+  if (otherDb) {
+    console.error(
+      `❌ Replication slot "${slot}" already belongs to database "${otherDb}" on this PostgreSQL server.`,
+    );
+    console.error(
+      `   Postgres logical replication slots are cluster-wide. Set a unique INDIGODB_REALTIME_SLOT for this database and retry.`,
+    );
     process.exit(1);
   }
 }

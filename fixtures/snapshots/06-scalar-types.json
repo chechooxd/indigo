@@ -246,6 +246,7 @@
             "dbName": "tags",
             "type": "String",
             "isEnum": false,
+            "list": true,
             "nullable": false,
             "isPk": false,
             "unique": false,

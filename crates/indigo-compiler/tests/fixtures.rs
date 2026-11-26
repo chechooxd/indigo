@@ -232,6 +232,19 @@ fn implicit_many_to_many_is_rejected_but_explicit_shapes_are_not() {
          Table PostTag { postId Int tagId Int post Post @relation(fields: [postId], references: [id]) tag Tag @relation(fields: [tagId], references: [id]) }",
     );
     assert!(join_model.iter().all(|e| !e.message.contains("many-to-many")));
+
+    let self_one_to_many = validate_src(
+        "Table Category { id Int @id parentId Int? parent Category? @relation(\"CatParent\", fields: [parentId], references: [id]) children Category[] @relation(\"CatParent\") }",
+    );
+    assert!(self_one_to_many.is_empty(), "named 1:N self-relation with list inverse must pass, got: {self_one_to_many:?}");
+
+    let self_m2m = validate_src(
+        "Table Person { id Int @id friends Person[] befriendedBy Person[] }",
+    );
+    assert!(
+        self_m2m.iter().any(|e| e.message.contains("many-to-many")),
+        "two list fields on self-relation without FK must be rejected as implicit M:N, got: {self_m2m:?}"
+    );
 }
 
 #[test]

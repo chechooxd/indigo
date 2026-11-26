@@ -9,7 +9,7 @@
  */
 
 import { strictEqual, ok } from "node:assert";
-import { assertLogicalReplication } from "../dist/util.js";
+import { assertLogicalReplication, assertReplicationSlotDatabase } from "../dist/util.js";
 
 let failures = 0;
 
@@ -111,6 +111,30 @@ await check("wal_level check runs BEFORE the role check: a wal_level failure nev
   };
   await captureExit(() => assertLogicalReplication(client));
   strictEqual(roleQueried, false, "pg_roles must not be queried once wal_level already failed");
+});
+
+await check("assertReplicationSlotDatabase: passes when slot is absent or owned by current database", async () => {
+  const client = {
+    query: async (sql) => {
+      if (sql.includes("pg_replication_slots")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const { exitCode } = await captureExit(() => assertReplicationSlotDatabase(client));
+  strictEqual(exitCode, undefined);
+});
+
+await check("assertReplicationSlotDatabase: exits 1 naming other database and INDIGODB_REALTIME_SLOT", async () => {
+  const client = {
+    query: async (sql) => {
+      if (sql.includes("pg_replication_slots")) return { rows: [{ database: "other_db" }] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const { exitCode, errors } = await captureExit(() => assertReplicationSlotDatabase(client));
+  strictEqual(exitCode, 1);
+  ok(errors.some((l) => l.includes("other_db")), errors.join("\n"));
+  ok(errors.some((l) => l.includes("INDIGODB_REALTIME_SLOT")), errors.join("\n"));
 });
 
 if (failures > 0) {

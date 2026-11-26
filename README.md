@@ -101,8 +101,8 @@ await db.$disconnect();
 
 The client supports `findMany`, `findFirst`, `findUnique`, `create`, `createMany`,
 `update`, `updateMany`, `upsert`, `delete`, `deleteMany`, `count`, `aggregate`,
-`groupBy`, `explain`, `$transaction`, `$withSession` (for RLS `@@allow`),
-`$extends`, `$queryRaw`, cursor pagination, relation `include`/nested writes,
+`groupBy`, `explain`, `$transaction`, `$auth` (for RLS `@@allow`),
+`extensions` (query middleware), `$queryRaw`, cursor pagination, relation `include`/nested writes,
 driver adapters (`pg` and `PGlite`), and rich `where` filters (logical `AND`/`OR`/`NOT`,
 relation filters, JSON path filters, case-insensitive string operators).
 

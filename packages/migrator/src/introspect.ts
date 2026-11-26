@@ -28,6 +28,9 @@ import type {
   ResolvedEnumMember,
   ForeignKey,
   ResolvedIndex,
+  AllowAction,
+  AllowOperand,
+  AllowRule,
 } from "@indigodb/core";
 import { resolveSlotName } from "./postgres.js";
 
@@ -82,6 +85,7 @@ interface ColumnRow {
   table_name: string;
   column_name: string;
   ordinal_position: number;
+  data_type: string;
   udt_name: string;
   character_maximum_length: number | null;
   numeric_precision: number | null;
@@ -94,18 +98,16 @@ interface ColumnRow {
 interface InvertedType {
   type: string;
   isEnum: boolean;
+  list: boolean;
   nativeType?: { name: string; args: string[] };
 }
 
-/**
- * Inverts one column's PostgreSQL type back to its IndigoDB scalar (or enum
- * name), recovering a `nativeType` override for the three shapes outside the
- * plain inversion table. Throws — never guesses — for any other unrecognized
- * `udt_name`.
- */
-function invertColumnType(row: ColumnRow, tableDbName: string, enumNames: Set<string>): InvertedType {
-  const udt = row.udt_name;
-
+function invertScalarUdt(
+  udt: string,
+  row: ColumnRow,
+  tableDbName: string,
+  enumNames: Set<string>,
+): Omit<InvertedType, "list"> {
   if (udt === "varchar") {
     const len = row.character_maximum_length;
     return {
@@ -136,8 +138,22 @@ function invertColumnType(row: ColumnRow, tableDbName: string, enumNames: Set<st
   if (enumNames.has(udt)) return { type: udt, isEnum: true };
 
   throw new Error(
-    `introspectResolvedSchema: unmappable PostgreSQL type "${udt}" on column "${tableDbName}.${row.column_name}"`,
+    `introspectResolvedSchema: unmappable PostgreSQL type "${row.udt_name}" on column "${tableDbName}.${row.column_name}"`,
   );
+}
+
+/**
+ * Inverts one column's PostgreSQL type back to its IndigoDB scalar (or enum
+ * name), recovering array list-ness (`_text` -> `String[]`) and `nativeType`
+ * overrides. Throws — never guesses — for any unrecognized `udt_name`.
+ */
+function invertColumnType(row: ColumnRow, tableDbName: string, enumNames: Set<string>): InvertedType {
+  const udt = row.udt_name;
+  const isArray = row.data_type === "ARRAY" || (udt.startsWith("_") && !enumNames.has(udt));
+  if (isArray && udt.startsWith("_")) {
+    return { ...invertScalarUdt(udt.slice(1), row, tableDbName, enumNames), list: true };
+  }
+  return { ...invertScalarUdt(udt, row, tableDbName, enumNames), list: false };
 }
 
 // ─── Default parsing ─────────────────────────────────────────────────────────
@@ -208,7 +224,7 @@ WHERE n.nspname = $1 AND c.relkind = 'r'
 ORDER BY c.relname;`;
 
 const COLUMNS_SQL = `
-SELECT c.table_name, c.column_name, c.ordinal_position, c.udt_name,
+SELECT c.table_name, c.column_name, c.ordinal_position, c.data_type, c.udt_name,
        c.character_maximum_length, c.numeric_precision, c.numeric_scale,
        c.is_nullable, c.column_default, c.is_identity
 FROM information_schema.columns c
@@ -231,12 +247,12 @@ SELECT
   con.confdeltype,
   con.confupdtype,
   (
-    SELECT array_agg(a.attname ORDER BY u.ord)
+    SELECT array_agg(a.attname::text ORDER BY u.ord)
     FROM unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord)
     JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = u.attnum
   ) AS columns,
   (
-    SELECT array_agg(a.attname ORDER BY u.ord)
+    SELECT array_agg(a.attname::text ORDER BY u.ord)
     FROM unnest(con.confkey) WITH ORDINALITY AS u(attnum, ord)
     JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = u.attnum
   ) AS ref_columns
@@ -258,7 +274,7 @@ SELECT
   pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
   pg_get_expr(ix.indexprs, ix.indrelid) AS expressions,
   (
-    SELECT array_agg(a.attname ORDER BY u.ord)
+    SELECT array_agg(a.attname::text ORDER BY u.ord)
     FROM unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ord)
     JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = u.attnum
   ) AS columns
@@ -269,6 +285,12 @@ JOIN pg_am am ON am.oid = irel.relam
 JOIN pg_namespace n ON n.oid = trel.relnamespace
 WHERE n.nspname = $1
 ORDER BY trel.relname, irel.relname;`;
+
+const POLICY_SQL = `
+SELECT tablename AS table_name, policyname AS policy_name, cmd, qual, with_check
+FROM pg_policies
+WHERE schemaname = $1 AND policyname LIKE 'indigo_p_%'
+ORDER BY tablename, policyname;`;
 
 const ENUM_SQL = `
 SELECT t.typname AS enum_name, e.enumlabel AS label
@@ -292,13 +314,154 @@ SELECT tablename AS table_name
 FROM pg_publication_tables
 WHERE schemaname = $1 AND pubname = $2;`;
 
+// ─── RLS policy & SQL expression helpers ─────────────────────────────────────
+
+function stripOuterParens(expr: string): string {
+  let s = expr.trim();
+  while (s.startsWith("(") && s.endsWith(")")) {
+    let depth = 0;
+    let inSingle = false;
+    let inDouble = false;
+    let wrapsWhole = true;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inSingle) {
+        if (ch === "'" && s[i + 1] === "'") {
+          i++;
+        } else if (ch === "'") {
+          inSingle = false;
+        }
+        continue;
+      }
+      if (inDouble) {
+        if (ch === '"' && s[i + 1] === '"') {
+          i++;
+        } else if (ch === '"') {
+          inDouble = false;
+        }
+        continue;
+      }
+      if (ch === "'") inSingle = true;
+      else if (ch === '"') inDouble = true;
+      else if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0 && i < s.length - 1) {
+          wrapsWhole = false;
+          break;
+        }
+      }
+    }
+    if (!wrapsWhole || depth !== 0) break;
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function splitTopLevelEquals(expr: string): [string, string] | null {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (inSingle) {
+      if (ch === "'" && expr[i + 1] === "'") i++;
+      else if (ch === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"' && expr[i + 1] === '"') i++;
+      else if (ch === '"') inDouble = false;
+      continue;
+    }
+    if (ch === "'") inSingle = true;
+    else if (ch === '"') inDouble = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (depth === 0 && ch === "=" && expr[i - 1] !== "!" && expr[i - 1] !== "<" && expr[i - 1] !== ">") {
+      return [expr.slice(0, i).trim(), expr.slice(i + 1).trim()];
+    }
+  }
+  return null;
+}
+
+function stripTrailingCast(expr: string): string {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (inSingle) {
+      if (ch === "'" && expr[i + 1] === "'") i++;
+      else if (ch === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"' && expr[i + 1] === '"') i++;
+      else if (ch === '"') inDouble = false;
+      continue;
+    }
+    if (ch === "'") inSingle = true;
+    else if (ch === '"') inDouble = true;
+    else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (depth === 0 && ch === ":" && expr[i + 1] === ":") {
+      return expr.slice(0, i).trim();
+    }
+  }
+  return expr.trim();
+}
+
+function parsePolicyOperand(raw: string): AllowOperand | null {
+  const s = stripOuterParens(stripTrailingCast(stripOuterParens(raw)));
+  if (/^NULLIF\s*\(\s*current_setting\s*\(\s*'app\.user_id'(?:::text)?\s*,\s*true\s*\)\s*,\s*''(?:::text)?\s*\)$/i.test(s)) {
+    return { kind: "claim", name: "userId" };
+  }
+  if (s.startsWith("'") && s.endsWith("'")) {
+    return { kind: "string", value: unescapeSqlString(s.slice(1, -1)) };
+  }
+  if (s === "true") return { kind: "boolean", value: true };
+  if (s === "false") return { kind: "boolean", value: false };
+  if (/^-?\d+(?:\.\d+)?$/.test(s)) return { kind: "number", value: Number(s) };
+  if (s.startsWith('"') && s.endsWith('"')) {
+    return { kind: "field", name: s.slice(1, -1).replace(/""/g, '"') };
+  }
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) {
+    return { kind: "field", name: s };
+  }
+  return null;
+}
+
+function parsePolicyCondition(expr: string): { left: AllowOperand; right: AllowOperand } | null {
+  const stripped = stripOuterParens(expr);
+  const parts = splitTopLevelEquals(stripped);
+  if (!parts) {
+    const solo = parsePolicyOperand(stripped);
+    if (solo?.kind === "field") return { left: solo, right: { kind: "boolean", value: true } };
+    return null;
+  }
+  const left = parsePolicyOperand(parts[0]);
+  const right = parsePolicyOperand(parts[1]);
+  if (!left || !right) return null;
+  return { left, right };
+}
+
+function parseIndigoPolicyName(
+  policyName: string,
+  tableDbName: string,
+): { action: AllowAction; ordinal: number } | null {
+  const match = policyName.match(/^indigo_p_(.+)_(create|read|update|delete)_(\d+)$/);
+  if (!match || match[1] !== tableDbName) return null;
+  return { action: match[2] as AllowAction, ordinal: Number(match[3]) };
+}
+
 // ─── Assembly ────────────────────────────────────────────────────────────────
 
 /**
  * Reconstructs a `ResolvedSchema` from a live PostgreSQL catalog. Populated:
  * `tables[].{name(===dbName), dbName, columns, primaryKey, foreignKeys,
- * indexes, realtime?}`; `columns[].{name(===dbName), dbName, type, isEnum,
- * nullable, isPk, unique, autoincrement, default?, nativeType?}`;
+ * indexes, allow?, realtime?}`; `columns[].{name(===dbName), dbName, type,
+ * isEnum, list?, nullable, isPk, unique, autoincrement, default?, nativeType?}`;
  * `enums[].{name, values, members}` with member `name === dbName`.
  * Deliberately absent/empty: table/column `note`, `color`, `group`,
  * `relations: []`, `tableGroups: []`, `datasource` omitted — none of these
@@ -311,15 +474,16 @@ export async function introspectResolvedSchema(
   const schema = options.schema ?? "public";
   const exclude = new Set(options.exclude ?? ["_indigo_migrations", "_indigo_realtime_log"]);
 
-  const [tablesRes, columnsRes, pkRes, fkRes, indexRes, enumRes, publicationRes] = await Promise.all([
-    query(TABLES_SQL, [schema]),
-    query(COLUMNS_SQL, [schema]),
-    query(PK_SQL, [schema]),
-    query(FK_SQL, [schema]),
-    query(INDEX_SQL, [schema]),
-    query(ENUM_SQL, [schema]),
-    query(REALTIME_PUBLICATION_SQL, [schema, resolveSlotName()]),
-  ]);
+  // Run sequentially rather than via Promise.all: callers (such as `db pull`)
+  // pass a single `pg.Client`, which deprecates concurrent `client.query()` calls.
+  const tablesRes = await query(TABLES_SQL, [schema]);
+  const columnsRes = await query(COLUMNS_SQL, [schema]);
+  const pkRes = await query(PK_SQL, [schema]);
+  const fkRes = await query(FK_SQL, [schema]);
+  const indexRes = await query(INDEX_SQL, [schema]);
+  const enumRes = await query(ENUM_SQL, [schema]);
+  const publicationRes = await query(REALTIME_PUBLICATION_SQL, [schema, resolveSlotName()]);
+  const policyRes = await query(POLICY_SQL, [schema]);
 
   // ── Enums ──
   const enumsByName = new Map<string, ResolvedEnumMember[]>();
@@ -366,6 +530,7 @@ export async function introspectResolvedSchema(
       dbName: row.column_name,
       type: inverted.type,
       isEnum: inverted.isEnum,
+      ...(inverted.list ? { list: true } : {}),
       nullable: row.is_nullable === "YES",
       isPk: false, // populated below from the PK query
       unique: false, // populated below from the index query
@@ -435,6 +600,8 @@ export async function introspectResolvedSchema(
     const table = tables.get(row.table_name);
     if (!table) continue;
 
+    const predicate = row.predicate ? stripOuterParens(row.predicate) : null;
+
     if (row.has_expression) {
       const exprIndex: ResolvedIndex = {
         columns: [],
@@ -444,7 +611,7 @@ export async function introspectResolvedSchema(
       if (row.access_method !== "btree") {
         exprIndex.type = row.access_method as ResolvedIndex["type"];
       }
-      if (row.predicate) exprIndex.where = row.predicate;
+      if (predicate) exprIndex.where = predicate;
       if (row.expressions) exprIndex.expression = row.expressions;
       table.indexes.push(exprIndex);
       continue;
@@ -454,9 +621,9 @@ export async function introspectResolvedSchema(
     // Single-column unique index whose name matches the DERIVED single-column
     // `@unique` formula is indistinguishable from a single-column `@@unique`
     // — classify as `col.unique`, not a listed `table.indexes` entry.
-    // Partial unique indexes (`row.predicate != null`) are NEVER folded into
+    // Partial unique indexes (`predicate != null`) are NEVER folded into
     // `col.unique`, because they do not enforce full-table uniqueness.
-    if (row.is_unique && columns.length === 1 && !row.predicate) {
+    if (row.is_unique && columns.length === 1 && !predicate) {
       const singleColDerived = derivedIndexName(table.dbName, columns, true);
       if (row.index_name === singleColDerived) {
         const col = table.columns.find((c) => c.dbName === columns[0]);
@@ -469,7 +636,7 @@ export async function introspectResolvedSchema(
     if (row.access_method !== "btree") {
       index.type = row.access_method as ResolvedIndex["type"];
     }
-    if (row.predicate) index.where = row.predicate;
+    if (predicate) index.where = predicate;
     const derived = derivedIndexName(table.dbName, columns, row.is_unique);
     if (row.index_name !== derived) index.name = row.index_name;
 
@@ -482,6 +649,42 @@ export async function introspectResolvedSchema(
   );
   for (const table of tables.values()) {
     if (realtimeTables.has(table.dbName)) table.realtime = true;
+  }
+
+  // ── RLS policies (@@allow) ──
+  interface PolicyRow {
+    table_name: string;
+    policy_name: string;
+    cmd: string;
+    qual: string | null;
+    with_check: string | null;
+  }
+  const allowEntriesByTable = new Map<
+    string,
+    Array<{ action: AllowAction; ordinal: number; rule: AllowRule }>
+  >();
+  for (const row of policyRes.rows as unknown as PolicyRow[]) {
+    const table = tables.get(row.table_name);
+    if (!table) continue;
+    const parsedName = parseIndigoPolicyName(row.policy_name, table.dbName);
+    if (!parsedName) continue;
+    const rawExpr = parsedName.action === "create" ? row.with_check : (row.qual ?? row.with_check);
+    if (!rawExpr) continue;
+    const cond = parsePolicyCondition(rawExpr);
+    if (!cond) continue;
+    const list = allowEntriesByTable.get(table.dbName) ?? [];
+    list.push({
+      action: parsedName.action,
+      ordinal: parsedName.ordinal,
+      rule: { action: parsedName.action, left: cond.left, right: cond.right },
+    });
+    allowEntriesByTable.set(table.dbName, list);
+  }
+  for (const [dbName, entries] of allowEntriesByTable) {
+    const table = tables.get(dbName);
+    if (!table || entries.length === 0) continue;
+    entries.sort((a, b) => a.ordinal - b.ordinal || a.action.localeCompare(b.action));
+    table.allow = entries.map((e) => e.rule);
   }
 
   return {

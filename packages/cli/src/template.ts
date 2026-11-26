@@ -4,7 +4,7 @@ export const SCHEMA_TEMPLATE = `// IndigoDB schema — https://indigodb.dev
 // Edit your models here, then run:
 //   indigodb db push     # sync the database
 //   indigodb generate    # regenerate the typed client
-//   indigodb docs        # regenerate documentation
+//   indigodb studio      # open ER diagram, data browser, docs & queries
 
 datasource db {
   provider = "postgresql"

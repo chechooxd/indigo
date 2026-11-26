@@ -148,9 +148,13 @@ check(
     const ctorEnd = output.indexOf("\n  }", ctorStart);
     const ctorBlock = output.slice(ctorStart, ctorEnd);
     deepStrictEqual(
-      ctorBlock.includes(
-        "__delegates(this.exec, this.$realtime, (fn) => this.$transaction(fn as never))",
+      output.includes(
+        "private readonly runAtomic: RunAtomic = (fn) => this.$withSession((exec) => fn(__delegates(exec, this.$realtime).byModel as never));",
       ),
+      true,
+    );
+    deepStrictEqual(
+      ctorBlock.includes("__delegates(this.exec, this.$realtime, this.runAtomic)"),
       true,
     );
     deepStrictEqual(ctorBlock.includes("this.user = d.tx.user;"), true);
@@ -193,7 +197,8 @@ check("array-form implementation validates every element, short-circuits empty, 
   );
 });
 
-check("callback-form implementation still delegates to $withSession and __delegates(...).tx", () => {
+check("callback-form implementation guards typeof === function and delegates to $withSession and __delegates(...).tx", () => {
+  deepStrictEqual(output.includes('if (typeof fnOrOps === "function") {'), true);
   deepStrictEqual(
     output.includes("return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));"),
     true,

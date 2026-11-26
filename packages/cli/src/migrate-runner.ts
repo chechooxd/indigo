@@ -42,6 +42,7 @@ import {
 } from "@indigodb/migrator";
 import type { MigrationSource } from "@indigodb/migrator";
 import type { ResolvedSchema } from "@indigodb/core";
+import { assertReplicationSlotDatabase } from "./util.js";
 
 const MIGRATIONS_DIR = "migrations";
 const SNAPSHOT_FILE = ".snapshot.json";
@@ -433,6 +434,9 @@ export async function migrateDev(options: DevOptions): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const client = await (options.createClient ?? (() => defaultCreateClient(options.connectionString)))();
   try {
+    if (!options.createClient && options.resolved.tables.some((t) => t.realtime)) {
+      await assertReplicationSlotDatabase(client);
+    }
     await ensureHistory(client);
 
     let prev: ResolvedSchema | null;

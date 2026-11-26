@@ -65,10 +65,10 @@ function delegateClassName(table: ResolvedTable): string {
   return table.realtime ? "RealtimeModelDelegate" : "ModelDelegate";
 }
 
-/** Base TS type for a column (scalar mapping or enum name). */
+/** Base TS type for a column (scalar mapping or enum name, with `[]` for list fields). */
 function baseType(col: ResolvedColumn): string {
-  if (col.isEnum) return col.type;
-  return SCALAR_TO_TS[col.type] ?? "unknown";
+  const scalar = col.isEnum ? col.type : (SCALAR_TO_TS[col.type] ?? "unknown");
+  return col.list ? `${scalar}[]` : scalar;
 }
 
 /** Whether a create input may omit this column. */
@@ -83,7 +83,7 @@ function optionalOnCreate(col: ResolvedColumn): boolean {
  * inferred structurally from the presence of a `path` key at runtime.
  */
 function isJsonColumn(col: ResolvedColumn): boolean {
-  return !col.isEnum && col.type === ScalarType.Json;
+  return !col.isEnum && !col.list && col.type === ScalarType.Json;
 }
 
 /** Numeric scalar types (client-aggregation PR C, design.md Decision #10):
@@ -97,7 +97,7 @@ const NUMERIC_SCALAR_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 function isNumericColumn(col: ResolvedColumn): boolean {
-  return !col.isEnum && NUMERIC_SCALAR_TYPES.has(col.type);
+  return !col.isEnum && !col.list && NUMERIC_SCALAR_TYPES.has(col.type);
 }
 
 /**
@@ -317,6 +317,9 @@ export function generateClient(schema: ResolvedSchema): string {
   const relationsByTable = new Map<string, RelationInfo[]>(
     schema.tables.map((t) => [t.name, t.relations.map((r) => resolveRelationInfo(t, r, tablesByName))]),
   );
+  const requiredFkGroupsByTable = new Map<string, RequiredFkGroup[]>(
+    schema.tables.map((t) => [t.name, requiredFkGroupsForTable(t, relationsByTable.get(t.name)!)]),
+  );
 
   // ─── Enums ───────────────────────────────────────────────────────────────
   // The const-object key is the LOGICAL member name; its value is the
@@ -345,12 +348,12 @@ export function generateClient(schema: ResolvedSchema): string {
   // ─── Row interfaces + input types ───────────────────────────────────────
   for (const table of schema.tables) {
     out.push(...generateRowInterface(table));
-    out.push(...generateCreateInput(table, relationsByTable.get(table.name)!));
+    out.push(...generateCreateInput(table, relationsByTable.get(table.name)!, requiredFkGroupsByTable, relationsByTable));
     out.push(...generateCreateManyInput(table));
     out.push(...generateCursorInput(table));
     out.push(...generateNumericFields(table));
     out.push(...generateWhereUniqueInput(table));
-    out.push(...generateUpdateInput(table, relationsByTable.get(table.name)!));
+    out.push(...generateUpdateInput(table, relationsByTable.get(table.name)!, requiredFkGroupsByTable, relationsByTable));
     out.push(...generateWhereInput(table, relationsByTable.get(table.name)!));
     out.push(...generateRelationsInterface(table, relationsByTable.get(table.name)!));
     out.push(`export type ${table.name}IncludeInput = IncludeInput<${table.name}Relations>;`, "");
@@ -531,6 +534,11 @@ export function generateClient(schema: ResolvedSchema): string {
       "    this.$authSession({ userId }, (exec) => run(__delegates(exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle).byModel[model]));",
     );
   }
+  out.push(
+    anyLive
+      ? "  private readonly runAtomic: RunAtomic = (fn) => this.$withSession((exec) => fn(__delegates(exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle).byModel as never));"
+      : "  private readonly runAtomic: RunAtomic = (fn) => this.$withSession((exec) => fn(__delegates(exec, this.$realtime).byModel as never));",
+  );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
     const generics = `<${table.name}, ${table.name}CreateInput, ${table.name}UpdateInput, ${table.name}Relations, ${table.name}WhereInput, ${table.name}CreateManyInput, ${cursorGenericArg(table)}, ${table.name}NumericFields, ${table.name}WhereUniqueInput>`;
@@ -541,8 +549,8 @@ export function generateClient(schema: ResolvedSchema): string {
     "  constructor(options?: IndigoClientOptions) {",
     "    super(options);",
     anyLive
-      ? "    const d = __delegates(this.exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle, (fn) => this.$transaction(fn as never));"
-      : "    const d = __delegates(this.exec, this.$realtime, (fn) => this.$transaction(fn as never));",
+      ? "    const d = __delegates(this.exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle, this.runAtomic);"
+      : "    const d = __delegates(this.exec, this.$realtime, this.runAtomic);",
   );
   for (const table of schema.tables) {
     const d = delegateName(table.name);
@@ -574,9 +582,15 @@ export function generateClient(schema: ResolvedSchema): string {
       ? "      return this.$withSession((exec) => runDeferred(fnOrOps, __delegates(exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle).byModel));"
       : "      return this.$withSession((exec) => runDeferred(fnOrOps, __delegates(exec, this.$realtime).byModel));",
     "    }",
+    "    if (typeof fnOrOps === \"function\") {",
     anyLive
-      ? "    return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle).tx));"
-      : "    return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));",
+      ? "      return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime, this.runScoped, this.$handle, this.$requireGetHandle).tx));"
+      : "      return this.$withSession((exec) => fnOrOps(__delegates(exec, this.$realtime).tx));",
+    "    }",
+    "    throw new IndigoTransactionError(",
+    '      "NOT_A_DEFERRED_OPERATION",',
+    '      "$transaction expects a callback function or an array of deferred operations.",',
+    "    );",
     "  }",
     "",
     // `$auth` (design.md Decision #16, mirrors `$transaction` above).
@@ -613,24 +627,86 @@ function generateRowInterface(table: ResolvedTable): string[] {
 }
 
 /**
+ * A required non-autoincrement FK scalar column paired with the non-composite
+ * `fkSide` relation(s) that can populate it at runtime during phase 1 of a
+ * nested write (`delegate.ts`'s `resolveToOneOp`). Callers must pass either
+ * the FK scalar OR the nested relation operation, never neither.
+ */
+interface RequiredFkGroup {
+  col: ResolvedColumn;
+  rels: RelationInfo[];
+}
+
+function requiredFkGroupsForTable(table: ResolvedTable, relations: RelationInfo[]): RequiredFkGroup[] {
+  const colsByName = new Map(table.columns.map((c) => [c.name, c]));
+  const grouped = new Map<string, RelationInfo[]>();
+  for (const r of relations) {
+    if (r.composite || !r.fkSide) continue;
+    const col = colsByName.get(r.from);
+    if (!col || optionalOnCreate(col)) continue;
+    const list = grouped.get(col.name);
+    if (list) list.push(r);
+    else grouped.set(col.name, [r]);
+  }
+  const out: RequiredFkGroup[] = [];
+  for (const col of table.columns) {
+    const rels = grouped.get(col.name);
+    if (rels && rels.length > 0) out.push({ col, rels });
+  }
+  return out;
+}
+
+function columnCreateFieldType(col: ResolvedColumn): string {
+  const t = baseType(col);
+  return col.nullable ? `${t} | null` : t;
+}
+
+function fkGroupUnion(
+  group: RequiredFkGroup,
+  requiredFkGroupsByTable: Map<string, RequiredFkGroup[]>,
+  relationsByTable: Map<string, RelationInfo[]>,
+): string {
+  const colType = columnCreateFieldType(group.col);
+  const relMembers = group.rels.map((r) => ({
+    name: r.name,
+    type: relationInputType(r, "create", requiredFkGroupsByTable, relationsByTable),
+  }));
+  const scalarBranch = `{ ${group.col.name}: ${colType}; ${relMembers.map((m) => `${m.name}?: ${m.type}`).join("; ")} }`;
+  const relBranches = relMembers.map((active) => {
+    const others = relMembers
+      .filter((m) => m.name !== active.name)
+      .map((m) => `; ${m.name}?: ${m.type}`)
+      .join("");
+    return `{ ${group.col.name}?: undefined; ${active.name}: ${active.type}${others} }`;
+  });
+  return `(${[scalarBranch, ...relBranches].join(" | ")})`;
+}
+
+/**
  * Nested-write relation member type for one relation (tasks.md A2.1/A2.2,
  * design.md Decision "relation input unions live in
- * packages/client/src/types.ts"). TYPE PLUMBING ONLY — no planner (PR B/C)
- * reads these yet; this PR only makes them compile.
+ * packages/client/src/types.ts").
  *
  *  - `fkSide` (this table holds the FK, always to-one from here): the
  *    child's own `CreateInput` is referenced unomitted — nothing about the
  *    child needs hiding.
  *  - non-`fkSide` (the CHILD holds the FK back to this row, to-one or
- *    to-many): `Omit<ChildCreateInput, "<to>">` — the planner supplies the
- *    child's FK field from the parent's own key, never the caller.
+ *    to-many): excludes the child's own FK column AND its corresponding
+ *    `fkSide` relation field(s) so neither can conflict with the key supplied
+ *    by the parent planner, while keeping any other required FK groups on the
+ *    child (`authorId` vs `author`) intact.
  *
  * `update` gains `disconnect`/`set` only when the FK can legally become
  * NULL: always for a to-many (`ToManyRelationUpdateInput`), and for a
  * to-one only when `optionalFk` (spec Requirement 4) — a required to-one
  * can be replaced but never disconnected.
  */
-function relationInputType(r: RelationInfo, mode: "create" | "update"): string {
+function relationInputType(
+  r: RelationInfo,
+  mode: "create" | "update",
+  requiredFkGroupsByTable: Map<string, RequiredFkGroup[]>,
+  relationsByTable: Map<string, RelationInfo[]>,
+): string {
   const whereType = `WhereInput<${r.target}>`;
   if (r.fkSide) {
     const createType = `${r.target}CreateInput`;
@@ -638,7 +714,33 @@ function relationInputType(r: RelationInfo, mode: "create" | "update"): string {
       ? `ToOneRelationUpdateInput<${createType}, ${whereType}>`
       : `ToOneRelationInput<${createType}, ${whereType}>`;
   }
-  const childCreate = `Omit<${r.target}CreateInput, ${JSON.stringify(r.to)}>`;
+
+  const targetFkGroups = requiredFkGroupsByTable.get(r.target) ?? [];
+  const targetRels = relationsByTable.get(r.target) ?? [];
+  const matchingFkRels = targetRels.filter((tr) => !tr.composite && tr.fkSide && tr.from === r.to).map((tr) => tr.name);
+  const omitCandidates = Array.from(new Set([r.to, ...matchingFkRels]));
+
+  let childCreate: string;
+  if (targetFkGroups.length === 0) {
+    const omitUnion = omitCandidates.map((f) => JSON.stringify(f)).join(" | ");
+    childCreate = `Omit<${r.target}CreateInput, ${omitUnion}>`;
+  } else {
+    const excludedFromBase = new Set<string>();
+    for (const g of targetFkGroups) {
+      excludedFromBase.add(g.col.name);
+      for (const rel of g.rels) excludedFromBase.add(rel.name);
+    }
+    const baseOmit = omitCandidates.filter((f) => !excludedFromBase.has(f));
+    const baseExpr =
+      baseOmit.length > 0
+        ? `Omit<${r.target}CreateBase, ${baseOmit.map((f) => JSON.stringify(f)).join(" | ")}>`
+        : `${r.target}CreateBase`;
+    const remainingGroups = targetFkGroups
+      .filter((g) => g.col.name !== r.to)
+      .map((g) => fkGroupUnion(g, requiredFkGroupsByTable, relationsByTable));
+    childCreate = [baseExpr, ...remainingGroups].join(" & ");
+  }
+
   if (r.list) {
     return mode === "update"
       ? `ToManyRelationUpdateInput<${childCreate}, ${whereType}>`
@@ -650,20 +752,34 @@ function relationInputType(r: RelationInfo, mode: "create" | "update"): string {
     : `ToOneRelationInput<${childCreate}, ${whereType}>`;
 }
 
-function generateCreateInput(table: ResolvedTable, relations: RelationInfo[]): string[] {
-  const lines = [`export interface ${table.name}CreateInput {`];
+function generateCreateInput(
+  table: ResolvedTable,
+  relations: RelationInfo[],
+  requiredFkGroupsByTable: Map<string, RequiredFkGroup[]>,
+  relationsByTable: Map<string, RelationInfo[]>,
+): string[] {
+  const fkGroups = requiredFkGroupsByTable.get(table.name) ?? [];
+  const excludedCols = new Set(fkGroups.map((g) => g.col.name));
+  const excludedRels = new Set(fkGroups.flatMap((g) => g.rels.map((r) => r.name)));
+
+  const interfaceName = fkGroups.length === 0 ? `${table.name}CreateInput` : `${table.name}CreateBase`;
+  const lines = [`export interface ${interfaceName} {`];
   for (const col of table.columns) {
-    if (col.autoincrement) continue; // DB-generated identity
-    const t = baseType(col);
-    const type = col.nullable ? `${t} | null` : t;
+    if (col.autoincrement || excludedCols.has(col.name)) continue;
+    const type = columnCreateFieldType(col);
     const opt = optionalOnCreate(col) ? "?" : "";
     lines.push(`  ${col.name}${opt}: ${type};`);
   }
   for (const r of relations) {
-    if (r.composite) continue;
-    lines.push(`  ${r.name}?: ${relationInputType(r, "create")};`);
+    if (r.composite || excludedRels.has(r.name)) continue;
+    lines.push(`  ${r.name}?: ${relationInputType(r, "create", requiredFkGroupsByTable, relationsByTable)};`);
   }
   lines.push("}", "");
+
+  if (fkGroups.length > 0) {
+    const unions = fkGroups.map((g) => fkGroupUnion(g, requiredFkGroupsByTable, relationsByTable));
+    lines.push(`export type ${table.name}CreateInput = ${interfaceName} & ${unions.join(" & ")};`, "");
+  }
   return lines;
 }
 
@@ -804,7 +920,12 @@ function generateWhereInput(table: ResolvedTable, relations: RelationInfo[]): st
   return lines;
 }
 
-function generateUpdateInput(table: ResolvedTable, relations: RelationInfo[]): string[] {
+function generateUpdateInput(
+  table: ResolvedTable,
+  relations: RelationInfo[],
+  requiredFkGroupsByTable: Map<string, RequiredFkGroup[]>,
+  relationsByTable: Map<string, RelationInfo[]>,
+): string[] {
   const lines = [`export interface ${table.name}UpdateInput {`];
   for (const col of table.columns) {
     const t = baseType(col);
@@ -813,7 +934,7 @@ function generateUpdateInput(table: ResolvedTable, relations: RelationInfo[]): s
   }
   for (const r of relations) {
     if (r.composite) continue;
-    lines.push(`  ${r.name}?: ${relationInputType(r, "update")};`);
+    lines.push(`  ${r.name}?: ${relationInputType(r, "update", requiredFkGroupsByTable, relationsByTable)};`);
   }
   lines.push("}", "");
   return lines;

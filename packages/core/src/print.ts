@@ -309,7 +309,7 @@ function printFieldLines(
 ): string[] {
   const columnRows = table.columns.map((col) => ({
     name: col.name,
-    type: `${col.type}${col.nullable ? "?" : ""}`,
+    type: `${col.type}${col.list ? "[]" : col.nullable ? "?" : ""}`,
     attrs: fieldAttrs(col),
   }));
   const relationRows = table.relations.map((rel) => printRelationField(schema, table, rel, fkFor.get(rel)));

@@ -469,6 +469,13 @@ export class ModelDelegate<
     return this.meta.fields[field]?.db ?? field;
   }
 
+  /** Serializes JSON column values so arrays/primitives bind as valid jsonb across pg and PGlite. */
+  private paramValue(field: string, value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (this.meta.fields[field]?.json) return JSON.stringify(value);
+    return value;
+  }
+
   /** `"db" AS "field"` list for every column (or the selected subset). */
   private selectList(select?: SelectInput<Row>): string {
     const fields = Object.keys(this.meta.fields).filter((f) => {
@@ -994,7 +1001,7 @@ export class ModelDelegate<
     const params = new Params();
     const fields = Object.keys(data).filter((f) => data[f] !== undefined);
     const cols = fields.map((f) => quote(this.col(f))).join(", ");
-    const vals = fields.map((f) => params.add(data[f])).join(", ");
+    const vals = fields.map((f) => params.add(this.paramValue(f, data[f]))).join(", ");
     const sql =
       fields.length > 0
         ? `INSERT INTO ${quote(this.meta.table)} (${cols}) VALUES (${vals}) RETURNING ${this.selectList()}`
@@ -1326,7 +1333,7 @@ export class ModelDelegate<
       );
     }
     const assignments = fields
-      .map((f) => `${quote(this.col(f))} = ${params.add(data[f])}`)
+      .map((f) => `${quote(this.col(f))} = ${params.add(this.paramValue(f, data[f]))}`)
       .join(", ");
     let sql = `UPDATE ${quote(this.meta.table)} SET ${assignments}`;
     sql += this.buildWhere(where, params);
@@ -1571,7 +1578,7 @@ export class ModelDelegate<
     const params = new Params();
     const cols = fields.map((f) => quote(this.col(f))).join(", ");
     const tuples = data
-      .map((row) => `(${fields.map((f) => params.add(row[f] ?? null)).join(", ")})`)
+      .map((row) => `(${fields.map((f) => params.add(this.paramValue(f, row[f] ?? null))).join(", ")})`)
       .join(", ");
     const sql = `INSERT INTO ${quote(this.meta.table)} (${cols}) VALUES ${tuples} RETURNING 1`;
     const rows = await this.exec(sql, params.values);
@@ -1595,7 +1602,7 @@ export class ModelDelegate<
     const data = args.data as Record<string, unknown>;
     const params = new Params();
     const fields = Object.keys(data).filter((f) => data[f] !== undefined);
-    const assignments = fields.map((f) => `${quote(this.col(f))} = ${params.add(data[f])}`).join(", ");
+    const assignments = fields.map((f) => `${quote(this.col(f))} = ${params.add(this.paramValue(f, data[f]))}`).join(", ");
     let sql = `UPDATE ${quote(this.meta.table)} SET ${assignments}`;
     sql += this.buildWhere(args.where, params);
     sql += ` RETURNING 1`;
@@ -1885,12 +1892,12 @@ export class ModelDelegate<
     const params = new Params();
     const createFields = Object.keys(createData).filter((f) => createData[f] !== undefined);
     const cols = createFields.map((f) => quote(this.col(f))).join(", ");
-    const vals = createFields.map((f) => params.add(createData[f])).join(", ");
+    const vals = createFields.map((f) => params.add(this.paramValue(f, createData[f]))).join(", ");
     const target = conflictCols.map((f) => quote(this.col(f))).join(", ");
 
     const updateFields = Object.keys(updateData).filter((f) => updateData[f] !== undefined);
     const assignments = updateFields
-      .map((f) => `${quote(this.col(f))} = ${params.add(updateData[f])}`)
+      .map((f) => `${quote(this.col(f))} = ${params.add(this.paramValue(f, updateData[f]))}`)
       .join(", ");
 
     let sql =

@@ -392,6 +392,37 @@ const KNOWN_INTROSPECTION_GAPS = new Set([
   "allow-rule-reordered",
 ]);
 
+await check("list column (String[]) round-trips through push -> introspect -> planMigration empty", async () => {
+  const next = resolve(
+    parse(`Table Tag {\n  id Int @id @default(autoincrement())\n  labels String[]\n}\n`),
+  );
+  await withDatabase(async (db) => {
+    await assertApplies(db, renderPushSql(next));
+    const introspected = await introspectResolvedSchema(queryOf(db));
+    const col = introspected.tables[0].columns.find((c) => c.dbName === "labels");
+    strictEqual(col?.type, "String");
+    strictEqual(col?.list, true);
+    const plan = planMigration(introspected, next);
+    strictEqual(plan.statements.length, 0);
+    strictEqual(plan.diagnostics.length, 0);
+  });
+});
+
+await check("@@allow RLS policies round-trip through push -> introspect -> planMigration empty", async () => {
+  const next = resolve(
+    parse(
+      `Table Task {\n  id Int @id @default(autoincrement())\n  reporterId Int @map("reporter_id")\n  isPublic Boolean @default(false)\n  @@allow(read, auth.userId == this.reporterId)\n  @@allow(read, this.isPublic == true)\n  @@allow([create, update, delete], auth.userId == this.reporterId)\n}\n`,
+    ),
+  );
+  await withDatabase(async (db) => {
+    await assertApplies(db, renderPushSql(next));
+    const introspected = await introspectResolvedSchema(queryOf(db));
+    const plan = planMigration(introspected, next);
+    strictEqual(plan.statements.length, 0, plan.statements.map((s) => s.sql).join("\n"));
+    strictEqual(plan.diagnostics.length, 0);
+  });
+});
+
 const fixtureNames = readdirSync(fixturesDir, { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name)

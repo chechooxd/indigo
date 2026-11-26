@@ -32,6 +32,8 @@ export interface ResolvedColumn {
   type: string;
   /** Whether `type` refers to an enum rather than a built-in scalar. */
   isEnum: boolean;
+  /** Whether the column is an array/list type (`Type[]`). Omitted when false. */
+  list?: boolean;
   /** Whether the column allows NULL (optional field, `Type?`). */
   nullable: boolean;
   /** Whether the column is (part of) the primary key (`@id`). */

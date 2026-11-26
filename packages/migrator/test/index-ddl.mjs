@@ -162,6 +162,20 @@ check("diffing an expression change emits DROP INDEX + CREATE INDEX", () => {
   ok(sqls.includes(`CREATE INDEX "user_expr_idx" ON "User" (upper(email));`), `expected CREATE in ${sqls}`);
 });
 
+check("residual same-name index replacement emits DROP INDEX before CREATE INDEX", () => {
+  const prev = resolve(
+    parse(`Table Project {\n  id Int @id\n  metadata Json\n  @@index([], name: "project_meta_gin_idx", type: gin, expression: "metadata")\n}`),
+  );
+  const next = resolve(
+    parse(`Table Project {\n  id Int @id\n  metadata Json\n  @@index([metadata], name: "project_meta_gin_idx", type: gin)\n}`),
+  );
+  const plan = planMigration(prev, next);
+  const sqls = plan.statements.map((s) => s.sql);
+  const dropIdx = sqls.indexOf(`DROP INDEX "project_meta_gin_idx";`);
+  const createIdx = sqls.indexOf(`CREATE INDEX "project_meta_gin_idx" ON "Project" USING gin ("metadata");`);
+  ok(dropIdx >= 0 && createIdx >= 0 && dropIdx < createIdx, `expected DROP before CREATE, got:\n${sqls.join("\n")}`);
+});
+
 check("printSchema preserves where and expression arguments", () => {
   const src = `Table Account {\n  id Int @id\n  email String\n  deletedAt DateTime? @map("deleted_at")\n  @@unique([email], name: "active_email_key", where: "deleted_at IS NULL")\n  @@index([], name: "lower_email_idx", expression: "lower(email)")\n}\n`;
   const printed = printSchema(resolve(parse(src)));

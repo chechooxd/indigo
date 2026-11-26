@@ -304,7 +304,7 @@ fn validate_attributes(errors: &mut Vec<ValidationError>, schema: &Schema, enum_
             match rules::attribute_rule(AttributeTarget::Model, &attr.name) {
                 None => push_unknown(errors, AttributeTarget::Model, &attr.name, &location, Some(model.name.clone()), None),
                 Some(ArgShape::Allow) => validate_allow(errors, model, attr),
-                Some(ArgShape::Realtime) => validate_realtime_columns(errors, model, attr),
+                Some(ArgShape::Realtime) => validate_realtime_columns(errors, model, attr, enum_names),
                 Some(shape) => check_shape(errors, shape, &attr.name, attr, &location, Some(model.name.clone()), None),
             }
         }
@@ -722,7 +722,12 @@ fn validate_relation_args(
 
 /// Validates one `@@realtime` attribute's optional `columns:` argument.
 /// Bare `@@realtime` (no arguments at all) produces no diagnostic here.
-fn validate_realtime_columns(errors: &mut Vec<ValidationError>, model: &Model, attr: &Attribute) {
+fn validate_realtime_columns(
+    errors: &mut Vec<ValidationError>,
+    model: &Model,
+    attr: &Attribute,
+    enum_names: &HashSet<&str>,
+) {
     let model_name = model.name.clone();
 
     // Any positional argument, or any named argument other than `columns`,
@@ -758,7 +763,10 @@ fn validate_realtime_columns(errors: &mut Vec<ValidationError>, model: &Model, a
             .fields
             .iter()
             .find(|f| &f.name == name)
-            .is_some_and(|f| is_scalar(&f.field_type.name) && !f.field_type.list);
+            .is_some_and(|f| {
+                (is_scalar(&f.field_type.name) || enum_names.contains(f.field_type.name.as_str()))
+                    && !f.field_type.list
+            });
         if !is_scalar_field {
             errors.push(ValidationError {
                 message: format!(
@@ -1066,10 +1074,17 @@ fn validate_implicit_many_to_many(errors: &mut Vec<ValidationError>, schema: &Sc
             }
             let target_name = &field.field_type.name;
             let Some(target_model) = schema.models.iter().find(|m| &m.name == target_name) else { continue };
-            let has_reciprocal = target_model
-                .fields
-                .iter()
-                .any(|f| f.field_type.list && f.field_type.name == model.name && !holds_fk(f));
+            let field_rel_name = relation_field_name(field);
+            let has_reciprocal = target_model.fields.iter().any(|f| {
+                // In a self-relation (model == target_model), a list inverse
+                // field must never match itself, and unrelated named 1:N
+                // inverse legs must not falsely match across distinct names.
+                !(target_model.name == model.name && f.name == field.name)
+                    && f.field_type.list
+                    && f.field_type.name == model.name
+                    && !holds_fk(f)
+                    && relation_field_name(f) == field_rel_name
+            });
             if !has_reciprocal {
                 continue;
             }
@@ -1867,6 +1882,25 @@ Table User {
             errors.iter().any(|e| e.message == "Duplicate column \"email\" in @@realtime(columns) on model \"User\"."),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn realtime_columns_enum_field_is_accepted() {
+        let errors = validate_source(
+            r#"
+enum TaskStatus {
+  TODO
+  DONE
+}
+
+Table Task {
+  id String @id
+  status TaskStatus
+  @@realtime(columns: [id, status])
+}
+"#,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     #[test]

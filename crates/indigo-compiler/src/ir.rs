@@ -36,6 +36,10 @@ pub struct ResolvedNativeType {
     pub args: Vec<String>,
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedColumn {
@@ -44,6 +48,8 @@ pub struct ResolvedColumn {
     #[serde(rename = "type")]
     pub column_type: String,
     pub is_enum: bool,
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub list: bool,
     pub nullable: bool,
     pub is_pk: bool,
     pub unique: bool,
@@ -278,6 +284,7 @@ mod tests {
             db_name: "bio".into(),
             column_type: "String".into(),
             is_enum: false,
+            list: false,
             nullable: false,
             is_pk: false,
             unique: false,
