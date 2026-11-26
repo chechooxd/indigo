@@ -1,5 +1,12 @@
 # @indigodb/client
 
+## 0.1.2
+
+### Patch Changes
+
+- Serialize non-null `json` parameter values with `JSON.stringify` across write paths so top-level JS arrays and primitives succeed on `pg` `jsonb` columns.
+  - @indigodb/realtime@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes

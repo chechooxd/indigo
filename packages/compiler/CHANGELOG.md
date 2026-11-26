@@ -1,5 +1,12 @@
 # @indigodb/compiler
 
+## 0.1.2
+
+### Patch Changes
+
+- Support scalar list columns (`String[]`, etc.) in compiler IR and schema printing, accept enum fields in `@@realtime(columns: [...])`, and fix false-positive implicit many-to-many validation on 1:N self-relation inverse list fields.
+  - @indigodb/ast@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/react",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browser-safe React hooks (useLiveTable, useChannel) for IndigoDB realtime.",
   "keywords": [
     "indigodb",

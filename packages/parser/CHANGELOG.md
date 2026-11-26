@@ -1,5 +1,13 @@
 # @indigodb/parser
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @indigodb/compiler@0.1.2
+  - @indigodb/ast@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes

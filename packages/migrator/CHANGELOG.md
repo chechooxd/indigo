@@ -1,5 +1,14 @@
 # @indigodb/migrator
 
+## 0.1.2
+
+### Patch Changes
+
+- Add list-column DDL/diff/introspection support, drop residual indexes before recreating them, normalize partial-predicate outer parentheses, cast `attname::text` and serialize introspection queries for `pg`, and round-trip `@@allow` RLS policies from `pg_policies`.
+- Updated dependencies
+  - @indigodb/core@0.1.2
+  - @indigodb/ast@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/parser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Parser wrapper around the IndigoDB WebAssembly compiler.",
   "keywords": [
     "indigodb",

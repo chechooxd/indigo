@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Visual ER diagram, data browser, SQL console, and schema documentation workspace for IndigoDB.",
   "keywords": [
     "indigodb",

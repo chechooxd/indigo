@@ -1,5 +1,20 @@
 # @indigodb/cli
 
+## 0.1.2
+
+### Patch Changes
+
+- Add cross-database replication slot preflight checks for `db push`, `migrate deploy`, and `migrate dev`, and update init template guidance from `indigodb docs` to `indigodb studio`.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @indigodb/core@0.1.2
+  - @indigodb/generator@0.1.2
+  - @indigodb/migrator@0.1.2
+  - @indigodb/studio@0.1.2
+  - @indigodb/parser@0.1.2
+  - @indigodb/realtime@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes

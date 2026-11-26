@@ -1,5 +1,14 @@
 # @indigodb/generator
 
+## 0.1.2
+
+### Patch Changes
+
+- Fix `$transaction` callback narrowing (`TS2349`), bind `byModel` in `runAtomic` so top-level nested writes succeed, emit array field types accurately, and allow omitting required scalar FKs in `CreateInput` when using nested `to-one` relation writes.
+- Updated dependencies
+  - @indigodb/core@0.1.2
+  - @indigodb/ast@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes
