@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Type-safe PostgreSQL ORM runtime and browser-safe realtime SDK for IndigoDB.",
   "keywords": [
     "indigodb",

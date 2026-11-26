@@ -1,5 +1,14 @@
 # @indigodb/realtime
 
+## 0.1.1
+
+### Patch Changes
+
+- Add package-level `README.md` documentation to all `@indigodb/*` packages and align `@indigodb/react` with the published release cohort.
+- Updated dependencies
+  - @indigodb/core@0.1.1
+  - @indigodb/migrator@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/compiler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WebAssembly compiler for the IndigoDB (.indigo) schema language.",
   "keywords": [
     "indigodb",

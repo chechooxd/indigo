@@ -1,6 +1,6 @@
 {
   "name": "@indigodb/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Relational intermediate representation (IR), schema resolver, and printer for IndigoDB.",
   "keywords": [
     "indigodb",

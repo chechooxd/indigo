@@ -1,5 +1,15 @@
 # @indigodb/core
 
+## 0.1.1
+
+### Patch Changes
+
+- Add package-level `README.md` documentation to all `@indigodb/*` packages and align `@indigodb/react` with the published release cohort.
+- Updated dependencies
+  - @indigodb/ast@0.1.1
+  - @indigodb/compiler@0.1.1
+  - @indigodb/parser@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
