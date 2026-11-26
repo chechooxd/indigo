@@ -4,13 +4,15 @@
 // package missing a "files" allowlist (or with a stale/empty dist/) would
 // silently ship the wrong contents. This script runs `npm pack --dry-run`
 // against the current package state and asserts the packed file set is
-// exactly `dist/**` plus `package.json` — apps/studio has no README or
-// LICENSE, so nothing else is expected in the tarball.
+// only `dist/**` plus npm's automatic metadata files (`package.json`,
+// `README*`, `LICEN[CS]E*`, `CHANGELOG*`), matching `studio-package-publishability`
+// and `scripts/check-pack-contents.mjs`.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const ALWAYS_INCLUDED = /^(package\.json|README(\..*)?|LICEN[CS]E(\..*)?|CHANGELOG(\..*)?)$/i;
 
 function runNpmPack() {
   let stdout;
@@ -46,10 +48,10 @@ function runNpmPack() {
 
 const paths = runNpmPack();
 
-const offending = paths.filter((p) => p !== "package.json" && !p.startsWith("dist/"));
+const offending = paths.filter((p) => !ALWAYS_INCLUDED.test(p) && !p.startsWith("dist/"));
 
 if (offending.length > 0) {
-  console.error("pack-contents: packed tarball contains paths outside dist/ and package.json:");
+  console.error("pack-contents: packed tarball contains paths outside dist/ and npm metadata:");
   for (const p of offending) {
     console.error(`  - ${p}`);
   }
@@ -64,5 +66,5 @@ if (!paths.includes("dist/index.html")) {
   process.exit(1);
 }
 
-console.log(`pack-contents: OK (${paths.length} files packed, all under dist/ or package.json)`);
+console.log(`pack-contents: OK (${paths.length} files packed, all under dist/ or npm metadata)`);
 process.exit(0);
