@@ -11,7 +11,9 @@
  */
 
 import { strictEqual } from "node:assert";
-import { readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse, resolve } from "@indigodb/core";
 import { withDatabase, withStudio, withSchemaFile } from "./studio-harness.mjs";
 import { DATASOURCE_SENTINEL } from "../dist/studio-server.js";
@@ -674,37 +676,71 @@ await check("A successful PUT emits exactly one clean audit line: outcome ok, co
 
 await check("A write/rename failure answers 500 with an io-error audit line and best-effort temp-file cleanup", async () => {
   await withDatabase(async (db) => {
-    await withSchemaFile(SCHEMA_WITH_DATASOURCE, async ({ schemaPath, dir }) => {
-      const fixture = loadFixture(SCHEMA_WITH_DATASOURCE);
+    const fixture = loadFixture(SCHEMA_WITH_DATASOURCE);
+
+    // 1) Long schema filename (<= NAME_MAX 255 bytes) whose sibling atomic
+    //    temp filename `.${name}.studio-${pid}-${hex}.tmp` exceeds NAME_MAX,
+    //    forcing `writeFileSync` to throw ENAMETOOLONG deterministically even
+    //    when running as uid 0 inside `act` containers (where `chmod 0o500`
+    //    is bypassed by CAP_DAC_OVERRIDE).
+    const longName = `${"s".repeat(240)}.indigo`;
+    const longDir = await mkdtemp(join(tmpdir(), "indigo-studio-ioerr-"));
+    const longSchemaPath = join(longDir, longName);
+    await writeFile(longSchemaPath, SCHEMA_WITH_DATASOURCE, "utf-8");
+    try {
       await withStudio(
         db,
         fixture,
         async ({ baseUrl }) => {
           const got = await getSource(baseUrl);
-          // Point the write at a directory that does not exist by removing
-          // write permission on the containing directory — a portable way to
-          // force writeFileSync/renameSync to throw without stubbing internals.
-          const { chmod } = await import("node:fs/promises");
-          await chmod(dir, 0o500);
-          try {
-            const raw = await captureLog(async () => {
-              const res = await putSource(baseUrl, got.text, got.version);
-              assert(res.status === 500, `expected 500, got ${res.status}`);
-            });
-            const audit = parseAuditLines(raw);
-            assert(audit.length === 1, `expected exactly one audit line, got ${audit.length}`);
-            assert(audit[0].reason === "io-error", `expected reason:io-error, got ${audit[0].reason}`);
-          } finally {
-            await chmod(dir, 0o700);
-          }
+          const raw = await captureLog(async () => {
+            const res = await putSource(baseUrl, got.text, got.version);
+            assert(res.status === 500, `expected 500 on ENAMETOOLONG write failure, got ${res.status}`);
+          });
+          const audit = parseAuditLines(raw);
+          assert(audit.length === 1, `expected exactly one audit line, got ${audit.length}`);
+          assert(audit[0].reason === "io-error", `expected reason:io-error, got ${audit[0].reason}`);
 
-          const entries = await readdir(dir);
-          const leftoverTmp = entries.filter((e) => e !== "schema.indigo");
+          const entries = await readdir(longDir);
+          const leftoverTmp = entries.filter((e) => e !== longName);
           assert(leftoverTmp.length === 0, `expected no leftover temp file after a write failure, got: ${JSON.stringify(leftoverTmp)}`);
         },
-        { schemaPath },
+        { schemaPath: longSchemaPath },
       );
-    });
+    } finally {
+      await rm(longDir, { recursive: true, force: true });
+    }
+
+    // 2) On non-root hosts (macOS / GitHub ubuntu-latest), also verify EACCES
+    //    from a read-only parent directory.
+    if (process.geteuid?.() !== 0) {
+      await withSchemaFile(SCHEMA_WITH_DATASOURCE, async ({ schemaPath, dir }) => {
+        await withStudio(
+          db,
+          fixture,
+          async ({ baseUrl }) => {
+            const got = await getSource(baseUrl);
+            await chmod(dir, 0o500);
+            try {
+              const raw = await captureLog(async () => {
+                const res = await putSource(baseUrl, got.text, got.version);
+                assert(res.status === 500, `expected 500 on EACCES write failure, got ${res.status}`);
+              });
+              const audit = parseAuditLines(raw);
+              assert(audit.length === 1, `expected exactly one audit line, got ${audit.length}`);
+              assert(audit[0].reason === "io-error", `expected reason:io-error, got ${audit[0].reason}`);
+            } finally {
+              await chmod(dir, 0o700);
+            }
+
+            const entries = await readdir(dir);
+            const leftoverTmp = entries.filter((e) => e !== "schema.indigo");
+            assert(leftoverTmp.length === 0, `expected no leftover temp file after a write failure, got: ${JSON.stringify(leftoverTmp)}`);
+          },
+          { schemaPath },
+        );
+      });
+    }
   });
 });
 
